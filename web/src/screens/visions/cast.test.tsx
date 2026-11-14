@@ -35,6 +35,45 @@ describe("the cast", () => {
     }
   });
 
+  it("juno_and_atlas_are_pinned_to_the_chiefmoods_board", () => {
+    // Golden values copied from ChiefMoods.dc.html (renderVals), not derived from cast.ts.
+    const board = {
+      juno: { body: "M12 40a8 8 0 0 1 0-16H36a8 8 0 0 1 0 16ZM7 23a8 8 0 1 1 16 0a8 8 0 1 1 -16 0ZM14 16a11 11 0 1 1 22 0a11 11 0 1 1 -22 0ZM28 23a7 7 0 1 1 14 0a7 7 0 1 1 -14 0Z", ramp: ["#D4F0FF", "#5DBDF6", "#1A74BE"], solid: "M36 28h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-12a2 2 0 0 1 2-2Z", eyes: { l: 17.5, r: 27, y: 29 } },
+      atlas: { body: "M12 40a8 8 0 0 1 0-16H36a8 8 0 0 1 0 16ZM7 22a9 9 0 1 1 18 0a9 9 0 1 1 -18 0ZM13.5 17a10.5 10.5 0 1 1 21 0a10.5 10.5 0 1 1 -21 0ZM24.5 22a8.5 8.5 0 1 1 17 0a8.5 8.5 0 1 1 -17 0Z", ramp: ["#E6ECF7", "#93A2BE", "#4E5B76"], solid: "M15 9V-3l4.5 5 4.5-7 4.5 7 4.5-5V9Z", eyes: { l: 18.5, r: 29.5, y: 29.5 } },
+    };
+    for (const [name, golden] of Object.entries(board)) {
+      const preset = PRESETS.find(each => each.name.toLowerCase() === name)!;
+      const shape = SHAPES[preset.look.shape]!;
+      const color = COLORS[preset.look.color]!;
+      expect(shape.body).toBe(golden.body);
+      expect([color.hi, color.mid, color.lo]).toEqual(golden.ramp);
+      expect(ACCESSORIES[preset.look.accessory]!.solid).toBe(golden.solid);
+      expect(shape.eyes).toEqual(golden.eyes);
+    }
+  });
+
+  it("a_small_avatar_draws_its_body_colour_and_accessory", () => {
+    for (const { look } of PRESETS) {
+      const { container, unmount } = render(<CharacterAvatar look={look} />);
+      const paths = [...container.querySelectorAll("path")].map(path => [path.getAttribute("d"), path.getAttribute("fill")]);
+      expect(paths).toContainEqual([SHAPES[look.shape]!.body, COLORS[look.color]!.flat]);
+      expect(paths).toContainEqual([ACCESSORIES[look.accessory]!.solid, ACCESSORIES[look.accessory]!.fill]);
+      unmount();
+    }
+    const { container } = render(<CharacterAvatar look={{ shape: "tall", color: "blue", accessory: "none" }} />);
+    expect([...container.querySelectorAll("path")].map(path => path.getAttribute("d"))).not.toContain(ACCESSORIES.crown!.solid);
+  });
+
+  it("the_still_picture_draws_the_shaded_body_and_the_accessory", () => {
+    const atlas = PRESETS[1]!.look;
+    const { container } = render(<StillPicture look={atlas} expression="calm" />);
+    const stops = [...container.querySelectorAll("radialGradient stop")].map(stop => stop.getAttribute("stop-color"));
+    expect(stops).toEqual(["#E6ECF7", "#93A2BE", "#4E5B76"]);
+    const drawn = [...container.querySelectorAll("path")].map(path => path.getAttribute("d"));
+    expect(drawn).toContain(SHAPES.broad!.body);
+    expect(drawn).toContain("M15 9V-3l4.5 5 4.5-7 4.5 7 4.5-5V9Z");
+  });
+
   it("an_unknown_look_falls_back_to_the_first_shape_colour_and_no_accessory", () => {
     const { container } = render(<CharacterAvatar look={{ shape: "x", color: "y", accessory: "z" }} />);
     expect(container.querySelector("svg")?.getAttribute("data-accessory")).toBe("none");

@@ -303,6 +303,18 @@ describe("Visions view", () => {
     expect(await within(bar).findByText("Echo")).toBeTruthy();
   });
 
+  it("new vision saves the accessory the person chose", async () => {
+    vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v4", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
+    mount({ mainView: "visions" });
+    fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
+    const sheet = screen.getByRole("dialog", { name: "New Vision" });
+    fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Headphones" }));
+    expect(within(sheet).getByRole("button", { name: "Headphones" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith(expect.objectContaining({ name: "Echo", accessory: "headphones" }), null));
+  });
+
   it("an open chat stays open through visions reloads and a hand back", async () => {
     vi.mocked(visionsBridge.handBackThread).mockResolvedValue({ ...owned("w1", "", "rook", false).owner });
     const chats = fixture().visions.chats.c1!;
