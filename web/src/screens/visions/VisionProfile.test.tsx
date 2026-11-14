@@ -157,6 +157,22 @@ describe("Channel details", () => {
     expect(screen.getByRole("button", { name: "Delete # release" })).toBeInTheDocument();
   });
 
+  it("deletes a member Vision after asking, and refreshes the list; Atlas cannot be deleted", async () => {
+    const initial = opened("c1");
+    initial.visions.channels = { "/p": [hq, { ...release, members: ["rook", "wren"] }] };
+    await show(() => <OpenChannelDetails />, initial);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Wren" }));
+    const dialog = screen.getByRole("dialog", { name: "Delete Wren?" });
+    expect(dialog).toHaveTextContent("Its chats stop and become ordinary chats.");
+    expect(visions.deleteVision).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Delete" })); });
+    expect(visions.deleteVision).toHaveBeenCalledWith("wren");
+    expect(screen.queryByRole("button", { name: "Wren" })).toBeNull();
+    cleanup();
+    await show(() => <OpenChannelDetails />, opened(null));
+    expect(screen.queryByRole("button", { name: "Delete Atlas" })).toBeNull();
+  });
+
   it("keeps # administration built in: no Delete, and Atlas its only member", async () => {
     await show(() => <OpenChannelDetails />, opened(null));
     expect(screen.queryByRole("button", { name: "Delete # administration" })).toBeNull();

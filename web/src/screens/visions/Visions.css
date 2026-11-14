@@ -173,7 +173,7 @@
 /* A team channel's header (boards TeamChannel, AdminChannel): the chief large with a soft glow,
    the channel's name in the display face and the mark gradient, the chief's state, the chips. */
 .themis-team-head { position: relative; flex: none; display: flex; align-items: center; gap: 22px; padding: 14px 4px 12px; border-bottom: 1px solid var(--themis-border-subtle); }
-.themis-team-picture { position: relative; flex: none; cursor: pointer; }
+.themis-team-picture { position: relative; flex: none; }
 .themis-team-picture::before { content: ""; position: absolute; left: -54px; top: -44px; width: 240px; height: 220px; background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 26%, transparent), transparent); pointer-events: none; }
 .themis-team-picture .themis-chief-scene { background: none; }
 .themis-team-text { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -181,6 +181,7 @@
 .themis-team-name .themis-channel-title { display: inline-flex; align-items: baseline; gap: 6px; }
 .themis-team-hash { color: var(--themis-text-2); font-size: 28px; font-weight: 500; }
 .themis-team-gradient { background: linear-gradient(100deg, var(--themis-mark-from), var(--themis-mark-to)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+@media (forced-colors: active) { .themis-team-gradient { background: none; color: CanvasText; forced-color-adjust: auto; } }
 .themis-team-chief { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--themis-text-2); }
 .themis-team-chief-name { display: inline-flex; align-items: baseline; gap: 8px; padding: 0; border: 0; background: none; color: var(--themis-text-2); font: inherit; cursor: pointer; }
 .themis-team-chief-name b { color: var(--themis-text); font-weight: 600; }
@@ -195,7 +196,8 @@
 .themis-team-chip:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
 
 /* A request between channels or a new routine: one quiet line under the chief's messages. */
-.themis-team-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-left: 42px; color: var(--themis-text-2); font-size: 12px; }
+.themis-team-note { padding-left: 42px; color: var(--themis-text-2); font-size: 12px; }
+.themis-team-note-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .themis-team-note .themis-mention { border: 0; font: inherit; cursor: pointer; }
 .themis-team-note b { color: var(--themis-text); font-weight: 600; }
 .themis-team-note .themis-channel-time { margin-left: 0; }

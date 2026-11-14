@@ -92,13 +92,29 @@ export interface Routine {
   enabled: boolean;
 }
 
-/** A request between channels or a chief's new routine, as one line in the channel (Tasks 5, 7). */
+/** A request between channels or a chief's new routine, as one line in the channel (Tasks 5, 7).
+ *  The request lines carry the server's fields (`vision_id`, `request_id`, `channel_id`, `ask`);
+ *  `answer` stands in for the server's separate `request_answered` line until it is wired. */
 export type TeamNoteEntry =
-  | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; channel_name: string; ask: string; answer?: "accepted" | "declined" }
-  | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; channel_name: string; ask: string; answer?: "accepted" | "declined" }
+  | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; ask: string; answer?: "accepted" | "declined" }
+  | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; ask: string; answer?: "accepted" | "declined" }
   | { type: "routine_added"; vision_id: string; routine_id: string; schedule: Schedule; instruction: string };
 
 export const TEAM_NOTE_TYPES: ReadonlySet<string> = new Set<TeamNoteEntry["type"]>(["request_sent", "request_received", "routine_added"]);
+
+const isText = (value: unknown): value is string => typeof value === "string";
+
+/** The line as a team note, or null when a field it shows is missing or of the wrong kind. */
+export function teamNote(entry: unknown): TeamNoteEntry | null {
+  const line = entry as Record<string, unknown> | null;
+  if (!line || !TEAM_NOTE_TYPES.has(line.type as string)) return null;
+  if (line.type === "routine_added") {
+    const schedule = line.schedule as Partial<Schedule> | undefined;
+    const ok = isText(line.instruction) && Array.isArray(schedule?.days) && schedule.days.every(day => typeof day === "number") && isText(schedule.time);
+    return ok ? line as unknown as TeamNoteEntry : null;
+  }
+  return isText(line.channel_id) && isText(line.ask) ? line as unknown as TeamNoteEntry : null;
+}
 
 /** A team proposal or a hire, as Task 6 will send it inside a proposal. */
 export interface ProposedMember { name: string; role?: string; shape?: string; color?: string; accessory?: string; model?: string }

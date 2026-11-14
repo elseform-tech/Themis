@@ -21,8 +21,9 @@ export const networkBlocked = (view: EffectivePermissions): boolean => view.sand
 export interface ShieldFacts { keeps: string[]; networkBlocked: boolean }
 const NOTHING: ShieldFacts = { keeps: [], networkBlocked: false };
 
-/** What the composer shield says about the chat's effective configuration; refreshed when the chat or its mode changes. */
-export function useShieldFacts(projectRoot: string | undefined, threadId: string | undefined, mode: string | undefined): ShieldFacts {
+/** What the composer shield says about the chat's effective configuration; refreshed when the chat or its mode changes.
+ *  A null `threadId` asks for the project's configuration (a Visions channel, whose chats share its mode). */
+export function useShieldFacts(projectRoot: string | undefined, threadId: string | null | undefined, mode: string | undefined): ShieldFacts {
   const [facts, setFacts] = useState<ShieldFacts>(NOTHING);
   useEffect(() => {
     if (projectRoot === undefined || threadId === undefined) { setFacts(NOTHING); return; }

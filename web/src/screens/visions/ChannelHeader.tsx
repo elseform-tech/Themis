@@ -1,7 +1,7 @@
 // A channel's header (boards TeamChannel, AdminChannel): the chief in 3D with its glow and ground
 // shadow, the channel's name large in the display font and gradient (it opens the channel's
-// details), the chief's name and job with its state, and one chip per worker. The chief's picture
-// and name open its profile. `# administration` shows Atlas, its admin, with no chips.
+// details), the chief's name and job with its state, and one chip per worker. The chief's name
+// opens its profile. `# administration` shows Atlas, its admin, with no chips.
 import type { ChannelInfo } from "../../lib/visions";
 import { ADMIN_VISION_ID } from "../../lib/visions";
 import { useApp } from "../../state/store";
@@ -30,7 +30,7 @@ export function ChannelHeader({ channel }: { channel: ChannelInfo }) {
   const profile = () => dispatch({ type: "visions/panel", panel: { kind: "vision", visionId: chief.id } });
   return (
     <header className="themis-team-head">
-      <div className="themis-team-picture" onClick={profile}>
+      <div className="themis-team-picture">
         <ChiefScene look={lookOf(chief)} expression={expression} name={chief.name} size={admin ? 120 : 130} />
       </div>
       <div className="themis-team-text">

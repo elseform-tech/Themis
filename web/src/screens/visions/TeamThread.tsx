@@ -1,6 +1,8 @@
 // A worker's thread with its chief (board TeamChannel), beside the channel and read-only: the
 // tasks and redirects the chief gave, the worker's reports and pushback, and links to the
 // worker's chats in this channel. There is no box to write in; the person talks to the chief.
+// A running work chat's link keeps its Stop: stopping a run is one of the writes the Workspace
+// rules allow the person (as in the Tasks tab).
 import type { ChannelInfo, VisionInfo } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { CharacterAvatar } from "./CharacterAvatar";

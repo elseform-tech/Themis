@@ -5,6 +5,7 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "../../components";
 import { ADMINISTRATION, postChannelMessage, type ApprovalModeName, type ChannelInfo } from "../../lib/visions";
+import { useShieldFacts } from "../../lib/yolo";
 import { describeError, toast, useApp } from "../../state/store";
 import { ComposerShield } from "../ComposerShield";
 import { saveChannelChange } from "./channels";
@@ -20,7 +21,8 @@ function ModeShield({ channel }: { channel: ChannelInfo }) {
     catch (error) { toast(dispatch, `Could not change the mode: ${describeError(error)}`, "danger"); }
     finally { setSaving(false); }
   }
-  return <ComposerShield mode={channel.approval_mode} saving={saving} onChange={mode => void change(mode)} />;
+  const facts = useShieldFacts(channel.project_root, null, channel.approval_mode);
+  return <ComposerShield mode={channel.approval_mode} saving={saving} yoloKeeps={facts.keeps} networkBlocked={facts.networkBlocked} onChange={mode => void change(mode)} />;
 }
 
 export function ChannelComposer({ channel, chiefName, draft, setDraft, onPosted }: { channel: ChannelInfo; chiefName: string; draft: string; setDraft: (text: string) => void; /** The post's seq and the Visions it woke. */ onPosted?: (seq: number, woken: string[]) => void }) {

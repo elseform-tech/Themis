@@ -1,9 +1,10 @@
 // A channel's details (canvas VisionChannel): its topic, the approval mode its Visions' chats run
 // in (the person's to set; a Vision never changes it), its members (Visions only) and Delete. A
-// member opens the chief's profile, or a worker's thread with the chief; New Vision makes one by hand.
-// `# administration` is built in: Atlas is its only member and it cannot be deleted.
+// member opens the chief's profile, or a worker's thread with the chief; each can be removed from
+// the channel or deleted. The Members block's + makes a new Vision by hand (the sidebar has no
+// Visions list). `# administration` is built in: Atlas is its only member, and neither can be deleted.
 import { useState } from "react";
-import { ADMIN_VISION_ID, deleteChannel, type ApprovalModeName, type ChannelInfo, ADMINISTRATION } from "../../lib/visions";
+import { ADMIN_VISION_ID, deleteChannel, deleteVision, type ApprovalModeName, type ChannelInfo, type VisionInfo, ADMINISTRATION } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { CharacterAvatar } from "./CharacterAvatar";
@@ -23,26 +24,40 @@ function NewVisionButton() {
   </>;
 }
 
-/** The channel's Visions, each opening the chief's profile or a worker's thread; others can be
- *  added, and any removed. */
-function Members({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
+/** One member: it opens the chief's profile or a worker's thread; Remove takes it out of the
+ *  channel (not in `# administration`), Delete deletes it after asking (never Atlas). */
+function MemberRow({ channel, vision, save }: { channel: ChannelInfo; vision: VisionInfo; save: (change: Partial<ChannelInfo>) => void }) {
   const { state, dispatch } = useApp();
-  const moods = visionMoods(state);
+  const mood = visionMoods(state)[vision.id] ?? "calm";
+  const hq = channel.name === ADMINISTRATION;
+  const remove = async () => {
+    await deleteVision(vision.id);
+    const panel = state.visions.open.panel;
+    if (panel && "visionId" in panel && panel.visionId === vision.id) dispatch({ type: "visions/panel", panel: { kind: "channel" } });
+    dispatch({ type: "visions/loaded", visions: state.visions.list.filter(each => each.id !== vision.id) });
+  };
+  const open = () => dispatch({ type: "visions/panel", panel: { kind: vision.id === channel.chief ? "vision" : "worker", visionId: vision.id } });
+  return <li>
+    <button type="button" className="themis-visions-member" aria-label={vision.name} onClick={open}>
+      <CharacterAvatar look={lookOf(vision)} mood={mood} size={20} />
+      <span className="themis-visions-member-name">{vision.name}</span>
+      {vision.role && <small>{vision.role}</small>}
+    </button>
+    {!hq && <PanelButton label={`Remove ${vision.name}`} onClick={() => save({ members: channel.members.filter(id => id !== vision.id) })}><CloseIcon /></PanelButton>}
+    {vision.id !== ADMIN_VISION_ID && <DeleteButton name={vision.name} consequence="Its chats stop and become ordinary chats." onDelete={remove} />}
+  </li>;
+}
+
+/** The channel's Visions; others can be added. */
+function Members({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
+  const { state } = useApp();
   const hq = channel.name === ADMINISTRATION;
   const members = channel.members.flatMap(id => state.visions.list.find(vision => vision.id === id) ?? []);
   // The admin works only in # administration.
   const addable = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID && !channel.members.includes(vision.id));
-  const open = (id: string) => dispatch({ type: "visions/panel", panel: { kind: id === channel.chief ? "vision" : "worker", visionId: id } });
   return <PanelBlock title="Members" action={hq ? undefined : <NewVisionButton />}>
     <ul className="themis-visions-members">
-      {members.map(vision => <li key={vision.id}>
-        <button type="button" className="themis-visions-member" aria-label={vision.name} onClick={() => open(vision.id)}>
-          <CharacterAvatar look={lookOf(vision)} mood={moods[vision.id] ?? "calm"} size={20} />
-          <span className="themis-visions-member-name">{vision.name}</span>
-          {vision.role && <small>{vision.role}</small>}
-        </button>
-        {!hq && <PanelButton label={`Remove ${vision.name}`} onClick={() => save({ members: channel.members.filter(id => id !== vision.id) })}><CloseIcon /></PanelButton>}
-      </li>)}
+      {members.map(vision => <MemberRow key={vision.id} channel={channel} vision={vision} save={save} />)}
     </ul>
     {!hq && addable.length > 0 && <select className="themis-visions-field" aria-label="Add a member" value="" onChange={event => { if (event.target.value) save({ members: [...channel.members, event.target.value] }); }}>
       <option value="">Add a member</option>

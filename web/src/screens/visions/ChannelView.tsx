@@ -54,12 +54,19 @@ function Thinking({ visions }: { visions: VisionInfo[] }) {
   ))}</>;
 }
 
-/** Lines a worker wrote or started stay in its thread with the chief; the channel keeps the
- *  person's, the chief's, notices and what the server posts under the chief. */
+/** The person's own actions on a worker, which the server notes with that worker's id. */
+const PERSON_ACTS: ReadonlySet<string> = new Set(["paused", "resumed", "stopped", "handed_back"]);
+
+/** The channel shows only the person and the chief. The server posts what the person must see
+ *  (a passed-on question, budget, team-paused and request-cap notices) under the chief, so any
+ *  other line carrying a worker's id belongs to that worker's thread with the chief and stays
+ *  out; the one exception is a notice of the person's own action on a worker (pause, resume,
+ *  stop, hand back), which keeps the worker's id and stays. Lines with no Vision stay. */
 function fromTheChief(channel: ChannelInfo, line: ChannelLine): boolean {
   const { entry } = line;
-  if (!channel.chief || !(entry.type === "vision" || entry.type === "chat_started" || entry.type === "answered")) return true;
-  return entry.vision_id === channel.chief;
+  const id = "vision_id" in entry ? entry.vision_id : undefined;
+  if (!channel.chief || !id || id === channel.chief || !channel.members.includes(id)) return true;
+  return entry.type === "notice" && PERSON_ACTS.has(entry.kind);
 }
 
 /** Keeps the log at its newest line while the person is there; reading back stays put. `tail`

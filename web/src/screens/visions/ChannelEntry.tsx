@@ -9,7 +9,7 @@ import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
-import { scheduleWords, TEAM_NOTE_TYPES, type TeamNoteEntry } from "./team";
+import { scheduleWords, TEAM_NOTE_TYPES, teamNote } from "./team";
 
 type AppState = ReturnType<typeof useApp>["state"];
 
@@ -78,22 +78,24 @@ const ARROW = <svg className="themis-team-note-icon" width="14" height="14" view
 const CLOCK = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5h4" /></svg>;
 
 /** A request between channels or a new routine, as one quiet line (board TeamChannel). The other
- *  channel's pill opens it. */
+ *  channel's pill opens it. A line missing what it shows is skipped. */
 function TeamNote({ line }: { line: ChannelLine }) {
-  const { dispatch } = useApp();
-  const entry = line.entry as unknown as TeamNoteEntry;
+  const { state, dispatch } = useApp();
+  const entry = teamNote(line.entry);
+  if (!entry) return null;
   let body: ReactNode;
   if (entry.type === "routine_added") {
     body = <>{CLOCK}<span>Added a routine: <b>{scheduleWords(entry.schedule)}</b>, {entry.instruction}</span></>;
   } else {
-    const pill = <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId: entry.channel_id })}># {entry.channel_name}</button>;
+    const name = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel";
+    const pill = <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId: entry.channel_id })}># {name}</button>;
     const sent = entry.type === "request_sent";
     const answer = entry.answer === undefined ? "" : ` ${sent ? "They" : "We"} ${entry.answer === "accepted" ? "took it on" : "declined"}.`;
     body = sent
       ? <>{ARROW}<span>Asked</span>{pill}<span>to {entry.ask}.{answer}</span></>
       : <>{ARROW}{pill}<span>asked us to {entry.ask}.{answer}</span></>;
   }
-  return <li className="themis-team-note" role="note">{body}<time className="themis-channel-time">{clock(line.at_ms)}</time></li>;
+  return <li className="themis-team-note"><div className="themis-team-note-line" role="note">{body}<time className="themis-channel-time">{clock(line.at_ms)}</time></div></li>;
 }
 
 function Avatar({ vision }: { vision: VisionInfo | undefined }) {
@@ -121,8 +123,11 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
       ? <ProposalCard entry={entry} applied={proposalLine(state, channelId, "proposal_applied", entry.proposal_id)} onOpenChannel={open} />
       : <ProposalCard applied={entry} onOpenChannel={open} />;
   }
-  const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
-  const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
+  const chat = channelChat(state, channelId, entry.thread_id);
+  // A question passed on under the chief still names whose chat asks.
+  const asker = entry.type === "passed_on" ? chat?.owner.vision_id ?? entry.vision_id : entry.vision_id;
+  const vision = visionById(state, asker)?.name ?? "A Vision";
+  const title = entry.type === "chat_started" ? entry.title : chat?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
   if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`About “${entry.question}”: `)} />;
   return <PassedOnCard entry={entry} vision={vision} title={title} />;

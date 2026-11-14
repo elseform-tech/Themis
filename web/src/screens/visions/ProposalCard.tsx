@@ -125,8 +125,8 @@ function TeamCard({ proposal, applied, onOpenChannel }: { proposal: Proposal & T
   const name = channel?.name ?? "";
   return <>
     <p className="themis-channel-text">{proposal.summary}</p>
-    <div className="themis-team-card" role="group" aria-label={`New worker for # ${name}`}>
-      <h3><ChannelPill name={name} channelId={channel?.id} onOpenChannel={onOpenChannel} />New worker{applied && <Created />}</h3>
+    <div className="themis-team-card" role="group" aria-label={name ? `New worker for # ${name}` : "New worker"}>
+      <h3>{name && <ChannelPill name={name} channelId={channel?.id} onOpenChannel={onOpenChannel} />}New worker{applied && <Created />}</h3>
       <ul><Member member={hire.worker} /></ul>
     </div>
   </>;

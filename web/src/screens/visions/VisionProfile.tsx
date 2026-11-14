@@ -61,6 +61,9 @@ function ModelField({ vision, save }: { vision: VisionInfo; save: Save }) {
 /** The soul as a text box, saved when the person leaves it. */
 function SoulField({ soul, save }: { soul: string; save: Save }) {
   const [draft, setDraft] = useState<string | null>(null);
+  // A soul saved meanwhile (here or elsewhere) replaces the draft; another field's save does not.
+  const [shown, setShown] = useState(soul);
+  if (shown !== soul) { setShown(soul); setDraft(null); }
   const commit = () => {
     if (draft === null) return;
     if (draft !== soul) void save({ soul: draft }).then(() => setDraft(null), () => undefined);
@@ -185,7 +188,7 @@ export function VisionProfile({ visionId, routines, spentToday }: { visionId: st
       {error && <p role="alert" className="themis-form-error">{error}</p>}
       <div className="themis-profile-grid">
         <div className="themis-profile-column">
-          <section className="themis-profile-block"><h2 className="themis-visions-label">Soul</h2><SoulField key={vision.revision} soul={vision.soul} save={save} /></section>
+          <section className="themis-profile-block"><h2 className="themis-visions-label">Soul</h2><SoulField key={vision.id} soul={vision.soul} save={save} /></section>
           <section className="themis-profile-block"><h2 className="themis-visions-label">Model</h2><ModelField vision={vision} save={guarded} /></section>
           {channel && !admin && <ChannelLimits channel={channel} settings={settings} spentToday={spentToday} onError={shown} />}
         </div>

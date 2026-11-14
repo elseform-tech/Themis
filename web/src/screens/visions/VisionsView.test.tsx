@@ -44,7 +44,8 @@ const entries: ChannelEntry[] = [
   { type: "person", text: "@Rook fix the date test" },
   { type: "vision", vision_id: "rook", text: "On it." },
   { type: "chat_started", vision_id: "rook", thread_id: "w1", title: "Fix the date test" },
-  { type: "passed_on", vision_id: "wren", thread_id: "w2", question_id: "q1", decision: "wording", question: "Which heading?" },
+  // Posted under the chief, as the server does; the card names the chat's owner.
+  { type: "passed_on", vision_id: "rook", thread_id: "w2", question_id: "q1", decision: "wording", question: "Which heading?" },
 ];
 const approval: ApprovalRequest = { thread_id: "w1", approval_id: "a1", tool: "shell", summary: "git push origin v0.9.0", risk: "network", command: { argv: ["git", "push", "origin", "v0.9.0"] } };
 

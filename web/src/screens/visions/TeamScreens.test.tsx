@@ -7,6 +7,7 @@ import { appReducer, DEFAULT_SETTINGS, initialState, type AppAction, type AppSta
 import type { ThreadInfo } from "../../lib/types";
 import type { ChannelEntry, ChannelInfo, OwnedChat, VisionInfo } from "../../lib/visions";
 import * as visions from "../../lib/visions";
+import * as tauri from "../../lib/tauri";
 import { ProposalCard } from "./ProposalCard";
 import { Routines } from "./Routines";
 import { SidebarWithVisions } from "./SidebarWithVisions";
@@ -26,6 +27,7 @@ vi.mock("../../lib/tauri", async importOriginal => ({
   listGoModels: vi.fn(async () => [{ id: "longcat-2.5", effort_levels: [] }]),
   listModelProviders: vi.fn(async () => []),
   stopThread: vi.fn(async () => undefined),
+  getEffectivePermissions: vi.fn(async () => ({})),
 }));
 vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
@@ -54,6 +56,12 @@ const releaseLines: ChannelEntry[] = [
   { type: "vision", vision_id: "juno", text: "Yes. Rook fixes the date rollover, Wren checks it." },
   { type: "vision", vision_id: "rook", text: "Fallback is in." },
   { type: "chat_started", vision_id: "rook", thread_id: "w1", title: "Fix the date rollover" },
+  // The server posts questions passed on to the person under the chief; a worker's own stays out.
+  { type: "passed_on", vision_id: "wren", thread_id: "w9", question_id: "q0", decision: "wording", question: "Which heading, Wren asks?" },
+  { type: "passed_on", vision_id: "juno", thread_id: "w9", question_id: "q1", decision: "wording", question: "Which heading for the notes?" },
+  // The person's own action on a worker stays; anything else a worker caused does not.
+  { type: "notice", kind: "paused", vision_id: "rook" },
+  { type: "notice", kind: "chat_failed", vision_id: "rook", thread_id: "w1" },
 ];
 const cast = () => [
   vision("admin", "Atlas", { shape: "broad", color: "slate", accessory: "crown", role: "Admin", soul: "Sets up teams." }),
@@ -133,6 +141,10 @@ describe("Team screens", () => {
     expect(channel).toHaveTextContent("Rook fixes the date rollover");
     expect(channel).not.toHaveTextContent("Fallback is in.");
     expect(within(channel).queryByRole("button", { name: /^Open Fix the date rollover/ })).toBeNull();
+    expect(channel).toHaveTextContent("Which heading for the notes?");
+    expect(channel).not.toHaveTextContent("Which heading, Wren asks?");
+    expect(channel).toHaveTextContent("You paused Rook.");
+    expect(channel).not.toHaveTextContent("A chat Rook started failed");
     // The box talks to Juno, with the mode shield and no mention button.
     expect(within(channel).getByRole("textbox", { name: "Message Juno" })).toHaveAttribute("placeholder", "Message Juno");
     expect(within(channel).getByLabelText("Permissions: Custom")).toBeTruthy();
@@ -261,7 +273,7 @@ describe("Team screens", () => {
 
   it("requests between channels and new routines show as one line", async () => {
     const notes = [
-      { type: "request_sent", vision_id: "juno", request_id: "q1", channel_id: "c2", channel_name: "api", ask: "fix the export date format", answer: "accepted" },
+      { type: "request_sent", vision_id: "juno", request_id: "q1", channel_id: "c2", ask: "fix the export date format", answer: "accepted" },
       { type: "routine_added", vision_id: "juno", routine_id: "r1", schedule: { days: [1, 2, 3, 4, 5], time: "09:00" }, instruction: "Tell me what happened overnight" },
     ] as unknown as ChannelEntry[];
     const lines = notes.map((entry, index) => ({ seq: 10 + index, at_ms: Date.UTC(2026, 10, 14, 9, 5), entry }));
@@ -271,6 +283,51 @@ describe("Team screens", () => {
     expect(notesShown[1]).toHaveTextContent(/^Added a routine: Weekdays 09:00, Tell me what happened overnight/);
     fireEvent.click(within(notesShown[0]!).getByRole("button", { name: "# api" }));
     expect(screen.getByRole("region", { name: "# api" })).toBeTruthy();
+  });
+
+  it("a malformed request or routine line is skipped, the rest of the channel stays", async () => {
+    const broken = [
+      { type: "request_sent", vision_id: "juno" },
+      { type: "routine_added", vision_id: "juno", routine_id: "r1" },
+      { type: "person", text: "Still here." },
+    ] as unknown as ChannelEntry[];
+    await show(app, fixture({ lines: { c1: broken.map((entry, index) => ({ seq: 20 + index, at_ms: 0, entry })) } }));
+    const channel = screen.getByRole("region", { name: "# release" });
+    expect(channel).toHaveTextContent("Still here.");
+    expect(within(channel).queryAllByRole("note")).toHaveLength(0);
+  });
+
+  it("the channel's shield says what YOLO still keeps and a blocked network", async () => {
+    vi.mocked(tauri.getEffectivePermissions).mockResolvedValue({ sandbox: { network: "block" }, approval: { rules: [{ action: "deny" }] } } as never);
+    const yolo = fixture();
+    yolo.visions.channels = { "/p": [hq, { ...release, approval_mode: "yolo" }, api] };
+    await show(app, yolo);
+    expect(tauri.getEffectivePermissions).toHaveBeenCalledWith("/p", null);
+    const shield = screen.getByLabelText("Permissions: YOLO").closest("details")!;
+    expect(shield).toHaveTextContent("Still applies: 1 deny rule");
+    expect(shield).toHaveTextContent("Network blocked by your configuration");
+  });
+
+  it("a hire for a channel that is not listed shows no empty pill", async () => {
+    const proposal = { summary: "Add Tess?", channels: [], visions: [], changes: [], hire: { channel_id: "gone", worker: { name: "Tess", role: "UI tester" } } };
+    await show(() => <ProposalCard entry={{ type: "proposal", vision_id: "admin", proposal_id: "p3", proposal }} onOpenChannel={vi.fn()} />);
+    const card = screen.getByRole("group", { name: "New worker" });
+    expect(card.querySelector(".themis-mention")).toBeNull();
+    expect(card).toHaveTextContent(/^New worker/);
+  });
+
+  it("an unsaved soul survives another save, and follows a soul saved elsewhere", async () => {
+    await show(() => <VisionProfile visionId="juno" />);
+    const soul = () => screen.getByRole("textbox", { name: "Soul" });
+    fireEvent.change(soul(), { target: { value: "Half typed" } });
+    // The model saves meanwhile (a new revision): the draft stays.
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "" } }); });
+    expect(visions.saveVision).toHaveBeenCalled();
+    expect(soul()).toHaveValue("Half typed");
+    // The soul saved from elsewhere replaces what is shown.
+    const live2 = live.value as { state: AppState; dispatch: (action: AppAction) => void };
+    await act(async () => { live2.dispatch({ type: "visions/loaded", visions: live2.state.visions.list.map(each => each.id === "juno" ? { ...each, soul: "From elsewhere.", revision: "r9" } : each) }); });
+    expect(soul()).toHaveValue("From elsewhere.");
   });
 
   it("no_hint_text_on_team_screens", async () => {
