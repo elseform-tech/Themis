@@ -81,7 +81,7 @@ function LimitsGroup({ settings, patch, onError }: { settings: VisionsSettings; 
     }
     if (dollars !== settings.daily_budget_usd) patch(() => ({ daily_budget_usd: dollars }));
   };
-  // Atlas keeps running, so the person can still ask it in # hq.
+  // Atlas keeps running, so the person can still ask it in # administration.
   const visions = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID);
   const allPaused = visions.length > 0 && visions.every(vision => vision.paused);
   const pauseAll = async (paused: boolean) => {

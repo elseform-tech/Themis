@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 describe("the app's store", () => {
-  it("lands Visions on the new project's # hq after a project change from anywhere", async () => {
+  it("lands Visions on the new project's # administration after a project change from anywhere", async () => {
     await act(async () => { render(<AppProvider><Probe /></AppProvider>); });
     const send = (action: AppAction) => act(() => { sent.dispatch!(action); });
     send({ type: "project/opened", project: { root: "/p", name: "P", is_git: true } });

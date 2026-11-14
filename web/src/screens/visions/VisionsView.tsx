@@ -1,4 +1,4 @@
-// Visions mode's main view: a channel (`# hq` is one too), or a chat opened from a channel, with a
+// Visions mode's main view: a channel (`# administration` is one too), or a chat opened from a channel, with a
 // Vision's profile or the channel's details beside it. What is open is `visions.open` alone; when it
 // is gone the view says so in place and never moves on its own.
 import type { ReactNode } from "react";

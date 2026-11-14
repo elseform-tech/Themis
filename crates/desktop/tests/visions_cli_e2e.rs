@@ -110,7 +110,7 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
         fx.project.display(),
         fx.project.file_name().unwrap().to_string_lossy()
     );
-    // Listed by name: the built-in `# hq` comes first.
+    // Listed by name: the built-in `# administration` comes first.
     let channels = fx.call_ok("list_channels", json!({"projectRoot": roundabout}));
     assert_eq!(channels.as_array().unwrap().len(), 2);
     assert_eq!(channels[1]["project_root"], json!(fx.project));
@@ -825,7 +825,7 @@ async fn an_approval_in_a_taken_over_chat_counts_for_no_vision_or_channel() {
     ));
     wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
     let needs = |fx: &Fixture| {
-        // Listing the channels makes `# hq` and Atlas, which sort first.
+        // Listing the channels makes `# administration` and Atlas, which sort first.
         let channels = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
         let vision = fx.call_ok("list_visions", json!({}))[1]["needs"].clone();
         (vision, channels[1]["needs"].clone())

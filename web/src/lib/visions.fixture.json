@@ -22,7 +22,7 @@
   },
   "channel": {
     "id": "c1",
-    "name": "hq",
+    "name": "administration",
     "topic": "Ship 2.0",
     "project_root": "/repo",
     "approval_mode": "auto",

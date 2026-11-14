@@ -332,6 +332,8 @@ pub(crate) struct VisionsCache {
     conversion_checked: bool,
     /// `# administration` channels still to be told the store moved to teams.
     conversion_pending: Option<Vec<String>>,
+    /// Why the move to teams could not run (file, event), for the log; it is tried again.
+    conversion_failed: Option<(&'static str, &'static str)>,
 }
 
 impl AppState {

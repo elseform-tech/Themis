@@ -38,7 +38,7 @@ const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): Visi
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook"], chief: "rook", revision: "c1r" };
-const hq: ChannelInfo = { id: "h1", name: "hq", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "h1r" };
+const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "h1r" };
 
 function state(): AppState {
   return {
@@ -158,13 +158,13 @@ describe("Channel details", () => {
     expect(screen.getByRole("button", { name: "Delete # release" })).toBeInTheDocument();
   });
 
-  it("keeps # hq built in: no Delete, and Atlas its only member", async () => {
+  it("keeps # administration built in: no Delete, and Atlas its only member", async () => {
     await show(() => <OpenChannelDetails />, opened(null));
-    expect(screen.queryByRole("button", { name: "Delete # hq" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete # administration" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Add a member" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Remove Atlas" })).toBeNull();
     expect(screen.getByRole("button", { name: "Atlas" })).toBeInTheDocument();
-    // Atlas starts no chats in # hq, so its approval mode would do nothing.
+    // Atlas starts no chats in # administration, so its approval mode would do nothing.
     expect(screen.queryByRole("combobox", { name: "Approval mode" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Topic" })).not.toHaveAttribute("placeholder");
   });

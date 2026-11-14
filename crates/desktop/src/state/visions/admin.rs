@@ -512,6 +512,10 @@ impl AppState {
             self.visions_note("admin_created", json!({"vision_id": ADMIN_VISION_ID}));
             self.visions_announce_all();
         }
+        let failed = self.visions_cache().conversion_failed.take();
+        if let Some((file, event)) = failed {
+            self.visions_note("conversion_failed", json!({"file": file, "event": event}));
+        }
         let told = self
             .visions_cache()
             .finish_conversion(&self.inner.visions_dir)

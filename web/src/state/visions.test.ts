@@ -209,10 +209,10 @@ describe("reloadVisions", () => {
   });
 
   it("a first load lists the channels before the Visions, so the admin they make is listed", async () => {
-    // As the server does: listing a project's channels makes Atlas and # hq.
+    // As the server does: listing a project's channels makes Atlas and # administration.
     let made = false;
     const atlas = { ...VISION, id: "admin", name: "Atlas" };
-    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "hq", members: ["admin"], chief: "admin" }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
+    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "administration", members: ["admin"], chief: "admin" }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
     const dispatch = vi.fn();
     await reloadVisions(api, {}, withChannel([], []), dispatch, ["/repo"]);
     expect(dispatch).toHaveBeenCalledWith({ type: "visions/loaded", visions: [atlas] });
@@ -367,7 +367,7 @@ describe("wire fixture", () => {
 });
 
 describe("visions follow the project", () => {
-  it("a project switched from plain chat lands Visions on that project's # hq", () => {
+  it("a project switched from plain chat lands Visions on that project's # administration", () => {
     let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
     state = reducer(state, { type: "visions/loaded", projectRoot: "/q", channels: [channel("c2", "/q")] });
     state = appReducer({ ...state, activeProjectRoot: "/p", projects: [{ root: "/p", name: "P", is_git: true }, { root: "/q", name: "Q", is_git: true }] }, { type: "ui/view", view: "visions" });
@@ -376,7 +376,7 @@ describe("visions follow the project", () => {
     state = appReducer(state, { type: "project/selected", root: "/q" });
     state = appReducer(state, { type: "ui/view", view: "visions" });
     expect(state.visions.open).toMatchObject({ channelId: null, chatId: null });
-    // Back to the first project: still its own # hq, nothing claims a channel elsewhere is gone.
+    // Back to the first project: still its own # administration, nothing claims a channel elsewhere is gone.
     state = appReducer(state, { type: "project/selected", root: "/p" });
     expect(state.visions.open.channelId).toBeNull();
   });

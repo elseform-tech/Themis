@@ -1,7 +1,7 @@
 // A Vision's profile (canvas VisionProfile): Pause, Delete, its model, an autonomy override that
 // may only lower Settings › Visions, its daily budget, its soul and the channels it works in.
 // Atlas, the built-in admin, has no Delete and shows only what applies to it: it drives no chats
-// (no autonomy), its runs do not read a soul, and it works only in `# hq`.
+// (no autonomy), its runs do not read a soul, and it works only in `# administration`.
 import { useEffect, useState } from "react";
 import { listGoModels, listModelProviders } from "../../lib/tauri";
 import type { GoModel, ModelProvider } from "../../lib/types";

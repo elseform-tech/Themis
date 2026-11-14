@@ -1,7 +1,9 @@
-//! The one-time move of a Phase 1 store (channels of peer Visions, `# administration`) to teams: `# administration`
-//! becomes `# administration` with the admin as its chief, every other channel's first member
-//! becomes its chief, the per-Vision autonomy and budget overrides go (the channel's settings
-//! replace them), and old heartbeat notes are deleted. Logs and owned chats stay as they are.
+//! The one-time move of a Phase 1 store (channels of peer Visions, `# hq`) to teams: `# hq`
+//! becomes `# administration` with the admin as its chief (a channel the person had named
+//! `administration` steps aside), every other channel's first member becomes its chief, the
+//! per-Vision autonomy and budget overrides become the channel's (its strictest member's, so
+//! nothing loosens), souls move to `soul.md`, and old heartbeat notes are deleted. Logs and
+//! owned chats stay as they are.
 //!
 //! It runs on the store's first load and is idempotent: each step only changes what is still in
 //! the old shape, so a run cut short is finished by the next one. The `conversion` marker is
@@ -9,7 +11,10 @@
 
 use std::path::Path;
 
+use std::collections::BTreeMap;
+
 use serde_json::Value;
+use themis_core::visions::{vision_decides, Autonomy, Decision};
 
 use super::admin::{ADMINISTRATION, ADMIN_VISION_ID, OLD_HQ};
 use super::store::{read_store, write_store, StoreError};
@@ -29,13 +34,16 @@ pub(super) fn done(dir: &Path) -> bool {
 }
 
 /// Moves what is still in the old shape; returns the `# administration` channel ids to tell.
-/// A store with no files yet needs nothing and returns none.
+/// Both files are read before anything is written, so a damaged one moves nothing; channels are
+/// written before the Visions lose their overrides, so a run cut short still has them to carry.
 pub(super) fn convert(dir: &Path) -> Result<Vec<String>, StoreError> {
     let mut channels: Vec<Value> = read_store(dir, CHANNELS_FILE)?;
-    let mut changed = false;
+    let mut visions: Vec<Value> = read_store(dir, VISIONS_FILE)?;
+    let mut changed = step_aside(&mut channels);
     let mut administrations = Vec::new();
     for channel in &mut channels {
         changed |= convert_channel(channel);
+        changed |= carry_limits(channel, &visions);
         if channel["name"] == ADMINISTRATION {
             if let Some(id) = channel["id"].as_str() {
                 administrations.push(id.to_owned());
@@ -49,7 +57,6 @@ pub(super) fn convert(dir: &Path) -> Result<Vec<String>, StoreError> {
         .iter()
         .filter_map(|channel| channel["chief"].as_str().map(str::to_owned))
         .collect();
-    let mut visions: Vec<Value> = read_store(dir, VISIONS_FILE)?;
     let mut dropped = false;
     for vision in &mut visions {
         dropped |= move_soul(dir, vision, &chiefs)?;
@@ -62,12 +69,129 @@ pub(super) fn convert(dir: &Path) -> Result<Vec<String>, StoreError> {
     if dropped {
         write_store(dir, VISIONS_FILE, &visions)?;
     }
-    let heartbeats = dir.join(HEARTBEATS_DIR);
-    if heartbeats.is_dir() {
-        std::fs::remove_dir_all(&heartbeats)
-            .map_err(|error| StoreError::write_failed(MARKER_FILE, &error))?;
-    }
+    // Old notes nobody reads any more: removing them is a courtesy, never a reason to stop.
+    let _ = std::fs::remove_dir_all(dir.join(HEARTBEATS_DIR));
     Ok(administrations)
+}
+
+/// A channel the person had named `administration` (Phase 1 reserved only `hq`) takes the
+/// first free `administration-team` name in its project, so `# hq` can take the built-in one.
+fn step_aside(channels: &mut [Value]) -> bool {
+    let mut changed = false;
+    for at in 0..channels.len() {
+        let theirs = channels[at]["name"] == ADMINISTRATION
+            && channels[at]["members"] != serde_json::json!([ADMIN_VISION_ID]);
+        if !theirs {
+            continue;
+        }
+        let root = channels[at]["project_root"].clone();
+        let taken = |name: &str| {
+            channels
+                .iter()
+                .any(|other| other["project_root"] == root && other["name"] == name)
+        };
+        let mut name = "administration-team".to_owned();
+        let mut next = 2;
+        while taken(&name) {
+            name = format!("administration-team-{next}");
+            next += 1;
+        }
+        channels[at]["name"] = Value::from(name);
+        changed = true;
+    }
+    changed
+}
+
+/// A team keeps its strictest member's limits: the lowest autonomy (the decisions every member
+/// left to itself, under Custom when the members differ in kind) and the lowest budget. Only
+/// set on a channel that has none yet, so it runs once.
+fn carry_limits(channel: &mut Value, visions: &[Value]) -> bool {
+    if channel["name"] == ADMINISTRATION
+        || channel.get("autonomy").is_some()
+        || channel.get("daily_budget_usd").is_some()
+    {
+        return false;
+    }
+    let members: Vec<&Value> = channel["members"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .filter_map(|id| visions.iter().find(|vision| vision["id"] == *id))
+                .collect()
+        })
+        .unwrap_or_default();
+    let budget = members
+        .iter()
+        .filter_map(|vision| vision["daily_budget_usd"].as_f64())
+        .fold(None, |low: Option<f64>, cap| {
+            Some(low.map_or(cap, |low| low.min(cap)))
+        });
+    let levels: Vec<Vec<Decision>> = members
+        .iter()
+        .filter_map(|vision| decided(vision))
+        .collect();
+    let Some(fields) = channel.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    if let Some(budget) = budget {
+        fields.insert("daily_budget_usd".into(), Value::from(budget));
+        changed = true;
+    }
+    if let Some(first) = levels.first() {
+        let common: Vec<Decision> = first
+            .iter()
+            .copied()
+            .filter(|decision| levels.iter().all(|each| each.contains(decision)))
+            .collect();
+        let preset = [
+            Autonomy::Ask,
+            Autonomy::Small,
+            Autonomy::Most,
+            Autonomy::NearlyAll,
+        ]
+        .into_iter()
+        .find(|level| decided_by(*level, &BTreeMap::new()) == common);
+        match preset {
+            Some(level) => fields.insert(
+                "autonomy".into(),
+                serde_json::to_value(level).unwrap_or_default(),
+            ),
+            None => {
+                let rows: serde_json::Map<String, Value> = Decision::ALL
+                    .into_iter()
+                    .map(|decision| {
+                        (
+                            decision.id().to_owned(),
+                            Value::from(common.contains(&decision)),
+                        )
+                    })
+                    .collect();
+                fields.insert("custom".into(), Value::Object(rows));
+                fields.insert("autonomy".into(), Value::from("custom"))
+            }
+        };
+        changed = true;
+    }
+    changed
+}
+
+/// The decisions `level` (with `rows` under Custom) leaves to a Vision, in `Decision::ALL` order.
+fn decided_by(level: Autonomy, rows: &BTreeMap<String, bool>) -> Vec<Decision> {
+    Decision::ALL
+        .into_iter()
+        .filter(|decision| vision_decides(level, rows, *decision))
+        .collect()
+}
+
+/// The decisions a Phase 1 Vision's own autonomy left to it, when it had one.
+fn decided(vision: &Value) -> Option<Vec<Decision>> {
+    let level: Autonomy = serde_json::from_value(vision.get("autonomy")?.clone()).ok()?;
+    let rows: BTreeMap<String, bool> = vision
+        .get("custom")
+        .and_then(|rows| serde_json::from_value(rows.clone()).ok())
+        .unwrap_or_default();
+    Some(decided_by(level, &rows))
 }
 
 /// A chief's or Atlas's soul text moves to its `soul.md` (kept when one is already there); a
@@ -147,7 +271,10 @@ impl VisionsCache {
             // until it is fixed.
             match convert(dir) {
                 Ok(pending) => self.conversion_pending = Some(pending),
-                Err(_) => return Ok(()),
+                Err(error) => {
+                    self.conversion_failed = Some((error.file(), error.event()));
+                    return Ok(());
+                }
             }
         }
         self.conversion_checked = true;

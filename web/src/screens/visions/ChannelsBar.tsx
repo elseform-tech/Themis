@@ -1,8 +1,8 @@
-// The channels bar: in Visions mode it takes the chat list's place under the project switcher: `# hq`,
+// The channels bar: in Visions mode it takes the chat list's place under the project switcher: `# administration`,
 // the project's channels (each with what waits on the person there) and the Visions with their
-// live clouds and moods, each opening its profile (the admin lives in # hq, not in that list).
+// live clouds and moods, each opening its profile (the admin lives in # administration, not in that list).
 import { useState } from "react";
-import { ADMIN_VISION_ID } from "../../lib/visions";
+import { ADMIN_VISION_ID, ADMINISTRATION } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { channelNeeds, MOOD_LABEL, visionMoods } from "../../state/visions";
 import { CharacterAvatar } from "./CharacterAvatar";
@@ -41,7 +41,7 @@ export function ChannelsBar() {
   const openChannel = (channelId: string | null) => dispatch({ type: "visions/open", channelId });
   return <>
     <div className="themis-sidebar-projects themis-channels-bar">
-        <ChannelRow id={hq.id || null} name="hq" needs={channelNeeds(hq)} active={current === hq} onOpen={openChannel} />
+        <ChannelRow id={hq.id || null} name={ADMINISTRATION} needs={channelNeeds(hq)} active={current === hq} onOpen={openChannel} />
         <SectionHead title="Channels" add="New channel" onAdd={() => setSheet("channel")} />
         <ul className="themis-sidebar-list">
           {channels.map(channel => <li key={channel.id}><ChannelRow id={channel.id} name={channel.name} needs={channelNeeds(channel)} active={current === channel} onOpen={openChannel} /></li>)}

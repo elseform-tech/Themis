@@ -217,3 +217,132 @@ fn the_admin_is_chief_only_of_administration() {
         .channel_save(with_worker, Some(&administration.revision))
         .is_err());
 }
+
+/// A Phase 1 project that already had a channel named `administration`, a channel with no
+/// members, owned chats, and Visions stricter than Settings.
+fn crowded_phase1_store(visions_dir: &Path, root: &Path) {
+    phase1_store(visions_dir, root);
+    let mut channels = raw(visions_dir, "channels.json");
+    channels.as_array_mut().unwrap().extend([
+        json!({"id": "adm1", "name": "administration", "topic": "Office", "project_root": root,
+               "approval_mode": "custom", "members": ["rook"], "revision": "1"}),
+        json!({"id": "empty1", "name": "empty", "topic": "", "project_root": root,
+               "approval_mode": "custom", "members": [], "revision": "1"}),
+    ]);
+    std::fs::write(visions_dir.join("channels.json"), channels.to_string()).unwrap();
+    let mut visions = raw(visions_dir, "visions.json");
+    // Rook (in # docs with Wren) asks about everything and spends little.
+    let rook = visions
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|v| v["id"] == "rook")
+        .unwrap();
+    rook["autonomy"] = json!("ask");
+    rook["daily_budget_usd"] = json!(0.2);
+    std::fs::write(visions_dir.join("visions.json"), visions.to_string()).unwrap();
+    std::fs::write(
+        visions_dir.join("owners.json"),
+        r#"[{"thread_id":"t1","vision_id":"wren","channel_id":"docs1","kind":"work","hold":"none"}]"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_channel_already_named_administration_steps_aside() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects").join("docs");
+    let state = state_in(dir.path());
+    let visions_dir = state.inner.visions_dir.clone();
+    crowded_phase1_store(&visions_dir, &root);
+
+    state.visions_ensure_administration(&root).unwrap();
+
+    let channels = state.channel_list(&root);
+    let named: Vec<&str> = channels.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(
+        named
+            .iter()
+            .filter(|name| **name == "administration")
+            .count(),
+        1
+    );
+    assert_eq!(
+        channels.iter().find(|c| c.id == "hq1").unwrap().name,
+        "administration"
+    );
+    let theirs = channels.iter().find(|c| c.id == "adm1").unwrap();
+    assert_eq!(theirs.name, "administration-team");
+    assert_eq!(theirs.chief, "rook");
+    // The built-in channel is listed first.
+    assert_eq!(channels[0].id, "hq1");
+    // A channel with no members has no chief yet.
+    assert_eq!(
+        channels.iter().find(|c| c.id == "empty1").unwrap().chief,
+        ""
+    );
+    assert_eq!(notes_in(&visions_dir, "hq1"), 1);
+    assert_eq!(notes_in(&visions_dir, "adm1"), 0);
+}
+
+#[test]
+fn the_strictest_member_limits_carry_over_to_the_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects").join("docs");
+    let state = state_in(dir.path());
+    let visions_dir = state.inner.visions_dir.clone();
+    crowded_phase1_store(&visions_dir, &root);
+
+    state.visions_ensure_administration(&root).unwrap();
+
+    // # docs had Wren (most, $0.5) and Rook (ask, $0.2): the team asks and spends $0.2.
+    let docs = state
+        .channel_list(&root)
+        .into_iter()
+        .find(|c| c.id == "docs1")
+        .unwrap();
+    assert_eq!(docs.autonomy, Some(themis_core::visions::Autonomy::Ask));
+    assert_eq!(docs.daily_budget_usd, Some(0.2));
+}
+
+#[test]
+fn owned_chats_are_left_exactly_as_they_were() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects").join("docs");
+    let state = state_in(dir.path());
+    let visions_dir = state.inner.visions_dir.clone();
+    crowded_phase1_store(&visions_dir, &root);
+    let before = std::fs::read(visions_dir.join("owners.json")).unwrap();
+
+    state.visions_ensure_administration(&root).unwrap();
+
+    assert_eq!(
+        std::fs::read(visions_dir.join("owners.json")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn a_damaged_visions_file_converts_nothing_until_it_is_fixed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects").join("docs");
+    let visions_dir = state_in(dir.path()).inner.visions_dir.clone();
+    phase1_store(&visions_dir, &root);
+    let good = std::fs::read(visions_dir.join("visions.json")).unwrap();
+    std::fs::write(visions_dir.join("visions.json"), "not json").unwrap();
+
+    let state = state_in(dir.path());
+    assert!(state.visions_ensure_administration(&root).is_err());
+    assert!(!visions_dir.join(MARKER_FILE).exists());
+    assert_eq!(
+        raw(&visions_dir, "channels.json")[0]["name"],
+        "hq",
+        "nothing half-moved"
+    );
+
+    std::fs::write(visions_dir.join("visions.json"), good).unwrap();
+    let fixed = state_in(dir.path());
+    fixed.visions_ensure_administration(&root).unwrap();
+    assert!(visions_dir.join(MARKER_FILE).exists());
+    assert_eq!(notes_in(&visions_dir, "hq1"), 1);
+}

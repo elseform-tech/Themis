@@ -11,7 +11,7 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
 
 export type Autonomy = "ask" | "small" | "most" | "nearly_all" | "custom";
 
-/** The built-in admin Vision's id: Atlas, drawn with a crown, the only member of each `# hq`. */
+/** The built-in admin Vision's id: Atlas, drawn with a crown, the only member of each `# administration`. */
 export const ADMIN_VISION_ID = "admin";
 export type ApprovalModeName = "custom" | "auto" | "yolo";
 
@@ -195,6 +195,9 @@ export function getVisionsSettings(): Promise<VisionsSettingsView> { return invo
 export function updateVisionsSettings(changes: Partial<{ [K in keyof VisionsSettings]: VisionsSettings[K] | null }>, revision: string | null): Promise<VisionsSettingsView> { return invoke("update_visions_settings", { changes, revision }); }
 /** A chat's questions, answered ones included: which passed-on questions are still open. */
 export function listQuestions(threadId: string): Promise<Question[]> { return invoke("list_questions", { threadId }); }
+
+/** The built-in channel where Atlas sets up teams (Rust `ADMINISTRATION`). */
+export const ADMINISTRATION = "administration";
 
 /** Every channel entry's fields besides `type`, optional ones included: the wire fixture test
  *  checks them against Rust. */

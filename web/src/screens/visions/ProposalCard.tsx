@@ -1,4 +1,4 @@
-// The admin's proposal in # hq: what it would set up, in its words and item by item, and whether it
+// The admin's proposal in # administration: what it would set up, in its words and item by item, and whether it
 // waits for the person's answer or was set up (with links to the channels it made or changed). A
 // setup whose proposal is not loaded shows on its own.
 import type { ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";

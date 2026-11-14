@@ -38,7 +38,7 @@ export interface VisionsState {
   chats: Record<string, OwnedChat[]>;
   /** The open questions of the chats a window passed questions on from, by chat, as last read. */
   questions: Record<string, string[]>;
-  /** What the Visions view shows: a channel (null is `# hq`), and a chat opened from it. */
+  /** What the Visions view shows: a channel (null is `# administration`), and a chat opened from it. */
   open: VisionsOpen;
 }
 
@@ -191,7 +191,7 @@ export function rememberPlainChoice(state: AppState, action: AppAction): AppStat
 }
 
 /** After any action: when the project changed and the open channel is not one of the new
- *  project's, Visions shows that project's `# hq` (the channel was not deleted, it is elsewhere). */
+ *  project's, Visions shows that project's `# administration` (the channel was not deleted, it is elsewhere). */
 export function visionsFollowProject(before: AppState, after: AppState): AppState {
   const { channelId } = after.visions.open;
   if (after.activeProjectRoot === before.activeProjectRoot || channelId === null) return after;
@@ -206,7 +206,7 @@ function reshow(state: AppState): AppState {
   return chatId === null ? state : { ...state, activeThreadId: chatId };
 }
 
-/** Shows a channel (or `# hq`), and with `chatId` one of its chats, which becomes the active chat;
+/** Shows a channel (or `# administration`), and with `chatId` one of its chats, which becomes the active chat;
  *  the plain chat open before it is kept for Chats to return to. */
 function open(state: AppState, action: Extract<VisionsAction, { type: "visions/open" }>): AppState {
   const chatId = action.chatId ?? null;
@@ -228,7 +228,7 @@ export function channelNeeds(channel: ChannelInfo): number {
   return channel.needs ?? 0;
 }
 
-/** Another project while in Visions: its `# hq`, and its newest plain chat for Chats to return to. */
+/** Another project while in Visions: its `# administration`, and its newest plain chat for Chats to return to. */
 function project(state: AppState, root: string): AppState {
   const newest = [...(state.threadsByProject[root] ?? [])].sort((a, b) => (b.last_activity_seq ?? 0) - (a.last_activity_seq ?? 0))[0]?.id ?? null;
   return { ...state, activeProjectRoot: root, activeThreadId: newest, visions: { ...state.visions, open: { ...state.visions.open, channelId: null, chatId: null, plainThreadId: newest } } };
@@ -352,7 +352,7 @@ function wantsChannel(want: Wanted, channel: ChannelInfo): boolean {
 async function reload(bridge: VisionsBridge, want: Wanted, state: AppState, dispatch: (action: VisionsAction) => void): Promise<void> {
   const known = state.visions.channels;
   const listRoots = rootsToList(want, known);
-  // Channels first: listing a project's channels makes Atlas and its # hq when they are new.
+  // Channels first: listing a project's channels makes Atlas and its # administration when they are new.
   const listed = await Promise.allSettled([...listRoots].map(async projectRoot => ({ projectRoot, channels: await bridge.listChannels(projectRoot) })));
   if (want.all || want.list) {
     try { dispatch({ type: "visions/loaded", visions: await bridge.listVisions() }); } catch { /* the list shown stays */ }

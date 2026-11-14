@@ -113,7 +113,7 @@ describe("Visions view", () => {
     expect(screen.queryByRole("complementary", { name: "Workspace navigation" })).toBeNull();
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).getByLabelText("Project: Ledger")).toBeTruthy();
-    expect(within(bar).getByRole("button", { name: "# hq" })).toBeTruthy();
+    expect(within(bar).getByRole("button", { name: "# administration" })).toBeTruthy();
     // The channel tag is the server's count of what waits in that channel's own chats.
     expect(within(bar).getByRole("button", { name: "# release, 2 need you" })).toBeTruthy();
     const wren = within(bar).getByText("Wren").closest("li")!;
@@ -121,15 +121,15 @@ describe("Visions view", () => {
     expect(within(bar).getByText("Rook").closest("li")).toHaveTextContent("Needs you");
     expect(within(bar).getByRole("button", { name: "New channel" })).toBeTruthy();
     expect(within(bar).getByRole("button", { name: "New Vision" })).toBeTruthy();
-    // # hq is a channel like any other; with no hq channel yet it is empty and cannot be written to.
-    const hq = screen.getByRole("region", { name: "# hq" });
+    // # administration is a channel like any other; with no hq channel yet it is empty and cannot be written to.
+    const hq = screen.getByRole("region", { name: "# administration" });
     expect(hq).toHaveTextContent("No messages yet.");
-    expect(within(hq).getByLabelText("Message #hq")).toBeDisabled();
+    expect(within(hq).getByLabelText("Message #administration")).toBeDisabled();
     expect(within(hq).queryByRole("button", { name: /^New / })).toBeNull();
   });
 
   it("the_admin_lives_in_hq_with_its_proposals", () => {
-    const hq: ChannelInfo = { id: "h1", name: "hq", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "r" };
+    const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "r" };
     const proposal: ChannelEntry = { type: "proposal", vision_id: "admin", proposal_id: "p1", proposal: { summary: "A channel for releases.", channels: [{ name: "releases", topic: "", members: [] }], visions: [], changes: [] } };
     const start = fixture();
     mount({
@@ -143,11 +143,11 @@ describe("Visions view", () => {
     });
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).queryByText("Atlas")).toBeNull();
-    const room = screen.getByRole("region", { name: "# hq" });
+    const room = screen.getByRole("region", { name: "# administration" });
     expect(within(room).getByRole("img", { name: "Here: Atlas" }).querySelector("[data-accessory='crown']")).toBeTruthy();
     expect(within(room).getByText("Atlas").closest("li")!.querySelector("[data-accessory='crown']")).toBeTruthy();
     expect(within(room).getByRole("group", { name: "Proposal" })).toHaveTextContent("A channel for releases.");
-    expect(within(room).getByLabelText("Message #hq")).not.toBeDisabled();
+    expect(within(room).getByLabelText("Message #administration")).not.toBeDisabled();
   });
 
   it("a_visions_message_shows_its_markdown_and_the_persons_stays_as_typed", () => {
@@ -371,7 +371,7 @@ describe("Visions view", () => {
     await waitFor(() => expect(loadOlder).toHaveBeenCalledWith("c1"));
   });
 
-  it("switching projects in Visions stays in Visions on the new project's # hq", () => {
+  it("switching projects in Visions stays in Visions on the new project's # administration", () => {
     mount({ mainView: "visions", projects: [{ root: "/p", name: "Ledger", is_git: true }, { root: "/q", name: "Other", is_git: true }], threadsByProject: { "/p": [plain], "/q": [] }, visions: { ...fixture().visions, open: { channelId: "c1", chatId: null, plainThreadId: null } } });
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     // The same switcher as the chat list's: its project actions are here too.
@@ -380,7 +380,7 @@ describe("Visions view", () => {
     fireEvent.click(within(bar).getByRole("button", { name: "Other" }));
     expect(stateLive().mainView).toBe("visions");
     expect(stateLive().activeProjectRoot).toBe("/q");
-    expect(screen.getByRole("region", { name: "# hq" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "# administration" })).toBeTruthy();
   });
 
   it("an open Vision's chat is never saved as the plain chat to restore", async () => {

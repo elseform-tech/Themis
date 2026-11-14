@@ -224,7 +224,7 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
     let channel = listing::ChannelListed {
         channel: Channel {
             id: "c1".into(),
-            name: "hq".into(),
+            name: "administration".into(),
             topic: "Ship 2.0".into(),
             project_root: "/repo".into(),
             approval_mode: ApprovalMode::Auto,

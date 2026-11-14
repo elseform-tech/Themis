@@ -1,8 +1,8 @@
 // A channel's details (canvas VisionChannel): its topic, the approval mode its Visions' chats run
 // in (the person's to set; a Vision never changes it), its members (Visions only) and Delete.
-// `# hq` is built in: Atlas is its only member and it cannot be deleted.
+// `# administration` is built in: Atlas is its only member and it cannot be deleted.
 import { useState } from "react";
-import { ADMIN_VISION_ID, deleteChannel, saveChannel, type ApprovalModeName, type ChannelInfo } from "../../lib/visions";
+import { ADMIN_VISION_ID, deleteChannel, saveChannel, type ApprovalModeName, type ChannelInfo, ADMINISTRATION } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { CharacterAvatar } from "./CharacterAvatar";
@@ -15,9 +15,9 @@ const MODES: Array<[ApprovalModeName, string]> = [["custom", "Custom"], ["auto",
 function Members({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
   const { state, dispatch } = useApp();
   const moods = visionMoods(state);
-  const hq = channel.name === "hq";
+  const hq = channel.name === ADMINISTRATION;
   const members = channel.members.flatMap(id => state.visions.list.find(vision => vision.id === id) ?? []);
-  // The admin works only in # hq.
+  // The admin works only in # administration.
   const addable = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID && !channel.members.includes(vision.id));
   return <PanelBlock title="Members">
     <ul className="themis-visions-members">
@@ -41,7 +41,7 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
   const { state, dispatch } = useApp();
   const [topic, setTopic] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const hq = channel.name === "hq";
+  const hq = channel.name === ADMINISTRATION;
   const root = channel.project_root;
   const listed = () => state.visions.channels[root] ?? [];
   async function save(change: Partial<ChannelInfo>) {

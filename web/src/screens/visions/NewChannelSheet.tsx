@@ -10,7 +10,7 @@ import { NewVisionSheet } from "./NewVisionSheet";
 
 export type Sheet = "channel" | "vision" | null;
 
-/** The two ways to add something in Visions, shared by the channels bar and `# hq`. */
+/** The two ways to add something in Visions, shared by the channels bar and `# administration`. */
 export function VisionsSheets({ sheet, onClose }: { sheet: Sheet; onClose: () => void }) {
   return <>
     {sheet === "channel" && <NewChannelSheet onClose={onClose} />}
@@ -31,7 +31,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const root = state.activeProjectRoot;
-  // The admin works only in # hq.
+  // The admin works only in # administration.
   const choices = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID);
   const toggle = (id: string) => setMembers(current => current.includes(id) ? current.filter(each => each !== id) : [...current, id]);
   async function create(event: FormEvent) {

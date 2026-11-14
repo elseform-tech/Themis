@@ -65,7 +65,7 @@
 .themis-mood-tag--needs { color: var(--themis-accent); }
 .themis-mood-tag--sorry { color: var(--themis-danger); }
 
-/* A channel and `# hq`. */
+/* A channel and `# administration`. */
 .themis-channel { display: flex; flex-direction: column; min-height: 0; padding: 0 24px; }
 .themis-channel-head { flex: none; display: flex; align-items: center; gap: 12px; height: 52px; }
 .themis-channel-head h1 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
@@ -127,7 +127,7 @@
 .themis-question-foot { display: flex; align-items: center; gap: 12px; }
 .themis-question-why { flex: 1; margin: 0; color: var(--themis-text-2); font-size: 11px; }
 .themis-question-text { margin: 0; font-weight: 600; }
-/* The admin's proposal in # hq: its items, then what it set up. */
+/* The admin's proposal in # administration: its items, then what it set up. */
 .themis-proposal-items { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
 .themis-proposal-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .themis-proposal-items b { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }

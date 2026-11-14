@@ -220,7 +220,8 @@ pub(super) fn project_channels(channels: &BTreeMap<String, Channel>, root: &Path
         .filter(|channel| channel.project_root == root)
         .cloned()
         .collect();
-    list.sort_by(|a, b| a.name.cmp(&b.name));
+    // `# administration` first, then by name.
+    list.sort_by_key(|channel| (channel.name != ADMINISTRATION, channel.name.clone()));
     list
 }
 
