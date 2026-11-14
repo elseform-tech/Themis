@@ -159,7 +159,7 @@ fn a_former_chief_keeps_its_soul_but_works_without_it() {
         )
         .unwrap();
     let mut channel = state.channel_list(&root).into_iter().next().unwrap();
-    let led = runs::vision_head(&juno, &channel, &Default::default());
+    let led = runs::vision_head(&juno, &channel, &Default::default(), &[]);
     assert!(led.contains("Calm and direct."));
     // Rook leads now: Juno's soul stays on her record, and her runs go without it.
     channel.chief = rook.id.clone();
@@ -167,7 +167,9 @@ fn a_former_chief_keeps_its_soul_but_works_without_it() {
     let channel = state.channel_save(channel, Some(&revision)).unwrap();
     let juno = state.vision_get(&juno.id).unwrap();
     assert_eq!(juno.soul, "Calm and direct.");
-    assert!(!runs::vision_head(&juno, &channel, &Default::default()).contains("Calm and direct."));
+    assert!(
+        !runs::vision_head(&juno, &channel, &Default::default(), &[]).contains("Calm and direct.")
+    );
     // Saving her profile with the soul she already has is not a new soul.
     let revision = juno.revision.clone();
     assert!(state

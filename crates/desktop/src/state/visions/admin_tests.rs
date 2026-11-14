@@ -184,10 +184,15 @@ fn new_visions_get_a_look_in_turn_and_keep_their_own() {
 /// plain voice, and asking before setting anything up.
 #[test]
 fn the_admin_runs_on_its_own_head() {
+    let atlas = Vision {
+        soul: "Tidy and brief.".into(),
+        ..admin_profile()
+    };
     let head = run_head(
-        &admin_profile(),
+        &atlas,
         &channel("h1", ADMINISTRATION, &[ADMIN_VISION_ID]),
         &VisionsConfig::default(),
+        &[],
     );
     println!("{head}");
     assert!(head.starts_with("You are Atlas"));
@@ -203,14 +208,17 @@ fn the_admin_runs_on_its_own_head() {
     assert!(head.contains("only when the person asks for one"));
     assert!(head.contains("Your shell runs only `themis`"));
     assert!(!head.contains("create_thread"), "it drives no chat");
+    assert!(head.contains("Tidy and brief."), "its soul");
+    assert!(head.contains(r#""team": {"channel""#), "it proposes teams");
     // Any other Vision keeps the ordinary head.
     let wren = vision("w", "Wren", None);
     let other = run_head(
         &wren,
         &channel("d", "docs", &["w"]),
         &VisionsConfig::default(),
+        std::slice::from_ref(&wren),
     );
-    assert!(other.starts_with("You are Wren, a Vision"));
+    assert!(other.starts_with("You are Wren, the chief of staff of #docs"));
 }
 
 /// An app with a project's `# administration` (and the admin), and that channel's id.

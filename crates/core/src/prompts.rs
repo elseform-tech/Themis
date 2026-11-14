@@ -545,9 +545,12 @@ pub const AGENT_CLI_VISION_STEERS_ITS_OWN: &str =
 /// The app server's answer to a Vision's `create_thread` outside its channel's project.
 pub const AGENT_CLI_VISION_OTHER_PROJECT: &str =
     include_str!("../builtins/prompts/agent-cli-vision-other-project.md");
-/// A Vision run's system head, in place of the ordinary instructions; `{{name}}`, `{{role}}`,
-/// `{{soul}}`, `{{channel}}`, `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
-pub const VISIONS_SYSTEM: &str = include_str!("../builtins/prompts/visions-system.md");
+/// A chief of staff's system head, in place of the ordinary instructions; `{{name}}`,
+/// `{{soul}}`, `{{team}}`, `{{channel}}`, `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
+pub const VISIONS_CHIEF: &str = include_str!("../builtins/prompts/visions-chief.md");
+/// A worker Vision's system head; `{{name}}`, `{{role}}`, `{{chief}}`, `{{channel}}`,
+/// `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
+pub const VISIONS_WORKER: &str = include_str!("../builtins/prompts/visions-worker.md");
 /// Follows the Vision system head: a Vision run's tools only read.
 pub const VISIONS_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/visions-read-only-note.md");
@@ -556,8 +559,8 @@ pub const VISIONS_STEP_REFUSED: &str = include_str!("../builtins/prompts/visions
 /// What every command of a Vision run says when its sandbox envelope could not be built.
 pub const VISIONS_SANDBOX_REFUSED: &str =
     include_str!("../builtins/prompts/visions-sandbox-refused.md");
-/// The admin Vision's system head in `# administration`, in place of `visions-system.md`; `{{name}}`,
-/// `{{project}}`, `{{channel_id}}`.
+/// The admin Vision's system head in `# administration`; `{{name}}`, `{{soul}}`, `{{project}}`,
+/// `{{channel_id}}`.
 pub const VISIONS_ADMIN: &str = include_str!("../builtins/prompts/visions-admin.md");
 /// The app server's answer to the admin's `apply_proposal` before the person replied in `# administration`.
 pub const AGENT_CLI_ADMIN_NO_REPLY: &str =

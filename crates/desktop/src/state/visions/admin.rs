@@ -506,16 +506,23 @@ fn fill_looks(proposal: &mut Proposal, existing: usize) {
 }
 
 /// The admin run's system head; any other Vision's is [`super::runs::vision_head`].
-pub(super) fn run_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
+pub(super) fn run_head(
+    vision: &Vision,
+    channel: &Channel,
+    config: &VisionsConfig,
+    members: &[Vision],
+) -> String {
     if !is_admin(&vision.id) {
-        return super::runs::vision_head(vision, channel, config);
+        return super::runs::vision_head(vision, channel, config, members);
     }
     let project =
         serde_json::to_string(&channel.project_root.to_string_lossy()).unwrap_or_default();
+    let soul = vision.soul.trim();
     fill(
         VISIONS_ADMIN,
         &[
             ("name", &vision.name),
+            ("soul", if soul.is_empty() { "-" } else { soul }),
             ("channel_id", &channel.id),
             ("project", project.trim_matches('"')),
         ],

@@ -509,12 +509,25 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
     (
-        VISIONS_SYSTEM,
-        "visions-system",
+        VISIONS_CHIEF,
+        "visions-chief",
+        &[
+            "name",
+            "soul",
+            "team",
+            "channel",
+            "channel_id",
+            "project",
+            "autonomy_table",
+        ],
+    ),
+    (
+        VISIONS_WORKER,
+        "visions-worker",
         &[
             "name",
             "role",
-            "soul",
+            "chief",
             "channel",
             "channel_id",
             "project",
@@ -527,7 +540,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (
         VISIONS_ADMIN,
         "visions-admin",
-        &["name", "project", "channel_id"],
+        &["name", "soul", "project", "channel_id"],
     ),
     (AGENT_CLI_ADMIN_NO_REPLY, "agent-cli-admin-no-reply", &[]),
     (

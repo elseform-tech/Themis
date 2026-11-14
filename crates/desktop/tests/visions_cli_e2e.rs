@@ -1157,10 +1157,11 @@ async fn vision_provider(project: PathBuf, extra: Vec<Value>) -> MockServer {
                     {"role": "assistant", "content": content}, "finish_reason": "stop"}]}))
             };
             let system = messages.first().and_then(|m| m["content"].as_str());
-            if system.is_some_and(|text| text.starts_with("You are Wren Lead, a Vision")) {
+            if system.is_some_and(|text| text.starts_with("You are Wren Lead, the chief of staff"))
+            {
                 return suites::routing::lead_tasks_wren(&messages);
             }
-            if !system.is_some_and(|text| text.starts_with("You are Wren, a Vision")) {
+            if !system.is_some_and(|text| text.starts_with("You are Wren, a worker Vision")) {
                 return reply("done: wrote the greeting");
             }
             let last = messages

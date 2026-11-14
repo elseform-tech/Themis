@@ -86,3 +86,30 @@ async fn a_paused_chief_may_still_decline_but_not_accept() {
     );
     fx.shut_down().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chief_asks_another_channel_by_its_name() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (juno, release) = fx.chief_and_channel("Juno", "release");
+    let (_, api) = fx.chief_and_channel("Tess", "api");
+    let (_, asker) = fx.vision_run(&juno, &release).await;
+    fx.agent_call_ok(
+        &asker,
+        "request_channel",
+        json!({"channel": "#api", "ask": "fix the export date"}),
+    );
+    assert!(fx
+        .entries(&api)
+        .iter()
+        .any(|e| e["type"] == "request_received"));
+    assert!(!fx
+        .agent_call(
+            &asker,
+            "request_channel",
+            json!({"channel": "nowhere", "ask": "x"})
+        )
+        .status
+        .success());
+    fx.shut_down().await;
+}

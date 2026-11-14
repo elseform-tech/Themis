@@ -289,6 +289,25 @@ pub(super) async fn dispatch(
     Ok(result)
 }
 
+/// The channel a request names: by its name in the asking channel's project (a chief knows
+/// names, not ids), else by `channelId`.
+fn channel_named(state: &AppState, channel: &str, args: &Value) -> Result<String, String> {
+    let Some(name) = arg::<Option<String>>(args, "channel")? else {
+        return arg(args, "channelId");
+    };
+    let root = state
+        .channel_get(channel)
+        .map(|own| own.project_root)
+        .ok_or("Unknown channel")?;
+    let name = name.trim().trim_start_matches('#').to_owned();
+    state
+        .channel_list(&root)
+        .into_iter()
+        .find(|other| other.name == name)
+        .map(|other| other.id)
+        .ok_or_else(|| format!("This project has no channel named {name:?}"))
+}
+
 /// A chief's request to another channel of its project, or its answer to one it received.
 fn request(
     state: &AppState,
@@ -305,7 +324,7 @@ fn request(
         return Ok(json!({"requestId": id}));
     }
     if method == "request_channel" {
-        let to: String = arg(args, "channelId")?;
+        let to = channel_named(state, channel, args)?;
         let ask: String = arg(args, "ask")?;
         let id = state.visions_request(sink, channel, &scope.vision_id, &to, &ask)?;
         return Ok(json!({"requestId": id}));
