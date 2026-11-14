@@ -878,7 +878,10 @@ impl AppState {
                                 &run_configuration.clone(),
                                 themis_core::runtime::with_configuration(
                                     run_configuration.compaction,
-                                    themis_core::plugins::hooks::with_hooks(
+                                    // Boxed so each scope wrapper above holds a pointer: a debug
+                                    // build copies an unboxed inner future through every layer's
+                                    // stack frame on first poll, which overflowed a 2 MB worker.
+                                    Box::pin(themis_core::plugins::hooks::with_hooks(
                                         hook_runtime,
                                         &hook_task,
                                         events_tx,
@@ -923,7 +926,7 @@ impl AppState {
                                             )))))))))).await
                                             }))
                                         },
-                                    ),
+                                    )),
                                 ),
                             ),
                         )),
