@@ -46,6 +46,8 @@
   --themis-del-bg: rgba(242, 139, 130, 0.13);
   /* The Visions cast: the ink of a small avatar's eyes (a Vision's own colours are in `cast.ts`). */
   --themis-cast-ink: #0b1220;
+  /* The Visions display face: a channel's name and its chief's name on the profile. */
+  --themis-font-display: "Space Grotesk", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   /* A soft lift for cards on the stage (the bubble). */
   --themis-card-lift: 0 1px 2px var(--themis-panel-shadow), inset 0 1px 0 var(--themis-panel-highlight);
   --themis-well-shadow: inset 0 1px 3px var(--themis-panel-shadow);

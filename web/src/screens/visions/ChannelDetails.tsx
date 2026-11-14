@@ -1,17 +1,30 @@
 // A channel's details (canvas VisionChannel): its topic, the approval mode its Visions' chats run
-// in (the person's to set; a Vision never changes it), its members (Visions only) and Delete.
+// in (the person's to set; a Vision never changes it), its members (Visions only) and Delete. A
+// member opens the chief's profile, or a worker's thread with the chief; New Vision makes one by hand.
 // `# administration` is built in: Atlas is its only member and it cannot be deleted.
 import { useState } from "react";
-import { ADMIN_VISION_ID, deleteChannel, saveChannel, type ApprovalModeName, type ChannelInfo, ADMINISTRATION } from "../../lib/visions";
+import { ADMIN_VISION_ID, deleteChannel, type ApprovalModeName, type ChannelInfo, ADMINISTRATION } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
-import { CloseIcon, DeleteButton, PanelBlock, PanelButton, SidePanel } from "./SidePanel";
+import { saveChannelChange } from "./channels";
+import { NewVisionSheet } from "./NewVisionSheet";
+import { CloseIcon, DeleteButton, PanelBlock, PanelButton, PlusIcon, SidePanel } from "./SidePanel";
 
 const MODES: Array<[ApprovalModeName, string]> = [["custom", "Custom"], ["auto", "Auto"], ["yolo", "YOLO"]];
 
-/** The channel's Visions, each opening its profile; others can be added, and any removed. */
+/** New Vision: makes one by hand, from the channel's members. */
+function NewVisionButton() {
+  const [making, setMaking] = useState(false);
+  return <>
+    <PanelButton label="New Vision" onClick={() => setMaking(true)}><PlusIcon /></PanelButton>
+    {making && <NewVisionSheet onClose={() => setMaking(false)} />}
+  </>;
+}
+
+/** The channel's Visions, each opening the chief's profile or a worker's thread; others can be
+ *  added, and any removed. */
 function Members({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
   const { state, dispatch } = useApp();
   const moods = visionMoods(state);
@@ -19,10 +32,11 @@ function Members({ channel, save }: { channel: ChannelInfo; save: (change: Parti
   const members = channel.members.flatMap(id => state.visions.list.find(vision => vision.id === id) ?? []);
   // The admin works only in # administration.
   const addable = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID && !channel.members.includes(vision.id));
-  return <PanelBlock title="Members">
+  const open = (id: string) => dispatch({ type: "visions/panel", panel: { kind: id === channel.chief ? "vision" : "worker", visionId: id } });
+  return <PanelBlock title="Members" action={hq ? undefined : <NewVisionButton />}>
     <ul className="themis-visions-members">
       {members.map(vision => <li key={vision.id}>
-        <button type="button" className="themis-visions-member" aria-label={vision.name} onClick={() => dispatch({ type: "visions/panel", panel: { kind: "vision", visionId: vision.id } })}>
+        <button type="button" className="themis-visions-member" aria-label={vision.name} onClick={() => open(vision.id)}>
           <CharacterAvatar look={lookOf(vision)} mood={moods[vision.id] ?? "calm"} size={20} />
           <span className="themis-visions-member-name">{vision.name}</span>
           {vision.role && <small>{vision.role}</small>}
@@ -46,14 +60,7 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
   const listed = () => state.visions.channels[root] ?? [];
   async function save(change: Partial<ChannelInfo>) {
     setError("");
-    const { id, name, topic: current, project_root, approval_mode, members, chief, autonomy, custom, daily_budget_usd, revision } = channel;
-    const next = { id, name, topic: current, project_root, approval_mode, members, chief, autonomy, custom, daily_budget_usd, ...change };
-    // The chief leaves with its membership: the first member left leads.
-    if (!next.members.includes(next.chief)) next.chief = next.members[0] ?? "";
-    try {
-      const saved = await saveChannel(next, revision);
-      dispatch({ type: "visions/loaded", projectRoot: root, channels: listed().map(each => each.id === saved.id ? { ...each, ...saved } : each) });
-    } catch (reason) { setError(describeError(reason)); }
+    try { await saveChannelChange(state, dispatch, channel, change); } catch (reason) { setError(describeError(reason)); }
   }
   async function remove() {
     await deleteChannel(channel.id);

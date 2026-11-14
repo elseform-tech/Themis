@@ -9,6 +9,7 @@ import * as visions from "../../lib/visions";
 import { ChannelDetails } from "./ChannelDetails";
 import { projectChannels } from "./channels";
 import { VisionProfile } from "./VisionProfile";
+import { VisionsView } from "./VisionsView";
 
 const dispatch = vi.fn();
 const live = vi.hoisted(() => ({ value: null as unknown }));
@@ -19,6 +20,7 @@ vi.mock("../../state/store", async importOriginal => ({
 vi.mock("../../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/tauri")>(),
   listGoModels: vi.fn(async () => [{ id: "glm-5", effort_levels: [] }, { id: "kimi-k3", effort_levels: [] }]),
+  listModelProviders: vi.fn(async () => []),
 }));
 vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
@@ -73,62 +75,67 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-describe("A Vision's profile", () => {
-  it("saves the model and the soul, each against the profile's revision, and offers no autonomy or budget of its own", async () => {
-    await show(() => <VisionProfile visionId="rook" />);
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveDisplayValue("Default model");
+describe("A chief's profile", () => {
+  it("saves the model and the soul against the profile's revision, and the autonomy on the channel", async () => {
+    await show(() => <VisionProfile visionId="rook" />, opened("c1"));
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveDisplayValue("Chat model");
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
     expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ model: "glm-5" }), "r1");
-    // Autonomy and budget are the team's (its channel's), not a Vision's.
-    expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
-    expect(screen.queryByRole("spinbutton", { name: "Daily budget" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Edit soul" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Soul" }), { target: { value: "Bold." } });
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+    // Autonomy and budget are the team's (its channel's): Settings › Visions' until the channel sets its own.
+    const autonomy = await screen.findByRole("combobox", { name: "Autonomy" });
+    expect(autonomy).toHaveDisplayValue("Most decisions");
+    expect(screen.getByText("$2 a day")).toBeInTheDocument();
+    await act(async () => { fireEvent.change(autonomy, { target: { value: "small" } }); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ id: "c1", autonomy: "small" }), "c1r");
+    const soul = screen.getByRole("textbox", { name: "Soul" });
+    fireEvent.change(soul, { target: { value: "Bold." } });
+    await act(async () => { fireEvent.blur(soul); });
     expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ soul: "Bold." }), "r2");
   });
 
-  it("pauses the Vision and lists its channels", async () => {
-    await show(() => <VisionProfile visionId="rook" />);
+  it("an unchanged soul is not saved again", async () => {
+    await show(() => <VisionProfile visionId="rook" />, opened("c1"));
+    const soul = screen.getByRole("textbox", { name: "Soul" });
+    fireEvent.focus(soul);
+    await act(async () => { fireEvent.blur(soul); });
+    expect(visions.saveVision).not.toHaveBeenCalled();
+  });
+
+  it("pauses the chief and goes back to its channel; it has no Delete", async () => {
+    await show(() => <VisionProfile visionId="rook" />, opened("c1"));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Pause Rook" })); });
     expect(visions.pauseVision).toHaveBeenCalledWith("rook", true);
-    const channels = screen.getByRole("group", { name: "Channels" });
-    fireEvent.click(within(channels).getByRole("button", { name: "# release" }));
-    expect(dispatch).toHaveBeenCalledWith({ type: "visions/open", channelId: "c1" });
-    expect(screen.getByRole("button", { name: "Delete Rook" })).toBeInTheDocument();
-  });
-
-  it("shows an empty soul as its heading and edit button only", async () => {
-    const initial = state();
-    initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, soul: "" } : each);
-    await show(() => <VisionProfile visionId="rook" />, initial);
-    expect(screen.getByRole("button", { name: "Edit soul" })).toBeInTheDocument();
-    expect(document.querySelector(".themis-visions-soul")).toBeNull();
-    expect(screen.queryByText(/in your words/)).toBeNull();
-  });
-
-  it("gives a worker no soul: it has a role", async () => {
-    await show(() => <VisionProfile visionId="wren" />);
-    expect(screen.queryByText("Soul")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Edit soul" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete Rook" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "# release" }));
+    expect(dispatch).toHaveBeenCalledWith({ type: "visions/panel", panel: null });
   });
 
   it("keeps the Vision's accessory when it saves", async () => {
-    const initial = state();
+    const initial = opened("c1");
     initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, accessory: "glasses" } : each);
     await show(() => <VisionProfile visionId="rook" />, initial);
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
     expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ accessory: "glasses" }), "r1");
   });
 
-  it("shows Atlas only what applies to it: its soul, no Delete, autonomy or channels", async () => {
-    await show(() => <VisionProfile visionId="admin" />);
-    expect(screen.queryByRole("button", { name: "Delete Atlas" })).toBeNull();
+  it("shows Atlas only what applies to it: its soul, its model and Pause", async () => {
+    await show(() => <VisionProfile visionId="admin" />, opened(null));
+    expect(screen.getByText("Admin, # administration")).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
-    expect(screen.getByText("Soul")).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Team" })).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Soul" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pause Atlas" })).toBeInTheDocument();
+  });
+
+  it("gives a worker no profile: it opens its thread with the chief", async () => {
+    const initial = opened("c1");
+    initial.visions.channels = { "/p": [hq, { ...release, members: ["rook", "wren"] }] };
+    initial.mainView = "visions";
+    initial.visions.open.panel = { kind: "vision", visionId: "wren" };
+    await show(() => <VisionsView />, initial);
+    expect(screen.queryByRole("region", { name: "Wren, profile" })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Wren with Rook" })).toBeInTheDocument();
   });
 });
 

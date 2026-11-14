@@ -9,6 +9,7 @@ import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
+import { scheduleWords, TEAM_NOTE_TYPES, type TeamNoteEntry } from "./team";
 
 type AppState = ReturnType<typeof useApp>["state"];
 
@@ -73,6 +74,28 @@ function Notice({ line, channelId }: { line: ChannelLine; channelId: string }) {
   );
 }
 
+const ARROW = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7h11v11M18 7 6 19" /></svg>;
+const CLOCK = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5h4" /></svg>;
+
+/** A request between channels or a new routine, as one quiet line (board TeamChannel). The other
+ *  channel's pill opens it. */
+function TeamNote({ line }: { line: ChannelLine }) {
+  const { dispatch } = useApp();
+  const entry = line.entry as unknown as TeamNoteEntry;
+  let body: ReactNode;
+  if (entry.type === "routine_added") {
+    body = <>{CLOCK}<span>Added a routine: <b>{scheduleWords(entry.schedule)}</b>, {entry.instruction}</span></>;
+  } else {
+    const pill = <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId: entry.channel_id })}># {entry.channel_name}</button>;
+    const sent = entry.type === "request_sent";
+    const answer = entry.answer === undefined ? "" : ` ${sent ? "They" : "We"} ${entry.answer === "accepted" ? "took it on" : "declined"}.`;
+    body = sent
+      ? <>{ARROW}<span>Asked</span>{pill}<span>to {entry.ask}.{answer}</span></>
+      : <>{ARROW}{pill}<span>asked us to {entry.ask}.{answer}</span></>;
+  }
+  return <li className="themis-team-note" role="note">{body}<time className="themis-channel-time">{clock(line.at_ms)}</time></li>;
+}
+
 function Avatar({ vision }: { vision: VisionInfo | undefined }) {
   if (!vision) return <span className="themis-channel-avatar themis-channel-person" aria-hidden="true">?</span>;
   return <span className="themis-channel-avatar"><CharacterAvatar look={lookOf(vision)} size={30} /></span>;
@@ -101,13 +124,14 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
   const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
-  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`@${vision} about “${entry.question}”: `)} />;
+  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`About “${entry.question}”: `)} />;
   return <PassedOnCard entry={entry} vision={vision} title={title} />;
 }
 
 export function ChannelEntryView({ line, channelId, fresh, onReply }: { line: ChannelLine; channelId: string; fresh: boolean; onReply: (text: string) => void }) {
   const { state } = useApp();
   const { entry } = line;
+  if (TEAM_NOTE_TYPES.has(entry.type)) return <TeamNote line={line} />;
   if (entry.type === "notice") return <Notice line={line} channelId={channelId} />;
   // A setup shows on its proposal's card while that is loaded.
   if (entry.type === "proposal_applied" && proposalLine(state, channelId, "proposal", entry.proposal_id)) return null;
