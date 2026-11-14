@@ -172,28 +172,35 @@
 
 /* A team channel's header (boards TeamChannel, AdminChannel): the chief large with a soft glow,
    the channel's name in the display face and the mark gradient, the chief's state, the chips. */
-.themis-team-head { position: relative; flex: none; display: flex; align-items: center; gap: 22px; padding: 14px 4px 12px; border-bottom: 1px solid var(--themis-border-subtle); }
-.themis-team-picture { position: relative; flex: none; }
-.themis-team-picture::before { content: ""; position: absolute; left: -54px; top: -44px; width: 240px; height: 220px; background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 26%, transparent), transparent); pointer-events: none; }
-.themis-team-picture .themis-chief-scene { background: none; }
-.themis-team-text { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.themis-team-head { flex: none; display: flex; align-items: center; gap: 14px; padding: 12px 4px; border-bottom: 1px solid var(--themis-border-subtle); }
 .themis-team-name { display: flex; align-items: baseline; gap: 6px; margin: 0; font: 700 40px/1 var(--themis-font-display); letter-spacing: -.02em; }
 .themis-team-name .themis-channel-title { display: inline-flex; align-items: baseline; gap: 6px; }
 .themis-team-hash { color: var(--themis-text-2); font-size: 28px; font-weight: 500; }
 .themis-team-gradient { background: linear-gradient(100deg, var(--themis-mark-from), var(--themis-mark-to)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 @media (forced-colors: active) { .themis-team-gradient { background: none; color: CanvasText; forced-color-adjust: auto; } }
 .themis-team-chief { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--themis-text-2); }
-.themis-team-chief-name { display: inline-flex; align-items: baseline; gap: 8px; padding: 0; border: 0; background: none; color: var(--themis-text-2); font: inherit; cursor: pointer; }
-.themis-team-chief-name b { color: var(--themis-text); font-weight: 600; }
-.themis-team-chief-name:hover b { color: var(--themis-accent); }
 .themis-state-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
 .themis-team-chief .themis-state-dot { margin-left: 4px; }
-.themis-team-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.themis-team-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px 5px 6px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-card); box-shadow: inset 0 0 0 1px var(--themis-border-subtle); color: var(--themis-text); font: inherit; font-size: 12px; cursor: pointer; }
-.themis-team-chip b { font-weight: 600; }
-.themis-team-chip-role { color: var(--themis-text-2); }
-.themis-team-chip[aria-pressed="true"] { box-shadow: inset 0 0 0 1.5px var(--themis-accent); }
-.themis-team-chip:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-team-head .themis-team-name { flex: 1; min-width: 0; font-size: 24px; }
+.themis-team-stack { display: flex; align-items: center; padding-left: 8px; }
+.themis-team-worker { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; margin-left: -8px; padding: 0; border: 0; border-radius: 50%; background: var(--themis-card); box-shadow: 0 0 0 2px var(--themis-surface), inset 0 0 0 1px var(--themis-border-subtle); cursor: pointer; }
+.themis-team-worker:hover, .themis-team-worker:focus-visible { z-index: 1; outline: 0; box-shadow: 0 0 0 2px var(--themis-surface), inset 0 0 0 1.5px var(--themis-accent); }
+.themis-team-worker[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--themis-surface), inset 0 0 0 1.5px var(--themis-accent); }
+.themis-team-worker-dot { position: absolute; right: 0; bottom: 1px; width: 8px; height: 8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--themis-surface); }
+.themis-team-tip { position: absolute; top: calc(100% + 8px); right: -6px; z-index: 2; display: none; padding: 5px 9px; border-radius: 8px; background: var(--themis-text); color: var(--themis-surface); font-size: 12px; white-space: nowrap; pointer-events: none; }
+.themis-team-worker:hover .themis-team-tip, .themis-team-worker:focus-visible .themis-team-tip { display: block; }
+.themis-team-head .themis-team-hash { font-size: 18px; }
+.themis-chief-badge { display: inline-flex; flex: none; align-items: center; gap: 8px; padding: 4px 10px 4px 4px; border: 0; border-radius: var(--themis-radius-pill); background: var(--themis-card); box-shadow: inset 0 0 0 1px var(--themis-border-subtle); color: var(--themis-text); font: inherit; font-size: 12px; cursor: pointer; }
+.themis-chief-badge b { font-weight: 600; }
+.themis-chief-badge:hover, .themis-chief-badge:focus-visible { box-shadow: inset 0 0 0 1.5px var(--themis-accent); outline: 0; }
+.themis-chief-badge-more { color: var(--themis-text-2); }
+.themis-chief-welcome { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 100%; }
+.themis-chief-welcome::before { content: ""; position: absolute; top: 50%; left: 50%; width: 320px; height: 300px; transform: translate(-50%, -62%); background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 24%, transparent), transparent); pointer-events: none; }
+.themis-chief-welcome .themis-chief-scene { position: relative; background: none; }
+.themis-chief-welcome-name { position: relative; display: inline-flex; align-items: baseline; gap: 8px; padding: 0; border: 0; background: none; color: var(--themis-text-2); font: inherit; font-size: 15px; cursor: pointer; }
+.themis-chief-welcome-name b { color: var(--themis-text); font-weight: 600; }
+.themis-chief-welcome-name:hover b { color: var(--themis-accent); }
+.themis-chief-welcome-state { position: relative; display: inline-flex; align-items: center; gap: 6px; color: var(--themis-text-2); }
 
 /* A request between channels or a new routine: one quiet line under the chief's messages. */
 .themis-team-note { padding-left: 42px; color: var(--themis-text-2); font-size: 12px; }

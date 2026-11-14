@@ -11,7 +11,7 @@ import { describeError, toast, useApp } from "../../state/store";
 import { AskFirstBox } from "../AskFirstBox";
 import { ChannelComposer } from "./ChannelComposer";
 import { ChannelEntryView, visionById } from "./ChannelEntry";
-import { ChannelHeader } from "./ChannelHeader";
+import { ChannelHeader, ChiefWelcome } from "./ChannelHeader";
 import { channelChat } from "./ChatLink";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
@@ -138,6 +138,8 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const thinking = channel.chief ? all.filter(vision => vision.id === channel.chief) : all;
   const tail = `${shown[shown.length - 1]?.seq}:${approvals.length}:${thinking.map(vision => vision.id).join(",")}`;
   const { log, onScroll, holdPlace, releasePlace } = useStickToEnd(tail, listed?.[0]?.seq);
+  // A new channel: nothing said yet, nothing earlier to load, nothing waiting on the person.
+  const fresh = listed !== undefined && shown.length === 0 && approvals.length === 0 && state.visions.nextBefore[channel.id] == null;
   async function older() {
     setLoading(true);
     holdPlace();
@@ -147,9 +149,10 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   }
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>
-      <ChannelHeader channel={channel} />
+      <ChannelHeader channel={channel} fresh={fresh} />
       <div className="themis-channel-log" ref={log} onScroll={onScroll}>
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
+        {fresh && <ChiefWelcome channel={channel} />}
         <ol className="themis-channel-lines">
           {shown.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={!reduced && shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
           {approvals.map(request => <ChannelApproval key={request.approval_id} request={request} channelId={channel.id} />)}

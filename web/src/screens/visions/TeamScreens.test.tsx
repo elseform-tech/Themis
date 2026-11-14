@@ -137,9 +137,11 @@ describe("Team screens", () => {
     const channel = screen.getByRole("region", { name: "# release" });
     const header = within(channel).getByRole("banner");
     expect(within(header).getByRole("heading", { level: 1 })).toHaveTextContent("#release");
-    expect(header).toHaveTextContent("Chief of staff");
+    // Once there is a conversation the chief is a small badge at the top right that opens its
+    // profile; no big 3D chief takes room from the log.
     // Rook's work chat runs; Juno's own reply does not: her state is Calm, Rook's chip says Working.
-    expect(within(header).getByRole("img", { name: "Juno, Calm" })).toBeTruthy();
+    expect(within(header).getByRole("button", { name: "Juno, chief of staff, Calm" })).toBeTruthy();
+    expect(within(channel).queryByRole("img", { name: "Juno, Calm" })).toBeNull();
     const team = within(header).getByRole("group", { name: "Team" });
     expect(within(team).getAllByRole("button").map(chip => chip.getAttribute("aria-label"))).toEqual(["Rook, Builder, Working", "Wren, Reviewer, Idle"]);
     // The log: the person and Juno; Rook's post and his chat stay in his thread.
@@ -205,7 +207,7 @@ describe("Team screens", () => {
 
   it("the_chief_profile_edits_soul_and_routines", async () => {
     await show();
-    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Juno, chief of staff" }));
+    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: /^Juno, chief of staff/ }));
     const profile = screen.getByRole("region", { name: "Juno, profile" });
     expect(profile).toHaveTextContent("Chief of staff, # release");
     expect(within(profile).getByRole("button", { name: "Pause Juno" })).toBeTruthy();
@@ -289,8 +291,12 @@ describe("Team screens", () => {
     await show(app, fixture({ open: { ...initialState.visions.open, channelId: "h1" } }));
     const channel = screen.getByRole("region", { name: "# administration" });
     const header = within(channel).getByRole("banner");
-    expect(header).toHaveTextContent("AtlasAdmin");
     expect(within(header).queryByRole("group", { name: "Team" })).toBeNull();
+    // A new channel: the chief stands large in the middle with its name and job, and no badge.
+    expect(within(header).queryByRole("button", { name: /^Atlas, admin/ })).toBeNull();
+    const welcome = within(channel).getByRole("img", { name: "Atlas, Calm" }).closest(".themis-chief-welcome") as HTMLElement;
+    expect(welcome).toHaveTextContent("AtlasAdmin");
+    expect(within(welcome).getByRole("button", { name: /^Atlas, admin/ })).toBeTruthy();
     expect(within(channel).getByRole("textbox", { name: "Message Atlas" })).toBeTruthy();
     expect(within(channel).queryByLabelText(/^Permissions/)).toBeNull();
   });
@@ -386,7 +392,8 @@ describe("Team screens", () => {
     scan();
     fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
     scan();
-    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: "Juno, chief of staff" }));
+    // The channel is new: the chief's name in the middle opens its profile.
+    fireEvent.click(screen.getByRole("button", { name: /^Juno, chief of staff/ }));
     scan();
     cleanup();
     await show(app, fixture({ open: { ...initialState.visions.open, channelId: "h1" } }));

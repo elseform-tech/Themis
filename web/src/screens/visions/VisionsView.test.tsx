@@ -144,7 +144,8 @@ describe("Visions view", () => {
     expect(within(bar).queryByText("Atlas")).toBeNull();
     const room = screen.getByRole("region", { name: "# administration" });
     // Atlas wears its crown in the header and beside its messages.
-    expect(within(room).getByRole("img", { name: "Atlas, Calm" })).toHaveAttribute("data-accessory", "crown");
+    // A conversation: Atlas is the badge at the top right, with its crown.
+    expect(within(room).getByRole("button", { name: "Atlas, admin, Calm" }).querySelector("svg")).toHaveAttribute("data-accessory", "crown");
     expect(within(room).getByText("Atlas", { selector: ".themis-channel-who" }).closest("li")!.querySelector("[data-accessory='crown']")).toBeTruthy();
     expect(within(room).getByRole("group", { name: "Proposal" })).toHaveTextContent("A channel for releases.");
     expect(within(room).getByLabelText("Message Atlas")).not.toBeDisabled();
@@ -472,7 +473,7 @@ describe("Visions view", () => {
 
   it("opens the chief's profile from the header and the channel's details from its name, one at a time", async () => {
     let view = await openRelease();
-    fireEvent.click(within(view).getByRole("button", { name: "Rook, chief of staff" }));
+    fireEvent.click(within(view).getByRole("button", { name: /^Rook, chief of staff/ }));
     const profile = screen.getByRole("region", { name: "Rook, profile" });
     expect(screen.queryByRole("region", { name: "# release" })).toBeNull();
     fireEvent.click(within(profile).getByRole("button", { name: "# release" }));
