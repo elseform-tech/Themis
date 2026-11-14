@@ -63,6 +63,11 @@ pub(super) fn fits_settings(
     budget: Option<f64>,
     config: &VisionsConfig,
 ) -> Result<(), String> {
+    if autonomy == Some(Autonomy::Custom) {
+        return Err(
+            "Custom autonomy is set row by row in the app; pick a level instead".to_owned(),
+        );
+    }
     if let Some(level) = autonomy {
         let above = match (level.rank(), config.autonomy.rank()) {
             (Some(level), Some(allowed)) => level > allowed,
@@ -207,8 +212,30 @@ pub(super) fn fill_member_looks(proposal: &mut Proposal, existing: usize) {
     }
 }
 
+/// What one team or hire set-up made so far, to undo when a later step fails.
+#[derive(Default)]
+struct Made {
+    items: Vec<SetUp>,
+    visions: Vec<String>,
+    channel: Option<String>,
+}
+
+impl Made {
+    fn vision(&mut self, vision: &Vision) {
+        self.visions.push(vision.id.clone());
+        self.items.push(set_up(
+            SetUpKind::Vision,
+            &vision.id,
+            &vision.name,
+            SetUpAction::Created,
+        ));
+    }
+}
+
 impl AppState {
-    /// Makes the proposal's team and hire, noting each in `items` as it is done.
+    /// Makes the proposal's team and hire, noting each in `items` as it is done. Each is all or
+    /// nothing: when a step fails, what that team or hire made is removed again, so no stray
+    /// chief or worker is left behind.
     pub(super) fn visions_set_up_team(
         &self,
         hq: &Channel,
@@ -216,79 +243,105 @@ impl AppState {
         items: &mut Vec<SetUp>,
     ) -> Result<(), String> {
         if let Some(team) = &proposal.team {
-            let chief = self.vision_save(member_profile(&team.chief), None)?;
-            items.push(set_up(
-                SetUpKind::Vision,
-                &chief.id,
-                &chief.name,
-                SetUpAction::Created,
-            ));
-            let mut members = vec![chief.id.clone()];
-            for worker in &team.workers {
-                let saved = self.vision_save(member_profile(worker), None)?;
-                items.push(set_up(
-                    SetUpKind::Vision,
-                    &saved.id,
-                    &saved.name,
-                    SetUpAction::Created,
-                ));
-                members.push(saved.id);
-            }
-            let spec = Channel {
-                id: String::new(),
-                name: team.channel.name.trim().to_owned(),
-                topic: team.channel.topic.clone(),
-                project_root: hq.project_root.clone(),
-                approval_mode: ApprovalMode::Custom,
-                members,
-                chief: chief.id.clone(),
-                autonomy: team.autonomy,
-                custom: None,
-                daily_budget_usd: team.daily_budget_usd,
-                paused_workers: Vec::new(),
-                revision: String::new(),
-            };
-            let channel = self.channel_save(spec, None)?;
-            items.push(set_up(
-                SetUpKind::Channel,
-                &channel.id,
-                &channel.name,
-                SetUpAction::Created,
-            ));
-            let soul = team.chief.soul.trim();
-            if !soul.is_empty() {
-                let revision = chief.revision.clone();
-                let with_soul = Vision {
-                    soul: soul.to_owned(),
-                    ..chief
-                };
-                self.vision_save(with_soul, Some(&revision))?;
-            }
+            let mut made = Made::default();
+            let built = self.build_team(hq, team, &mut made);
+            self.keep_or_undo(built, made, items)?;
         }
         if let Some(hire) = &proposal.hire {
-            let channel = self
-                .channel_list(&hq.project_root)
-                .into_iter()
-                .find(|channel| channel.name == hire.channel.trim())
-                .ok_or_else(|| format!("This project has no channel named {:?}", hire.channel))?;
-            let worker = self.vision_save(member_profile(&hire.worker), None)?;
-            items.push(set_up(
-                SetUpKind::Vision,
-                &worker.id,
-                &worker.name,
-                SetUpAction::Created,
-            ));
-            let revision = channel.revision.clone();
-            let mut joined = channel;
-            joined.members.push(worker.id);
-            let saved = self.channel_save(joined, Some(&revision))?;
-            items.push(set_up(
-                SetUpKind::Channel,
-                &saved.id,
-                &saved.name,
-                SetUpAction::Changed,
-            ));
+            let mut made = Made::default();
+            let built = self.build_hire(hq, hire, &mut made);
+            self.keep_or_undo(built, made, items)?;
         }
+        Ok(())
+    }
+
+    fn keep_or_undo(
+        &self,
+        built: Result<(), String>,
+        made: Made,
+        items: &mut Vec<SetUp>,
+    ) -> Result<(), String> {
+        if built.is_ok() {
+            items.extend(made.items);
+            return built;
+        }
+        let dir = &self.inner.visions_dir;
+        let mut cache = self.visions_cache();
+        if let Some(channel) = &made.channel {
+            let _ = cache.delete_channel(dir, channel);
+        }
+        for vision in &made.visions {
+            let _ = cache.delete_vision(dir, vision);
+        }
+        drop(cache);
+        self.visions_note(
+            "proposal_undone",
+            json!({"visions": made.visions.len(), "channel": made.channel.is_some()}),
+        );
+        built
+    }
+
+    fn build_team(&self, hq: &Channel, team: &NewTeam, made: &mut Made) -> Result<(), String> {
+        let chief = self.vision_save(member_profile(&team.chief), None)?;
+        made.vision(&chief);
+        let mut members = vec![chief.id.clone()];
+        for worker in &team.workers {
+            let saved = self.vision_save(member_profile(worker), None)?;
+            made.vision(&saved);
+            members.push(saved.id);
+        }
+        let spec = Channel {
+            id: String::new(),
+            name: team.channel.name.trim().to_owned(),
+            topic: team.channel.topic.clone(),
+            project_root: hq.project_root.clone(),
+            approval_mode: ApprovalMode::Custom,
+            members,
+            chief: chief.id.clone(),
+            autonomy: team.autonomy,
+            custom: None,
+            daily_budget_usd: team.daily_budget_usd,
+            paused_workers: Vec::new(),
+            revision: String::new(),
+        };
+        let channel = self.channel_save(spec, None)?;
+        made.channel = Some(channel.id.clone());
+        made.items.push(set_up(
+            SetUpKind::Channel,
+            &channel.id,
+            &channel.name,
+            SetUpAction::Created,
+        ));
+        let soul = team.chief.soul.trim();
+        if !soul.is_empty() {
+            let revision = chief.revision.clone();
+            let with_soul = Vision {
+                soul: soul.to_owned(),
+                ..chief
+            };
+            self.vision_save(with_soul, Some(&revision))?;
+        }
+        Ok(())
+    }
+
+    fn build_hire(&self, hq: &Channel, hire: &Hire, made: &mut Made) -> Result<(), String> {
+        let channel = self
+            .channel_list(&hq.project_root)
+            .into_iter()
+            .find(|channel| channel.name == hire.channel.trim())
+            .ok_or_else(|| format!("This project has no channel named {:?}", hire.channel))?;
+        let worker = self.vision_save(member_profile(&hire.worker), None)?;
+        made.vision(&worker);
+        let revision = channel.revision.clone();
+        let mut joined = channel;
+        joined.members.push(worker.id);
+        let saved = self.channel_save(joined, Some(&revision))?;
+        made.items.push(set_up(
+            SetUpKind::Channel,
+            &saved.id,
+            &saved.name,
+            SetUpAction::Changed,
+        ));
         Ok(())
     }
 }

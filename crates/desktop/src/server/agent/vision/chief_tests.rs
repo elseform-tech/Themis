@@ -190,6 +190,13 @@ fn a_vision_drives_only_the_chats_of_its_runs_channel() {
 }
 
 #[test]
+fn only_a_chief_asks_atlas_for_a_worker() {
+    let ask = json!({"role": "Tests", "why": "Releases keep breaking"});
+    assert!(check(&chief(), "ask_for_worker", &ask).is_none());
+    assert!(check(&worker(), "ask_for_worker", &ask).is_some());
+}
+
+#[test]
 fn a_worker_cannot_post_in_the_channel_or_task_others() {
     for method in CHIEF_CALLS
         .iter()

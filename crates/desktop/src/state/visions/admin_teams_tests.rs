@@ -91,3 +91,37 @@ fn a_hire_is_checked() {
         .unwrap_err()
         .contains("already exists"));
 }
+
+/// A team whose channel cannot be saved leaves nothing behind: no stray chief or workers.
+#[test]
+fn a_team_that_cannot_be_set_up_leaves_nothing_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("p");
+    std::fs::create_dir_all(&root).unwrap();
+    let state = AppState::new_for_test(dir.path().join("settings.json"));
+    state.visions_ensure_administration(&root).unwrap();
+    let hq = state
+        .channel_list(&root)
+        .into_iter()
+        .find(|channel| channel.name == ADMINISTRATION)
+        .unwrap();
+    // A channel named "release" already exists, so the team's channel save fails.
+    let mut taken = hq.clone();
+    taken.id = String::new();
+    taken.name = "release".into();
+    taken.members = Vec::new();
+    taken.chief = String::new();
+    state.channel_save(taken, None).unwrap();
+    let before = state.visions_list().len();
+    let team = proposal(team(json!({})));
+    let mut items = Vec::new();
+    assert!(state.visions_set_up_team(&hq, &team, &mut items).is_err());
+    assert_eq!(state.visions_list().len(), before, "no stray Visions");
+    assert!(items.is_empty(), "{items:?}");
+}
+
+#[test]
+fn a_team_cannot_ask_for_custom_rows() {
+    let error = check(&proposal(team(json!({"autonomy": "custom"}))), &context()).unwrap_err();
+    assert!(error.contains("Custom"), "{error}");
+}
