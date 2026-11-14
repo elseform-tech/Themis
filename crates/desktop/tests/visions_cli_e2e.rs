@@ -1333,7 +1333,7 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
     assert!(!wake_texts.is_empty());
     for text in &wake_texts {
         assert!(text.ends_with(
-            "Act on what woke you, then end your turn with your message for the channel."
+            "Act on what woke you, then end your turn: a chief with its message for the person, a worker with a note of a few words."
         ));
         assert!(!text.contains("The person sees only"));
     }

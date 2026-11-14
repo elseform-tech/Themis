@@ -41,7 +41,6 @@ pub(super) const NAMES_WORKER: &[&str] = &[
 const ON_WORKER_CHAT: &[&str] = &["answer_question", "pass_question", "list_questions"];
 
 /// The team grant's decision, like [`super::refusal`]'s: `None` hands the call on to the Vision
-/// The team grant's decision, like [`super::refusal`]'s: `None` hands the call on to the Vision
 /// grant's own rules (a worker's driving of its chats, everyone's ordinary reads).
 pub(super) fn refusal(
     scope: &VisionScope,
