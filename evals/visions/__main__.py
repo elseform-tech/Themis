@@ -1,9 +1,9 @@
 """`python3 -m evals.visions run|impact|compare`: the Visions eval (benchmark audit, not a CI check).
 
-    python3 -m evals.visions run --model MODEL --runs 3 --label main      # both arms, every task
+    python3 -m evals.visions run --model MODEL --runs 3 --label main      # every arm, every task
     python3 -m evals.visions run --dry                                     # scripted provider, spends nothing
     python3 -m evals.visions impact --model MODEL --label main             # the labelled impact set
-    python3 -m evals.visions compare --label main                          # Vision against goal mode (offline)
+    python3 -m evals.visions compare --label main                          # team arms against goal mode (offline)
 
 A round refuses to start when its caps are above the kit's (`evals/kit/spend.py`), when the model
 is dearer than `--max-price` or not listed, or when a Themis Keychain entry is visible; each run
@@ -30,6 +30,8 @@ from . import scenarios
 HERE = os.path.dirname(os.path.abspath(__file__))
 HISTORY = os.path.join(HERE, "history.jsonl")
 RESULTS = os.path.join(HERE, "results")
+# A chief with one worker, a chief with two, the person in goal mode.
+DEFAULT_ARMS = ["vision", "team", "goal"]
 ROW_CLASSIFICATION = ("proxy: the share of labelled questions the Vision put in their decision row when asked "
                       "in its channel; not the decision it records on a real answer_question")
 
@@ -152,14 +154,14 @@ def cmd_impact(args):
 
 
 def compare_table(records, label):
-    """Means per scenario and arm: the Vision against the person in goal mode. Runs stopped at a
+    """Means per scenario and arm: the teams against the person in goal mode. Runs stopped at a
     cap stay out of the `person_messages` mean (they nudge less because they end early) and are
     counted apart; `solved` is the share of runs whose hidden checks passed at the end."""
     rows = [r for r in records if r.get("label") == label and not r.get("infrastructure")]
     lines = [f"# Visions: `{label}` (benchmark audit)", ""]
     for name in sorted({r["scenario"] for r in rows}):
         groups = {arm: [r for r in rows if r["scenario"] == name and r["arm"] == arm]
-                  for arm in ("vision", "goal", "impact")}
+                  for arm in (*DEFAULT_ARMS, "impact")}
         groups = {arm: group for arm, group in groups.items() if group}
         lines += [f"## {name} ({', '.join(f'{arm} n = {len(g)}' for arm, g in groups.items())})", "",
                   "| Measure | " + " | ".join(groups) + " |", "|---" * (len(groups) + 1) + "|"]
@@ -184,7 +186,7 @@ def cmd_compare(args):
 
 
 def add_round_flags(parser):
-    parser.add_argument("--model", default=spend_kit.DEFAULT_MODEL, help="the model both arms use")
+    parser.add_argument("--model", default=spend_kit.DEFAULT_MODEL, help="the model every arm uses")
     parser.add_argument("--seeds", default=[1], type=lambda text: [int(s) for s in text.split(",")])
     parser.add_argument("--timeout", type=int, default=1800, help="seconds before a run is capped")
     parser.add_argument("--max-run-cost", type=float, default=0.50, help="≈ dollars one run may spend")
@@ -210,7 +212,7 @@ def main(argv=None):
     run = commands.add_parser("run", help="the scenarios live through the app (spends money)")
     add_round_flags(run)
     run.add_argument("--scenarios", type=lambda text: text.split(","), help=", ".join(scenarios.names()))
-    run.add_argument("--arms", default=["vision", "goal"], type=lambda text: text.split(","))
+    run.add_argument("--arms", default=DEFAULT_ARMS, type=lambda text: text.split(","), help=", ".join(DEFAULT_ARMS))
     run.add_argument("--runs", type=int, help="runs per scenario and arm (seeds 1..N; overrides --seeds)")
     run.set_defaults(func=cmd_run)
     impact = commands.add_parser("impact", help="the labelled impact set through a Vision (spends money)")

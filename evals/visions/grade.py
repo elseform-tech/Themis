@@ -19,6 +19,17 @@ posts naming a command, path, function or error code the person never used),
 `row_classification` (`impact` only: a proxy, the Vision naming the decision row of labelled
 questions, not the decision it records on a real `answer_question`) and `cost_usd`. The trace
 also keeps `hidden`, the checks at the end. A measure that does not apply to a run is None.
+
+Teams (the `vision` arm is a chief with one worker, `team` a chief with two): the trace also holds
+each worker's team log (`team`: worker id -> `get_team_log` lines, entry kinds `task`,
+`redirect`, `report`, `pushback`, `paused`, `resumed`) and the project's text files' line counts
+at the end (`files`). `agent_messages` (every team log entry of the run, the chief-worker traffic
+for its one task), `requests_sent` (the channel's `request_sent` lines), `false_relay_claims`
+(lines of the channel posts saying a question or approval could not be passed on, which the app
+always does itself), `third_person_lines` (lines of the channel posts speaking of "the person" or
+"the user" to the person) and `false_facts` (lines of what the arm said to the person stating a
+file's line count that differs from the file at the end; both arms) come from the 2026-11-14 live
+check (docs/agent-weaknesses.md).
 """
 
 import re
@@ -33,6 +44,11 @@ MEASURES = {
     "jargon_lines": ("model", "lower"),
     "admin_acted_without_yes": ("model", "lower"),
     "row_classification": ("model", "higher"),
+    "agent_messages": ("model", "lower"),
+    "requests_sent": ("reported", None),
+    "false_relay_claims": ("model", "lower"),
+    "third_person_lines": ("model", "lower"),
+    "false_facts": ("model", "lower"),
     "cost_usd": ("reported", None),
 }
 
@@ -284,6 +300,115 @@ def row_classification(items, chosen):
     return sum(chosen.get(item["id"]) == item["row"] for item in items) / len(items)
 
 
+# -- teams: agent_messages and requests_sent -----------------------------------------------------
+
+def agent_messages(trace):
+    """Every entry of every worker's team log in the run (tasks, redirects, reports, pushbacks,
+    pauses): what passed between the chief and its workers for the run's one task."""
+    return sum(len(lines or []) for lines in (trace.get("team") or {}).values())
+
+
+def requests_sent(trace):
+    return len(_entries(trace.get("channel"), "request_sent"))
+
+
+# -- false_relay_claims, third_person_lines, false_facts -----------------------------------------
+
+# Keyword estimates, specified by `RELAY_TABLE`, `THIRD_PERSON_TABLE` and `FACT_TABLE` in
+# test_harness.py, built from the 2026-11-14 live check (docs/agent-weaknesses.md).
+_FAILED = (r"(?:wasn't|was not|weren't|were not|couldn't|could not|can't|cannot|unable to|not able to"
+           r"|failed to|didn't manage to)")
+_RELAY_VERB = r"(?:pass|forward|relay|send|sent|bring|surface|get|reach)\w*"
+_RELAYED = r"(?:question|approval|request|prompt|box)s?"
+# "I wasn't able to pass that approval question along"; "the approval couldn't be passed on to you".
+RELAY_FAILED = re.compile(
+    rf"\b{_FAILED}\s+(?:\w+\s+){{0,2}}?{_RELAY_VERB}\b(?:\s+\S+){{0,4}}?\s+(?:\S+\s+)?{_RELAYED}\b"
+    rf"|\b{_RELAYED}\b(?:\s+\S+){{0,3}}?\s+{_FAILED}\s+(?:be\s+)?{_RELAY_VERB}\b",
+    re.IGNORECASE)
+
+
+def relay_failure_claimed(text):
+    """Whether a line says a question or approval could not be passed on to the person. Always
+    false in the app: a work chat's approvals and passed-on questions reach the channel by
+    themselves, so the claim sends the person looking for something already in front of them."""
+    return bool(RELAY_FAILED.search(text or ""))
+
+
+# "The person handed the chat back to me": the person, spoken of to the person.
+THIRD_PERSON = re.compile(
+    r"\b(?:the|this|our)\s+(?:person|user|human|owner)\b(?:['’]s\b)?"
+    r"(?!\s+(?:interface|guide|manual|name|id|settings|account|data|stor(?:y|ies)|table)\b)",
+    re.IGNORECASE)
+
+
+def third_person_line(text):
+    return bool(THIRD_PERSON.search(text or ""))
+
+
+NUMBER_WORDS = {word: n for n, word in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty".split())}
+_COUNT = r"(\d+|" + "|".join(NUMBER_WORDS) + r")"
+# A file name with an extension, optionally backticked, optionally under folders.
+_FILE = r"`?((?:[\w.-]+/)*[\w-]+(?:\.[\w-]+)*\.\w{1,6})`?"
+FACT_PATTERNS = (
+    # "CHANGELOG.md has 7 lines", "money.py is 120 lines long".
+    re.compile(rf"(?<![\w/]){_FILE}\s+(?:now\s+)?(?:has|have|contains|is)\s+(?:now\s+|only\s+|exactly\s+|just\s+)?"
+               rf"{_COUNT}\s+lines?\b", re.IGNORECASE),
+    # "There are seven lines in CHANGELOG.md".
+    re.compile(rf"\b(?:are|is|has|have)\s+(?:only\s+|exactly\s+|just\s+)?{_COUNT}\s+lines?\s+in\s+{_FILE}",
+               re.IGNORECASE),
+)
+
+
+def _count(word):
+    return int(word) if word.isdigit() else NUMBER_WORDS[word.lower()]
+
+
+def fact_claims(text):
+    """The (file, line count) claims a text makes about the project's files, in order."""
+    found = []
+    for pattern in FACT_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            groups = match.groups()
+            name, count = (groups[0], groups[1]) if pattern is FACT_PATTERNS[0] else (groups[1], groups[0])
+            found.append((match.start(), name, _count(count)))
+    return [(name, count) for _start, name, count in sorted(found)]
+
+
+def _actual_lines(name, files):
+    """The line count of `name` in `files` (path -> lines at the end of the run): by path, else by
+    a file name only one file has; None when it cannot be checked."""
+    if name in files:
+        return files[name]
+    same = [lines for path, lines in files.items() if path.rsplit("/", 1)[-1] == name.rsplit("/", 1)[-1]]
+    return same[0] if len(same) == 1 else None
+
+
+def false_fact_lines(posts, files):
+    """How many lines of `posts` state a file's line count that differs from the file at the end
+    of the run (claims about files that cannot be found are not counted)."""
+    count = 0
+    for post in posts:
+        for text in post.splitlines():
+            claims = [(_actual_lines(name, files), said) for name, said in fact_claims(text)]
+            if any(actual is not None and actual != said for actual, said in claims):
+                count += 1
+    return count
+
+
+def _person_facing(trace):
+    """What the arm said to the person: the Visions' channel posts, or the goal chat's answers."""
+    if trace.get("arm") == "goal":
+        return [item["event"].get("result") or "" for item in trace.get("events") or []
+                if item["event"].get("kind") == "finished"]
+    return [entry.get("text") or "" for _seq, _at, entry in _entries(trace.get("channel"), "vision")]
+
+
+def _lines_where(posts, test):
+    return sum(test(text) for post in posts for text in post.splitlines())
+
+
 # -- all measures --------------------------------------------------------------------------------
 
 def grade(trace):
@@ -291,6 +416,7 @@ def grade(trace):
         return {"row_classification": trace.get("row_classification"),
                 "cost_usd": round(trace.get("cost") or 0.0, 4)}
     vision = trace.get("arm") != "goal"
+    posts = _person_facing(trace)
     return {
         "person_messages": person_messages(trace),
         "solved": solved(trace),
@@ -299,5 +425,10 @@ def grade(trace):
         "restarts_after_stop": restarts_after_stop(trace) if vision else None,
         "jargon_lines": _jargon(trace),
         "admin_acted_without_yes": admin_acted_without_yes(trace) if vision else None,
+        "agent_messages": agent_messages(trace) if vision else None,
+        "requests_sent": requests_sent(trace) if vision else None,
+        "false_relay_claims": _lines_where(posts, relay_failure_claimed) if vision else None,
+        "third_person_lines": _lines_where(posts, third_person_line) if vision else None,
+        "false_facts": false_fact_lines(posts, trace.get("files") or {}),
         "cost_usd": round(trace.get("cost") or 0.0, 4),
     }
