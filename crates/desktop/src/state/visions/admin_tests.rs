@@ -187,7 +187,6 @@ fn the_admin_runs_on_its_own_head() {
         &admin_profile(),
         &channel("h1", ADMINISTRATION, &[ADMIN_VISION_ID]),
         &VisionsConfig::default(),
-        "",
     );
     println!("{head}");
     assert!(head.starts_with("You are Atlas"));
@@ -209,7 +208,6 @@ fn the_admin_runs_on_its_own_head() {
         &wren,
         &channel("d", "docs", &["w"]),
         &VisionsConfig::default(),
-        "",
     );
     assert!(other.starts_with("You are Wren, a Vision"));
 }

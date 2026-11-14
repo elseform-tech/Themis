@@ -208,6 +208,7 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             color: "teal".into(),
             model: Some("go/test-model".into()),
             accessory: "glasses".into(),
+            soul: "Careful.".into(),
             paused: false,
             revision: "r1".into(),
         },

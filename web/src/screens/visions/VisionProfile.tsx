@@ -1,11 +1,10 @@
-// A Vision's profile (canvas VisionProfile): Pause, Delete, its model, an autonomy override that
-// may only lower Settings › Visions, its daily budget, its soul and the channels it works in.
-// Atlas, the built-in admin, has no Delete and shows only what applies to it: it drives no chats
-// (no autonomy), its runs do not read a soul, and it works only in `# administration`.
+// A Vision's profile: Pause, Delete, its model, its soul when it leads a channel, and the channels
+// it works in (autonomy and budget are its channel's). Atlas, the built-in admin, has no Delete
+// and works only in `# administration`; it has a soul.
 import { useEffect, useState } from "react";
 import { listGoModels, listModelProviders } from "../../lib/tauri";
 import type { GoModel, ModelProvider } from "../../lib/types";
-import { ADMIN_VISION_ID, deleteVision, getSoul, openSoul, pauseVision, saveSoul, saveVision, type SoulView, type VisionInfo, type VisionProfile as Profile } from "../../lib/visions";
+import { ADMIN_VISION_ID, deleteVision, pauseVision, saveVision, type VisionInfo, type VisionProfile as Profile } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
 import { ModelOptions } from "../ModelsSettings";
@@ -41,28 +40,14 @@ function ModelRow({ vision, save }: { vision: VisionInfo; save: Save }) {
   </label>;
 }
 
-/** The chief's or Atlas's `soul.md`, read as text: the pencil edits it in place, and "Open
- *  soul.md" opens the file in the person's editor for longer edits. */
-function SoulBlock({ visionId, onError }: { visionId: string; onError: (message: string) => void }) {
-  const [soul, setSoul] = useState<SoulView | null>(null);
+/** The soul, read as text; the pencil edits it in place. */
+function SoulBlock({ soul, save }: { soul: string; save: Save }) {
   const [draft, setDraft] = useState<string | null>(null);
-  useEffect(() => { void getSoul(visionId).then(setSoul).catch(reason => onError(describeError(reason))); }, [visionId, onError]);
-  if (!soul) return null;
-  const save = async (text: string) => {
-    try {
-      setSoul(await saveSoul(visionId, text, soul.revision));
-      setDraft(null);
-    } catch (reason) { onError(describeError(reason)); }
-  };
-  const actions = draft === null && <>
-    <PanelButton label="Open soul.md" onClick={() => void openSoul(visionId).catch(reason => onError(describeError(reason)))}><OpenIcon /></PanelButton>
-    <PanelButton label="Edit soul" onClick={() => setDraft(soul.text)}><EditIcon /></PanelButton>
-  </>;
-  return <PanelBlock title="Soul" action={actions || undefined}>
-    {soul.problem && <p role="alert" className="themis-form-error">{soul.problem}</p>}
+  const edit = <PanelButton label="Edit soul" onClick={() => setDraft(soul)}><EditIcon /></PanelButton>;
+  return <PanelBlock title="Soul" action={draft === null ? edit : undefined}>
     {draft === null
-      ? soul.text && <p className="themis-visions-soul">{soul.text}</p>
-      : <form className="themis-visions-soul-form" onSubmit={event => { event.preventDefault(); void save(draft); }}>
+      ? soul && <p className="themis-visions-soul">{soul}</p>
+      : <form className="themis-visions-soul-form" onSubmit={event => { event.preventDefault(); void save({ soul: draft }).then(() => setDraft(null), () => undefined); }}>
         <textarea aria-label="Soul" rows={6} maxLength={16384} value={draft} autoFocus onChange={event => setDraft(event.target.value)} />
         <span className="themis-visions-soul-actions">
           <button type="button" className="themis-text-action" onClick={() => setDraft(null)}>Cancel</button>
@@ -70,11 +55,6 @@ function SoulBlock({ visionId, onError }: { visionId: string; onError: (message:
         </span>
       </form>}
   </PanelBlock>;
-}
-
-/** An arrow out of a box: opens a file elsewhere. */
-function OpenIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>;
 }
 
 /** The channels the Vision is a member of, each opening its channel. */
@@ -108,8 +88,8 @@ function ProfileTitle({ vision }: { vision: VisionInfo }) {
 
 /** The saved profile inside a listed Vision. */
 function profileOf(vision: VisionInfo): Profile {
-  const { id, name, role, shape, color, accessory, model, paused, revision } = vision;
-  return { id, name, role, shape, color, accessory, model, paused, revision };
+  const { id, name, role, shape, color, accessory, model, soul, paused, revision } = vision;
+  return { id, name, role, shape, color, accessory, model, soul, paused, revision };
 }
 
 export function VisionProfile({ visionId }: { visionId: string }) {
@@ -141,7 +121,7 @@ export function VisionProfile({ visionId }: { visionId: string }) {
       <PanelBlock>
         <ModelRow vision={vision} save={guarded} />
       </PanelBlock>
-      {(admin || chief) && <SoulBlock visionId={vision.id} onError={setError} />}
+      {(admin || chief) && <SoulBlock soul={vision.soul} save={save} />}
       {!admin && <ChannelsBlock visionId={vision.id} />}
     </SidePanel>
   );

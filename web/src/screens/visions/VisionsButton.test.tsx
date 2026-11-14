@@ -13,7 +13,7 @@ vi.mock("../../state/store", async importOriginal => ({
 }));
 
 const vision = (id: string, extra: Partial<VisionInfo> = {}): VisionInfo => ({
-  id, name: id, role: "", shape: "tall", color: "blue", paused: false, revision: "r",
+  id, name: id, role: "", shape: "tall", color: "blue", soul: "", paused: false, revision: "r",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const withVisions = (list: VisionInfo[]): AppState => ({ ...initialState, settings: DEFAULT_SETTINGS, visions: { ...initialState.visions, list } });

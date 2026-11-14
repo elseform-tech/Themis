@@ -18,6 +18,7 @@ fn vision(name: &str) -> Vision {
         color: "blue".into(),
         model: None,
         accessory: "none".into(),
+        soul: String::new(),
         paused: false,
         revision: String::new(),
     }
@@ -88,6 +89,13 @@ fn saving_with_a_stale_revision_fails() {
 fn vision_fields_are_validated() {
     let dir = tempfile::tempdir().unwrap();
     let state = state_in(dir.path());
+    let mut long_soul = vision("Wren");
+    long_soul.soul = "x".repeat(SOUL_MAX_BYTES + 1);
+    assert!(state.vision_save(long_soul, None).is_err());
+    // A new Vision leads no channel yet, so it has no soul (souls_tests covers chiefs).
+    let mut new_soul = vision("Wren");
+    new_soul.soul = "Calm.".into();
+    assert!(state.vision_save(new_soul, None).is_err());
     assert!(state.vision_save(vision("  "), None).is_err());
     // The team's rows and budget are checked on its channel.
     let root = project(dir.path(), "docs");

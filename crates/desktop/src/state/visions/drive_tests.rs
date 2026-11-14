@@ -31,6 +31,7 @@ fn setup(model: Option<&str>) -> Setup {
                 color: "teal".into(),
                 model: model.map(str::to_owned),
                 accessory: "none".into(),
+                soul: String::new(),
                 paused: false,
                 revision: String::new(),
             },

@@ -1,6 +1,7 @@
+//! A soul is text on a chief's or Atlas's record, saved from the profile; workers have none.
+
 use std::path::Path;
 
-use super::souls::SOUL_MAX_BYTES;
 use super::*;
 use crate::state::AppState;
 
@@ -13,6 +14,7 @@ fn vision(name: &str) -> Vision {
         id: String::new(),
         name: name.into(),
         role: String::new(),
+        soul: String::new(),
         shape: "cloud".into(),
         color: "blue".into(),
         accessory: "none".into(),
@@ -22,66 +24,51 @@ fn vision(name: &str) -> Vision {
     }
 }
 
+fn release(root: &Path, members: Vec<String>) -> Channel {
+    Channel {
+        id: String::new(),
+        name: "release".into(),
+        topic: String::new(),
+        project_root: root.to_path_buf(),
+        approval_mode: themis_core::configuration::ApprovalMode::Custom,
+        chief: members[0].clone(),
+        members,
+        autonomy: None,
+        custom: None,
+        daily_budget_usd: None,
+        revision: String::new(),
+    }
+}
+
 /// A channel led by Juno with Rook working for her; returns (juno, rook).
-fn team(state: &AppState, root: &Path) -> (String, String) {
-    let juno = state.vision_save(vision("Juno"), None).unwrap().id;
-    let rook = state.vision_save(vision("Rook"), None).unwrap().id;
+fn team(state: &AppState, root: &Path) -> (Vision, Vision) {
+    let juno = state.vision_save(vision("Juno"), None).unwrap();
+    let rook = state.vision_save(vision("Rook"), None).unwrap();
     state
-        .channel_save(
-            Channel {
-                id: String::new(),
-                name: "release".into(),
-                topic: String::new(),
-                project_root: root.to_path_buf(),
-                approval_mode: themis_core::configuration::ApprovalMode::Custom,
-                members: vec![juno.clone(), rook.clone()],
-                chief: juno.clone(),
-                autonomy: None,
-                custom: None,
-                daily_budget_usd: None,
-                revision: String::new(),
-            },
-            None,
-        )
+        .channel_save(release(root, vec![juno.id.clone(), rook.id.clone()]), None)
         .unwrap();
     (juno, rook)
 }
 
 #[test]
-fn a_soul_round_trips_and_checks_its_revision() {
+fn a_chief_saves_its_soul_from_the_profile() {
     let dir = tempfile::tempdir().unwrap();
     let state = state_in(dir.path());
     let (juno, _) = team(&state, &dir.path().join("p"));
-    let empty = state.get_soul(&juno).unwrap();
-    assert_eq!(empty.text, "");
+    let revision = juno.revision.clone();
     let saved = state
-        .save_soul(&juno, "Calm and direct.", &empty.revision)
+        .vision_save(
+            Vision {
+                soul: "Calm and direct.".into(),
+                ..juno
+            },
+            Some(&revision),
+        )
         .unwrap();
-    assert_eq!(state.get_soul(&juno).unwrap().text, "Calm and direct.");
-    assert!(state
-        .inner
-        .visions_dir
-        .join("souls")
-        .join(format!("{juno}.md"))
-        .is_file());
-    // Saving from the old copy is stale.
-    let stale = state
-        .save_soul(&juno, "Loud.", &empty.revision)
-        .unwrap_err();
-    assert!(stale.contains("changed"), "{stale}");
-    // An edit made in an editor is what the next read sees, with a new revision.
-    std::fs::write(
-        state
-            .inner
-            .visions_dir
-            .join("souls")
-            .join(format!("{juno}.md")),
-        "Edited by hand.",
-    )
-    .unwrap();
-    let edited = state.get_soul(&juno).unwrap();
-    assert_eq!(edited.text, "Edited by hand.");
-    assert_ne!(edited.revision, saved.revision);
+    assert_eq!(
+        state.vision_get(&saved.id).unwrap().soul,
+        "Calm and direct."
+    );
 }
 
 #[test]
@@ -89,55 +76,106 @@ fn a_soul_over_16_kib_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let state = state_in(dir.path());
     let (juno, _) = team(&state, &dir.path().join("p"));
-    let fits = "x".repeat(SOUL_MAX_BYTES);
-    let saved = state.save_soul(&juno, &fits, "").unwrap();
+    let revision = juno.revision.clone();
+    let fits = state
+        .vision_save(
+            Vision {
+                soul: "x".repeat(16 * 1024),
+                ..juno
+            },
+            Some(&revision),
+        )
+        .unwrap();
+    let revision = fits.revision.clone();
     let error = state
-        .save_soul(&juno, &"x".repeat(SOUL_MAX_BYTES + 1), &saved.revision)
+        .vision_save(
+            Vision {
+                soul: "x".repeat(16 * 1024 + 1),
+                ..fits
+            },
+            Some(&revision),
+        )
         .unwrap_err();
     assert!(error.contains("16 KiB"), "{error}");
-}
-
-#[test]
-fn an_unreadable_soul_is_a_problem_not_silence() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = state_in(dir.path());
-    let (juno, _) = team(&state, &dir.path().join("p"));
-    let path = state
-        .inner
-        .visions_dir
-        .join("souls")
-        .join(format!("{juno}.md"));
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, [0xff, 0xfe, 0x00]).unwrap();
-    let view = state.get_soul(&juno).unwrap();
-    assert!(view.problem.is_some(), "invalid text is reported");
-    assert_eq!(state.soul_for_run(&juno), "");
-}
-
-#[test]
-fn a_change_applies_from_the_next_wake_not_a_running_one() {
-    let dir = tempfile::tempdir().unwrap();
-    let state = state_in(dir.path());
-    let (juno, _) = team(&state, &dir.path().join("p"));
-    state.save_soul(&juno, "First.", "").unwrap();
-    // A run builds its head once, at setup, from the soul read then.
-    let running = state.soul_for_run(&juno);
-    let revision = state.get_soul(&juno).unwrap().revision;
-    state.save_soul(&juno, "Second.", &revision).unwrap();
-    assert_eq!(running, "First.");
-    assert_eq!(state.soul_for_run(&juno), "Second.");
 }
 
 #[test]
 fn workers_have_no_soul() {
     let dir = tempfile::tempdir().unwrap();
     let state = state_in(dir.path());
-    let (_, rook) = team(&state, &dir.path().join("p"));
-    let error = state.save_soul(&rook, "I build.", "").unwrap_err();
+    let root = dir.path().join("p");
+    let (_, rook) = team(&state, &root);
+    let revision = rook.revision.clone();
+    let error = state
+        .vision_save(
+            Vision {
+                soul: "I build.".into(),
+                ..rook.clone()
+            },
+            Some(&revision),
+        )
+        .unwrap_err();
     assert!(error.contains("chief"), "{error}");
+    // Other edits to a worker still save.
+    assert!(state
+        .vision_save(
+            Vision {
+                role: "Builds".into(),
+                ..rook
+            },
+            Some(&revision)
+        )
+        .is_ok());
     // Atlas has one.
-    state
-        .visions_ensure_administration(&dir.path().join("p"))
+    state.visions_ensure_administration(&root).unwrap();
+    let atlas = state.vision_get(ADMIN_VISION_ID).unwrap();
+    let revision = atlas.revision.clone();
+    assert!(state
+        .vision_save(
+            Vision {
+                soul: "Tidy.".into(),
+                ..atlas
+            },
+            Some(&revision)
+        )
+        .is_ok());
+}
+
+#[test]
+fn a_former_chief_keeps_its_soul_but_works_without_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_in(dir.path());
+    let root = dir.path().join("p");
+    let (juno, rook) = team(&state, &root);
+    let revision = juno.revision.clone();
+    let juno = state
+        .vision_save(
+            Vision {
+                soul: "Calm and direct.".into(),
+                ..juno
+            },
+            Some(&revision),
+        )
         .unwrap();
-    assert!(state.save_soul(ADMIN_VISION_ID, "Tidy.", "").is_ok());
+    let mut channel = state.channel_list(&root).into_iter().next().unwrap();
+    let led = runs::vision_head(&juno, &channel, &Default::default());
+    assert!(led.contains("Calm and direct."));
+    // Rook leads now: Juno's soul stays on her record, and her runs go without it.
+    channel.chief = rook.id.clone();
+    let revision = channel.revision.clone();
+    let channel = state.channel_save(channel, Some(&revision)).unwrap();
+    let juno = state.vision_get(&juno.id).unwrap();
+    assert_eq!(juno.soul, "Calm and direct.");
+    assert!(!runs::vision_head(&juno, &channel, &Default::default()).contains("Calm and direct."));
+    // Saving her profile with the soul she already has is not a new soul.
+    let revision = juno.revision.clone();
+    assert!(state
+        .vision_save(
+            Vision {
+                role: "Writes".into(),
+                ..juno
+            },
+            Some(&revision)
+        )
+        .is_ok());
 }

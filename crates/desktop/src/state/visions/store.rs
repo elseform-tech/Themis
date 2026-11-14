@@ -14,7 +14,7 @@ use super::admin::{
 };
 use super::{
     Channel, Owner, Vision, VisionsCache, CHANNELS_FILE, CHANNEL_LOGS_DIR, OWNERS_FILE,
-    VISIONS_FILE,
+    SOUL_MAX_BYTES, VISIONS_FILE,
 };
 use crate::state::chat_grants::safe_chat_id;
 
@@ -267,6 +267,9 @@ pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
     if !super::ACCESSORIES.contains(&spec.accessory.as_str()) {
         return Err("A Vision carries one of the cast's accessories");
     }
+    if spec.soul.len() > SOUL_MAX_BYTES {
+        return Err("A soul is at most 16 KiB");
+    }
     Ok(())
 }
 
@@ -415,7 +418,23 @@ impl VisionsCache {
     ) -> Result<Vision, StoreError> {
         validate_vision(&mut spec).map_err(|message| StoreError::refused(VISIONS_FILE, message))?;
         self.ensure_unchanged(dir, VISIONS_FILE)?;
+        // Only Atlas and a channel's chief have a soul.
+        let leads = super::is_admin(&spec.id)
+            || (!spec.id.is_empty()
+                && self
+                    .channels(dir)?
+                    .values()
+                    .any(|channel| channel.is_chief(&spec.id)));
         let visions = self.visions(dir)?;
+        let unchanged_soul = visions
+            .get(&spec.id)
+            .is_some_and(|previous| previous.soul == spec.soul);
+        if !spec.soul.is_empty() && !leads && !unchanged_soul {
+            return Err(StoreError::refused(
+                VISIONS_FILE,
+                "Only a channel's chief of staff and Atlas have a soul",
+            ));
+        }
         let current = if spec.id.is_empty() {
             spec.id = new_id();
             None

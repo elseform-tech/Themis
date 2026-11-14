@@ -2,7 +2,7 @@
 //! becomes `# administration` with the admin as its chief (a channel the person had named
 //! `administration` steps aside), every other channel's first member becomes its chief, the
 //! per-Vision autonomy and budget overrides become the channel's (its strictest member's, so
-//! nothing loosens), souls move to `soul.md`, and old heartbeat notes are deleted. Logs and
+//! nothing loosens), workers' souls go, and old heartbeat notes are deleted. Logs and
 //! owned chats stay as they are.
 //!
 //! It runs on the store's first load and is idempotent: each step only changes what is still in
@@ -59,7 +59,7 @@ pub(super) fn convert(dir: &Path) -> Result<Vec<String>, StoreError> {
         .collect();
     let mut dropped = false;
     for vision in &mut visions {
-        dropped |= move_soul(dir, vision, &chiefs)?;
+        dropped |= drop_worker_soul(vision, &chiefs);
         if let Some(fields) = vision.as_object_mut() {
             for field in DROPPED_VISION_FIELDS {
                 dropped |= fields.remove(*field).is_some();
@@ -186,7 +186,13 @@ fn decided_by(level: Autonomy, rows: &BTreeMap<String, bool>) -> Vec<Decision> {
 
 /// The decisions a Phase 1 Vision's own autonomy left to it, when it had one.
 fn decided(vision: &Value) -> Option<Vec<Decision>> {
-    let level: Autonomy = serde_json::from_value(vision.get("autonomy")?.clone()).ok()?;
+    // Rows with no level of their own were limits on the Settings level: kept as Custom rows,
+    // which can only be stricter.
+    let level: Autonomy = match vision.get("autonomy") {
+        Some(level) => serde_json::from_value(level.clone()).ok()?,
+        None if vision.get("custom").is_some() => Autonomy::Custom,
+        None => return None,
+    };
     let rows: BTreeMap<String, bool> = vision
         .get("custom")
         .and_then(|rows| serde_json::from_value(rows.clone()).ok())
@@ -194,23 +200,23 @@ fn decided(vision: &Value) -> Option<Vec<Decision>> {
     Some(decided_by(level, &rows))
 }
 
-/// A chief's or Atlas's soul text moves to its `soul.md` (kept when one is already there); a
-/// worker's is dropped. Returns whether the record changed.
-fn move_soul(dir: &Path, vision: &mut Value, chiefs: &[String]) -> Result<bool, StoreError> {
+/// A chief's or Atlas's soul stays on its record; a worker's goes (workers have a role).
+/// Returns whether the record changed.
+fn drop_worker_soul(vision: &mut Value, chiefs: &[String]) -> bool {
     let Some(fields) = vision.as_object_mut() else {
-        return Ok(false);
-    };
-    let Some(soul) = fields.remove("soul") else {
-        return Ok(false);
+        return false;
     };
     let id = fields.get("id").and_then(Value::as_str).unwrap_or_default();
-    let text = soul.as_str().unwrap_or_default();
     let keeps = id == ADMIN_VISION_ID || chiefs.iter().any(|chief| chief == id);
-    if keeps && !text.trim().is_empty() && matches!(super::souls::read_soul(dir, id), Ok(None)) {
-        super::souls::write_soul(dir, id, text, "")
-            .map_err(|message| StoreError::refused(VISIONS_FILE, &message))?;
+    let has_soul = fields
+        .get("soul")
+        .and_then(Value::as_str)
+        .is_some_and(|soul| !soul.is_empty());
+    if keeps || !has_soul {
+        return false;
     }
-    Ok(true)
+    fields.insert("soul".into(), Value::from(""));
+    true
 }
 
 /// One channel in the teams shape: `# administration` renamed with the admin as chief, else a chief chosen

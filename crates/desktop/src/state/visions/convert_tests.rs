@@ -79,10 +79,6 @@ fn phase1_store_converts_first_member_to_chief_and_drops_vision_overrides() {
         assert!(wren.get(gone).is_none(), "{gone} is dropped");
     }
     assert!(!visions_dir.join("heartbeats").exists());
-    // Wren leads # docs, so its soul moved to soul.md; Rook works for it and has none.
-    assert_eq!(state.get_soul("wren").unwrap().text, "Calm.");
-    assert!(wren.get("soul").is_none());
-    assert!(!visions_dir.join("souls/rook.md").exists());
     assert!(
         std::fs::read_to_string(visions_dir.join("channels/docs1.jsonl"))
             .unwrap()
@@ -139,6 +135,7 @@ fn vision(name: &str) -> Vision {
         color: "blue".into(),
         accessory: "none".into(),
         model: None,
+        soul: String::new(),
         paused: false,
         revision: String::new(),
     }
@@ -345,4 +342,47 @@ fn a_damaged_visions_file_converts_nothing_until_it_is_fixed() {
     fixed.visions_ensure_administration(&root).unwrap();
     assert!(visions_dir.join(MARKER_FILE).exists());
     assert_eq!(notes_in(&visions_dir, "hq1"), 1);
+}
+
+#[test]
+fn a_chief_keeps_its_soul_and_a_worker_loses_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects").join("docs");
+    let state = state_in(dir.path());
+    let visions_dir = state.inner.visions_dir.clone();
+    phase1_store(&visions_dir, &root);
+
+    state.visions_ensure_administration(&root).unwrap();
+
+    // # docs is Wren then Rook: Wren leads.
+    assert_eq!(state.vision_get("wren").unwrap().soul, "Calm.");
+    assert_eq!(state.vision_get("rook").unwrap().soul, "");
+}
+
+#[test]
+fn rows_without_a_level_still_limit_the_team() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("projects").join("docs");
+    let state = state_in(dir.path());
+    let visions_dir = state.inner.visions_dir.clone();
+    phase1_store(&visions_dir, &root);
+    let mut visions = raw(&visions_dir, "visions.json");
+    let rook = visions
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|v| v["id"] == "rook")
+        .unwrap();
+    rook["custom"] = json!({"wording": false});
+    std::fs::write(visions_dir.join("visions.json"), visions.to_string()).unwrap();
+
+    state.visions_ensure_administration(&root).unwrap();
+
+    let docs = state
+        .channel_list(&root)
+        .into_iter()
+        .find(|c| c.id == "docs1")
+        .unwrap();
+    // Rook's only row was a no, so the team decides nothing itself (before: Wren's "most").
+    assert_eq!(docs.autonomy, Some(themis_core::visions::Autonomy::Ask));
 }

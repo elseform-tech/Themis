@@ -34,6 +34,7 @@ fn setup() -> Setup {
                 color: "teal".into(),
                 model: None,
                 accessory: "none".into(),
+                soul: String::new(),
                 paused: false,
                 revision: String::new(),
             },

@@ -7,6 +7,7 @@
     "color": "teal",
     "model": "go/test-model",
     "accessory": "glasses",
+    "soul": "Careful.",
     "paused": false,
     "revision": "r1",
     "over_budget": true,

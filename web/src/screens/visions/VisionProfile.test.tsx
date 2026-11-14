@@ -24,9 +24,6 @@ vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
   getVisionsSettings: vi.fn(async () => ({ settings: { enabled: true, autonomy: "most", custom: {}, daily_budget_usd: 2, max_wakes: 8 }, revision: "s1", can_run: true })),
   saveVision: vi.fn(async (draft: object) => ({ ...draft, revision: "r2" })),
-  getSoul: vi.fn(async () => ({ text: "Careful and brief.", revision: "s-a" })),
-  saveSoul: vi.fn(async (_id: string, text: string) => ({ text, revision: "s-b" })),
-  openSoul: vi.fn(async () => undefined),
   pauseVision: vi.fn(async () => ({})),
   deleteVision: vi.fn(async () => undefined),
   saveChannel: vi.fn(async (draft: object) => ({ ...draft, revision: "c2" })),
@@ -34,7 +31,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
 }));
 
 const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): VisionInfo => ({
-  id, name, role: "Builder", shape: "flat", color: "teal", paused: false, revision: "r1",
+  id, name, role: "Builder", shape: "flat", color: "teal", soul: "Careful and brief.", paused: false, revision: "r1",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook"], chief: "rook", revision: "c1r" };
@@ -46,7 +43,7 @@ function state(): AppState {
     activeProjectRoot: "/p",
     visions: {
       ...initialState.visions,
-      list: [vision("admin", "Atlas", { role: "Sets up channels and Visions" }), vision("rook", "Rook"), vision("wren", "Wren", { role: "Reviewer" })],
+      list: [vision("admin", "Atlas", { role: "Sets up channels and Visions", soul: "" }), vision("rook", "Rook"), vision("wren", "Wren", { role: "Reviewer" })],
       channels: { "/p": [hq, release] },
     },
   };
@@ -85,30 +82,10 @@ describe("A Vision's profile", () => {
     // Autonomy and budget are the team's (its channel's), not a Vision's.
     expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
     expect(screen.queryByRole("spinbutton", { name: "Daily budget" })).toBeNull();
-    // Rook leads # release, so it has a soul: soul.md, saved against its own revision.
-    expect(await screen.findByText("Careful and brief.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Edit soul" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Soul" }), { target: { value: "Bold." } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
-    expect(visions.saveSoul).toHaveBeenLastCalledWith("rook", "Bold.", "s-a");
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open soul.md" })); });
-    expect(visions.openSoul).toHaveBeenCalledWith("rook");
-  });
-
-  it("keeps the Vision's accessory when another field is saved", async () => {
-    const initial = state();
-    initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, accessory: "hard_hat" } : each);
-    await show(() => <VisionProfile visionId="rook" />, initial);
-    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
-    expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ model: "glm-5", accessory: "hard_hat" }), "r1");
-  });
-
-  it("gives a worker no soul: it has a role", async () => {
-    vi.mocked(visions.getSoul).mockClear();
-    await show(() => <VisionProfile visionId="wren" />);
-    await screen.findByRole("combobox", { name: "Model" });
-    expect(screen.queryByText("Soul")).toBeNull();
-    expect(visions.getSoul).not.toHaveBeenCalled();
+    expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ soul: "Bold." }), "r2");
   });
 
   it("pauses the Vision and lists its channels", async () => {
@@ -122,18 +99,33 @@ describe("A Vision's profile", () => {
   });
 
   it("shows an empty soul as its heading and edit button only", async () => {
-    vi.mocked(visions.getSoul).mockResolvedValueOnce({ text: "", revision: "" });
-    await show(() => <VisionProfile visionId="rook" />);
-    expect(await screen.findByRole("button", { name: "Edit soul" })).toBeInTheDocument();
+    const initial = state();
+    initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, soul: "" } : each);
+    await show(() => <VisionProfile visionId="rook" />, initial);
+    expect(screen.getByRole("button", { name: "Edit soul" })).toBeInTheDocument();
     expect(document.querySelector(".themis-visions-soul")).toBeNull();
     expect(screen.queryByText(/in your words/)).toBeNull();
+  });
+
+  it("gives a worker no soul: it has a role", async () => {
+    await show(() => <VisionProfile visionId="wren" />);
+    expect(screen.queryByText("Soul")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit soul" })).toBeNull();
+  });
+
+  it("keeps the Vision's accessory when it saves", async () => {
+    const initial = state();
+    initial.visions.list = initial.visions.list.map(each => each.id === "rook" ? { ...each, accessory: "glasses" } : each);
+    await show(() => <VisionProfile visionId="rook" />, initial);
+    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
+    expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ accessory: "glasses" }), "r1");
   });
 
   it("shows Atlas only what applies to it: its soul, no Delete, autonomy or channels", async () => {
     await show(() => <VisionProfile visionId="admin" />);
     expect(screen.queryByRole("button", { name: "Delete Atlas" })).toBeNull();
     expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
-    expect(await screen.findByText("Soul")).toBeInTheDocument();
+    expect(screen.getByText("Soul")).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Channels" })).toBeNull();
     expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pause Atlas" })).toBeInTheDocument();

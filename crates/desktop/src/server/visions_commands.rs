@@ -26,9 +26,6 @@ pub(super) const METHODS: &[&str] = &[
     "hand_back_thread",
     "get_visions_settings",
     "update_visions_settings",
-    "get_soul",
-    "save_soul",
-    "open_soul",
 ];
 
 fn change(channel_id: Option<String>, vision_id: Option<String>) -> Option<VisionsChange> {
@@ -40,30 +37,6 @@ fn change(channel_id: Option<String>, vision_id: Option<String>) -> Option<Visio
 
 fn to_value(value: impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|err| err.to_string())
-}
-
-/// A chief's or Atlas's `soul.md`: read, saved against its revision, or opened in the editor.
-async fn soul_method(
-    state: &AppState,
-    method: &str,
-    args: &Value,
-) -> Result<(Value, Option<VisionsChange>), String> {
-    let vision_id: String = arg(args, "visionId")?;
-    match method {
-        "get_soul" => Ok((to_value(state.get_soul(&vision_id)?)?, None)),
-        "save_soul" => {
-            let saved = state.save_soul(
-                &vision_id,
-                &arg::<String>(args, "text")?,
-                &arg::<String>(args, "revision")?,
-            )?;
-            Ok((to_value(saved)?, change(None, Some(vision_id))))
-        }
-        _ => {
-            state.open_soul(&vision_id, arg(args, "editor")?).await?;
-            Ok((Value::Null, None))
-        }
-    }
 }
 
 /// Runs one of [`METHODS`], then announces what it wrote.
@@ -120,7 +93,6 @@ async fn run(
             Ok((to_value(saved)?, changed))
         }
         "pause_vision" | "delete_vision" => vision_method(state, sink, method, args),
-        "get_soul" | "save_soul" | "open_soul" => soul_method(state, method, args).await,
         "list_channels" | "save_channel" | "delete_channel" | "get_channel_page" => {
             channel_method(state, sink, method, args)
         }
