@@ -151,10 +151,8 @@ impl AppState {
         if owner.hold != Hold::None {
             return Some(AGENT_CLI_HELD_BY_PERSON);
         }
-        let paused = self
-            .vision_get(&owner.vision_id)
-            .is_none_or(|vision| vision.paused);
-        if paused {
+        // The person's pause, or its chief's in this chat's channel.
+        if self.paused_in(&owner.channel_id, &owner.vision_id) {
             return Some(AGENT_CLI_VISION_PAUSED);
         }
         self.visions_budget_holds(thread_id)

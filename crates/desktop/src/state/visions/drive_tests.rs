@@ -599,3 +599,28 @@ async fn a_persons_steer_of_a_visions_message_keeps_the_visions_words() {
         .collect();
     assert_eq!(queued, [("Apache".to_owned(), Some(vision))]);
 }
+
+/// A chief's pause of a worker in this channel holds the worker's sends there, as the
+/// person's pause does.
+#[tokio::test]
+async fn a_team_pause_holds_the_workers_sends() {
+    let fx = setup(None);
+    let info = fx.state.visions_start_work_chat(&fx.scope).await.unwrap();
+    fx.state
+        .visions_team_pause(&fx.scope.channel_id, &fx.scope.vision_id, true)
+        .unwrap();
+    let refused = fx
+        .state
+        .visions_send(
+            sink(),
+            &fx.scope.vision_id,
+            &info.id,
+            "go".into(),
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused, themis_core::prompts::AGENT_CLI_VISION_PAUSED);
+    assert!(!fx.state.get_thread(&info.id).await.unwrap().running);
+}

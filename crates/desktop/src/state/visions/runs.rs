@@ -261,12 +261,12 @@ impl AppState {
         let vision = self
             .vision_get(&spec.vision_id)
             .ok_or_else(|| "This Vision no longer exists".to_owned())?;
-        if vision.paused {
-            return Err("This Vision is paused".to_owned());
-        }
         let channel = self
             .channel_get(&spec.channel_id)
             .ok_or_else(|| "This channel no longer exists".to_owned())?;
+        if vision.paused || channel.paused_workers.contains(&vision.id) {
+            return Err("This Vision is paused".to_owned());
+        }
         let port =
             self.visions_envelope_check(&snapshot.work_root, &snapshot.runtime_configuration)?;
         snapshot.approval_mode = ApprovalMode::Custom;
