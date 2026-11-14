@@ -245,6 +245,16 @@ async fn the_person_reads_a_workers_thread_and_the_channels_spend() {
         json!({"channelId": channel, "workerId": rook}),
     );
     assert_eq!(log["entries"][0]["entry"]["text"], "Fix the build", "{log}");
+    // Without prices, today's spend is unknown, never shown as nothing spent.
+    let spend = fx.call_ok("get_channel_spend", json!({"channelId": channel}));
+    assert!(spend["spent_usd"].is_null(), "{spend}");
+    fx.state
+        .set_model_catalog_for_test(vec![themis_core::providers::GoModel {
+            id: "test-model".into(),
+            price: Some(themis_core::providers::ModelPrice::default()),
+            ..Default::default()
+        }])
+        .await;
     let spend = fx.call_ok("get_channel_spend", json!({"channelId": channel}));
     assert_eq!(spend["spent_usd"], 0.0, "{spend}");
     fx.shut_down().await;
