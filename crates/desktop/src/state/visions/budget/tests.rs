@@ -1075,6 +1075,7 @@ async fn a_budget_flip_announces_the_vision() {
 #[tokio::test]
 async fn budget_judging_stays_flat_with_the_number_of_channels() {
     let s = setup().await;
+    spent_today(&s);
     let root = s.state.channel_get(&s.channel).unwrap().project_root;
     let mut counts = Vec::new();
     for size in [5usize, 50] {
@@ -1107,6 +1108,16 @@ async fn budget_judging_stays_flat_with_the_number_of_channels() {
         }
         super::take_tallies();
         s.state.visions_budget_recheck();
+        // A wake's gate and, at the shared cap, enforcing it, also take one pass each.
+        s.state.visions_budget_gate(&s.wren, &s.channel);
+        write_runtime(&s, r#"{"visions": {"daily_budget_usd": 0.5}}"#);
+        assert!(
+            s.state.visions_judge(&s.wren, &s.channel).over.is_some(),
+            "over at the shared cap"
+        );
+        super::take_tallies();
+        s.state.visions_budget_enforce(&s.wren, &s.channel);
+        write_runtime(&s, "{}");
         counts.push((size, super::take_tallies()));
     }
     let rate = crate::scale::growth_rate(&counts);

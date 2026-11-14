@@ -50,17 +50,22 @@ fn a_question_its_worker_left_open_reaches_the_person() {
     };
     s.state.owner_set(chat.clone()).unwrap();
     let question = ask(&s.state, "ada-work", "Which license?");
-    // Ada's turn starts after the question was asked, and ends with it still open.
-    s.state
-        .visions_wake(&sink(), &s.channel, &s.ada, WakeReason::Tasked(1));
+    // Ada's turn starts after the question was asked (admitted as a run would be; a unit test
+    // has no runtime to spawn it), and ends with it still open.
+    let started = |seq| {
+        s.state
+            .visions_cache()
+            .wakes
+            .admit(&s.ada, &s.channel, Some(WakeReason::Tasked(seq)), 10)
+    };
+    assert!(matches!(started(1), Admit::Start(_)));
     s.state.visions_after_run(&sink(), "ada-chat", &finished());
     let passed = passed_on(&s.state, &s.channel);
     assert_eq!(passed.len(), 1, "{passed:?}");
     assert_eq!(passed[0]["question_id"], question.as_str());
     assert_eq!(passed[0]["vision_id"], s.wren.as_str());
     // Not again at the next turn's end.
-    s.state
-        .visions_wake(&sink(), &s.channel, &s.ada, WakeReason::Tasked(2));
+    assert!(matches!(started(2), Admit::Start(_)));
     s.state.visions_after_run(&sink(), "ada-chat", &finished());
     assert_eq!(passed_on(&s.state, &s.channel).len(), 1);
 }

@@ -134,6 +134,22 @@ impl Caps {
     }
 }
 
+/// `channel_id`'s budget from one pass; a channel that is gone, or spend that cannot be known,
+/// counts as reached.
+fn budget_of(budgets: &Result<HashMap<String, Judged>, Unknown>, channel_id: &str) -> Judged {
+    let unknown = |why| Judged {
+        over: Some(Over::Unknown(why)),
+        unpriced: 0,
+    };
+    match budgets {
+        Ok(budgets) => budgets
+            .get(channel_id)
+            .copied()
+            .unwrap_or_else(|| unknown(Unknown::VisionGone)),
+        Err(why) => unknown(*why),
+    }
+}
+
 /// The prices of the configured providers' models, under the provider's id and both the
 /// model's own id and its qualified `<provider>/<model>` id.
 fn configured_prices(providers: &[themis_core::configuration::ProviderDefinition]) -> Prices {
@@ -301,18 +317,9 @@ impl AppState {
 
     /// Whether a Vision may not spend now in `channel_id` (the channel's budget), posting
     /// nothing.
+    #[cfg(test)]
     pub(super) fn visions_judge(&self, _vision_id: &str, channel_id: &str) -> Judged {
-        let unknown = |why| Judged {
-            over: Some(Over::Unknown(why)),
-            unpriced: 0,
-        };
-        match self.visions_channel_budgets() {
-            Ok(budgets) => budgets
-                .get(channel_id)
-                .copied()
-                .unwrap_or_else(|| unknown(Unknown::VisionGone)),
-            Err(why) => unknown(why),
-        }
+        budget_of(&self.visions_channel_budgets(), channel_id)
     }
 
     /// Whether each Vision may not spend now in at least one of its channels, from one pass.
@@ -337,8 +344,23 @@ impl AppState {
     /// under its chief, of the reached cap, of spend that cannot be known, and of requests
     /// without a price.
     pub(crate) fn visions_budget_gate(&self, vision_id: &str, channel_id: &str) -> Option<Over> {
-        let judged = self.visions_judge(vision_id, channel_id);
-        let shown = judged.over.is_some() || self.visions_over_budget(vision_id);
+        let budgets = self.visions_channel_budgets();
+        self.visions_budget_gate_with(vision_id, channel_id, &budgets)
+    }
+
+    /// [`Self::visions_budget_gate`] from budgets already judged in one pass.
+    fn visions_budget_gate_with(
+        &self,
+        vision_id: &str,
+        channel_id: &str,
+        budgets: &Result<HashMap<String, Judged>, Unknown>,
+    ) -> Option<Over> {
+        let judged = budget_of(budgets, channel_id);
+        // Its profile shows it over when any of its channels is.
+        let shown = self.channels_all().iter().any(|channel| {
+            channel.members.iter().any(|member| member == vision_id)
+                && budget_of(budgets, &channel.id).over.is_some()
+        });
         if judged.unpriced > 0 {
             self.visions_notice_unpriced(channel_id, judged.unpriced);
         }
@@ -364,22 +386,21 @@ impl AppState {
     /// person took over), the ordinary way, holding nothing back; each stopped work chat waits
     /// as `budget_stopped` with its cause.
     pub(super) fn visions_budget_enforce(&self, vision_id: &str, channel_id: &str) {
-        let Some(over) = self.visions_budget_gate(vision_id, channel_id) else {
+        // A Vision deleted since its check was scheduled stops nothing of its team's.
+        if self.vision_get(vision_id).is_none() {
+            return;
+        }
+        let budgets = self.visions_channel_budgets();
+        let Some(over) = self.visions_budget_gate_with(vision_id, channel_id, &budgets) else {
             return;
         };
         let mut over_ids = vec![channel_id.to_owned()];
-        if matches!(over, Over::Overall { .. }) {
+        if let (Over::Overall { .. }, Ok(budgets)) = (over, &budgets) {
             over_ids.extend(
-                self.channels_all()
-                    .into_iter()
-                    .filter(|channel| channel.id != channel_id)
-                    .filter(|channel| {
-                        channel
-                            .members
-                            .iter()
-                            .any(|member| self.visions_judge(member, &channel.id).over.is_some())
-                    })
-                    .map(|channel| channel.id),
+                budgets
+                    .iter()
+                    .filter(|(id, judged)| *id != channel_id && judged.over.is_some())
+                    .map(|(id, _)| id.clone()),
             );
         }
         let stopped: Vec<Owner> = self

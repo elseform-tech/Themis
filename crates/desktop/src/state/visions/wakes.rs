@@ -242,6 +242,7 @@ impl WakeSlots {
     ) {
         if let Some(slot) = self.slot(vision_id, channel_id) {
             slot.running = false;
+            slot.started_ms = None;
             slot.retry = retry;
             let later = std::mem::replace(&mut slot.queued, reasons);
             for reason in later {
