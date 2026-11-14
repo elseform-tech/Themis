@@ -50,7 +50,7 @@ section first: the four approved canvas boards bind every screen).
   requests between channels `visions.requests_per_day` default 10 (1–100); routines at most 10 per
   chief, never more often than once an hour (`visions.routines_per_chief` 1–50 default 10,
   `visions.routine_min_minutes` 60–1440 default 60); quiet hours `visions.quiet_hours`
-  `{"start": "HH:MM", "end": "HH:MM"}` or null (default null); `soul.md` at most 16 KiB.
+  `{"start": "HH:MM", "end": "HH:MM"}` or null (default null); a soul at most 16 KiB.
 
 ## Review Focus
 
@@ -98,7 +98,9 @@ section first: the four approved canvas boards bind every screen).
 - [ ] **Step 4:** Run `cargo test -p themis-desktop visions` and the new e2e module, plus `cargo test -p themis-core configuration`. Expected: PASS.
 - [ ] **Step 5:** Commit `feat: visions channels have a chief and workers`.
 
-### Task 2: Souls as `soul.md`
+### Task 2: Souls (in-app)
+
+> Owner 2026-11-14: no `soul.md` file; the soul is text on the Vision record, edited and saved in the profile. The original file design below was built in c7c48a42 and is reworked in Task 2's fix round.
 
 **Files:**
 - Create: `crates/desktop/src/state/visions/souls.rs`, `souls_tests.rs`

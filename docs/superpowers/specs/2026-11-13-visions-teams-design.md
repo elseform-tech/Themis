@@ -20,7 +20,7 @@ Night, Classic), and every Phase 2 UI task checks its screen against its board i
 | "Visions redesign: a team channel" (`project/TeamChannel.dc.html`) | The sidebar (project switcher, Channels with `# administration` first, each channel with its chief's small cloud, no Visions list); the channel header (the chief in 3D about 130 px with glow and ground shadow, the channel name in the display font and gradient, "<chief>, Chief of staff" with a state dot and label, one chip per worker with its cloud, accessory, name, role and status dot, the open worker's chip outlined); the channel (only the person and the chief, the one-line note for a request between channels, the chief passing on pushback in its own words, the three-dot thinking row, "Message <chief>" with the mode shield and no @mention button); the read-only worker thread panel ("<worker> with <chief>", the exchange, a link to the work chat, Close, no reply box). Each sky shows a different chief state. |
 | "Visions redesign: the chief's expressions, then the whole cast in 3D" (`project/ChiefMoods.dc.html`) | The chief's six expressions with mouth and accessory and their state dots (Calm, Working, Done, Needs you, Stuck, Paused) and their motion; the cast in 3D, each with its own colour, body shape and accessory (Juno, Atlas, Rook, Wren, Pip, Sol, Tess). |
 | "Visions redesign: # administration, Atlas builds a team and adds a worker" (`project/AdminChannel.dc.html`) | `# administration` pinned first and open; Atlas's 3D header with the crown and no worker chips; a team proposal card (channel pill, chief and workers with their accessories and roles, Autonomy and Budget, "Created" once applied); a new-worker card from a chief's request; the channel's badge while it waits; "Message Atlas" with no mode shield. |
-| "Visions redesign: the chief of staff's profile" (`project/ChiefProfile.dc.html`) | The profile opened from the header with "← # channel": the chief in 3D, name in the display font, "Chief of staff, # channel", state, Pause; Soul (the text box and "Open soul.md"); Model (picker with the provider mark); the channel's Autonomy and Budget (today's spend of the daily limit); Team (each worker's cloud with accessory, name, role, model, status; no add button); Routines (each with its schedule, instruction, on/off switch and Remove). |
+| "Visions redesign: the chief of staff's profile" (`project/ChiefProfile.dc.html`) | The profile opened from the header with "← # channel": the chief in 3D, name in the display font, "Chief of staff, # channel", state, Pause; Soul (the text box, saved in place; "Open soul.md" removed on the board by the owner 2026-11-14); Model (picker with the provider mark); the channel's Autonomy and Budget (today's spend of the daily limit); Team (each worker's cloud with accessory, name, role, model, status; no add button); Routines (each with its schedule, instruction, on/off switch and Remove). |
 
 The canvas's older Visions boards (`Visions`, `VisionProfile`, `VisionChannel`, `VisionsHq` and the
 rest) show Phase 1 and are superseded wherever they conflict with these four. Two agreed details
@@ -52,7 +52,7 @@ didn't give it.
 | Visibility | The channel shows only the person and the chief. Worker–chief exchanges stay out of it but are one tap away, read-only, through the worker chips. When pushback matters, the chief tells the person in its own words. |
 | Hiring | A chief that lacks a skill asks Atlas; Atlas proposes the worker in `# administration` and adds it only on the person's yes. Only Atlas creates channels, chiefs and workers. |
 | Between channels | Chiefs send each other requests, never orders. The receiving chief accepts or declines within its autonomy level, without the person's yes. Each side shows one line. Work is paid from the budget of the channel that does it. A daily cap stops loops. |
-| Souls | Only chiefs and Atlas have a soul. It is a `soul.md` file per agent, editable in the profile and openable in the person's editor for advanced use. Workers have a role, not a soul. |
+| Souls | Only chiefs and Atlas have a soul: text kept with the agent, edited and saved in the profile (the owner, 2026-11-14: "not really a config", so no file and no editor). Workers have a role, not a soul. |
 | Routines | Routines belong to the chief. The chief may add one within its autonomy level and says so in the channel; the person can pause or remove any routine. |
 | `# administration` | Replaces `# hq`. It is a channel pinned at the top of the Channels list, with Atlas as its chief and no workers. |
 | Look | The channel header shows the chief large and in 3D with live expressions, next to a decorative channel name and the worker chips. Every character keeps its own colour, body shape and accessory (Juno's clipboard, Atlas's crown, Rook's hard hat, Wren's glasses, Pip's goggles, Sol's headphones, Tess's magnifying glass), in 3D and in every small avatar. Faces have mouths. |
@@ -135,12 +135,13 @@ in Settings › Visions stays, and the two locked rows stay the person's under e
 
 ## Souls
 
-`soul.md`, one per chief and one for Atlas, stored with the agent in the app-data `visions/`
-store (the person's own, not the project's). The profile's Soul box edits the same file;
-"Open soul.md" opens it in the person's chosen editor, as Settings › Permissions does for
-`runtime.jsonc`. A change applies from the agent's next wake; a running wake keeps what it
-started with. The file is bounded in size and an unreadable file shows a problem on the profile
-instead of being ignored.
+A soul is text kept on the agent's record in the app-data `visions/` store (the person's own,
+not the project's), one per chief and one for Atlas, at most 16 KiB. The profile's Soul box
+edits and saves it, checked against the record's revision like any other profile edit; there is
+no file and no editor link. A change applies from the agent's next wake; a running wake keeps
+what it started with. A worker has none: a save for one is refused and its run head never
+carries one, and a chief that stops being chief keeps its soul on the record, unused until it
+leads a channel again.
 
 ## What the person sees
 
@@ -156,7 +157,7 @@ instead of being ignored.
 - **Expressions,** each tied to a real state: Calm, Working, Done, Needs you, Stuck, Paused. Every
   state also has a text label.
 - **Chief's profile** (from the header): 3D chief, name, "Chief of staff, `# channel`", state,
-  Pause; Soul with Open soul.md; Model; the channel's Autonomy and Budget with today's spend;
+  Pause; Soul; Model; the channel's Autonomy and Budget with today's spend;
   Team (each worker's look, role, model, status); Routines.
 - **`# administration`:** Atlas in 3D with its crown, proposal cards for teams and new workers,
   "Message Atlas", no mode shield.
