@@ -97,7 +97,8 @@ Dark mode is the product baseline; the Morning and Noon skies are the light look
 | Code ink | `--themis-code-keyword`, `-function`, `-string`, `-type`, `-comment` | `#8ab4f8`, `#d7aefb`, `#81c995`, `#e3b85a`, `#8d9199` | Syntax on the well (canvas `--kw`, `--fn`, `--str`, `--ty`, `--com`); comment also colours line numbers on unchanged lines |
 | Diff ink | `--themis-diff-add`, `--themis-add-bg`, `--themis-diff-del`, `--themis-del-bg` | `#81c995` on `rgba(129,201,149,.13)`, `#f28b82` on `rgba(242,139,130,.13)` | A changed line, its number included, is tinted whole in its ink (canvas `--add`/`--addh`, `--del`/`--delh`); changed characters are underlined; line counts use the ink |
 | Accent ink | `--themis-accent-ink` | `#1a1405` (white on Morning and Noon, `#06101E` on Night) | Icons and text on the accent (canvas `--ona`): the send circle (not ready: the accent at 70% under the same arrow, 3:1), badges, switches |
-| Mark | `--themis-mark-from`, `--themis-mark-to`, `--themis-mark-v`, `--themis-mark-track` | `#c08a2e` → `#f6e7bd`, `#e6e6e6`, `#2a2c30` | The Themis Visions mark on the startup screen (canvas `--ga`, `--gb`, `--lv`) and its bar's track (`--div`) |
+| Mark | `--themis-mark-from`, `--themis-mark-to`, `--themis-mark-v`, `--themis-mark-track` | `#c08a2e` → `#f6e7bd`, `#e6e6e6`, `#2a2c30` | The Themis Visions mark on the startup screen (canvas `--ga`, `--gb`, `--lv`) and its bar's track (`--div`); the Visions channel name and chief's name (boards TeamChannel, ChiefProfile) |
+| Display font | `--themis-font-display` | Space Grotesk 700 when installed, else the rounded system font | Only the Visions channel name and the chief's name on its profile |
 | Shadow | `--themis-shadow` | `rgb(0 0 0)`; light `rgb(8 20 45 / .35)` | Mix with transparent at each shadow's strength |
 | Warm gradient | `--themis-gradient-1/2/3` | `#d0a660` → `#e3b85a` → `#f6e7bd` | Approved Themis moments only (below) |
 
@@ -117,7 +118,7 @@ Compatibility badges use the `--themis-ok-*`, `--themis-warn-*` and `--themis-ba
 - Color reinforces a written status; it must never carry meaning alone.
 - Keep ordinary text contrast at least 4.5:1, large text at least 3:1, and essential control/focus boundaries at least 3:1 against adjacent colors. Verify actual rendered combinations across presets.
 - Do not reuse warning or danger colors for arbitrary category decoration. Personal/Public are provenance labels, not good/bad ratings.
-- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the shimmer on the composer's branch while it is hovered or focused, the sweeping ring on the composer while a run is active, the warm context-meter warning near auto-compact, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
+- Avoid gradients, glow, shimmer, or saturation as generic decoration. Approved treatments: the drifting warm-gradient greeting and faint glow on an empty chat, the shimmer on the composer's branch while it is hovered or focused, the sweeping ring on the composer while a run is active, the Visions channel name in the mark gradient and the soft glow behind the chief in a channel's header and profile (boards TeamChannel, ChiefProfile), the warm context-meter warning near auto-compact, status shimmer for real pending work, and the wordmark glint. Honor reduced motion for all of them.
 
 ## Typography, motion, and accessibility
 

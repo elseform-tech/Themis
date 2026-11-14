@@ -47,11 +47,12 @@ export interface VisionsOpen {
   chatId: string | null;
   /** The plain chat that was open before a Vision's chat, for Chats to return to. */
   plainThreadId: string | null;
-  /** The side panel beside it: a Vision's profile, or the open channel's details. */
+  /** What shows with it: a chief's profile (in the channel's place), a worker's thread with its
+   *  chief, or the open channel's details (beside it). */
   panel?: VisionsPanel;
 }
 
-export type VisionsPanel = { kind: "vision"; visionId: string } | { kind: "channel" } | null;
+export type VisionsPanel = { kind: "vision"; visionId: string } | { kind: "worker"; visionId: string } | { kind: "channel" } | null;
 
 export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {}, open: { channelId: null, chatId: null, plainThreadId: null } };
 
@@ -211,7 +212,10 @@ function reshow(state: AppState): AppState {
 function open(state: AppState, action: Extract<VisionsAction, { type: "visions/open" }>): AppState {
   const chatId = action.chatId ?? null;
   const plainThreadId = visionsHoldsActive(state) ? state.visions.open.plainThreadId : state.activeThreadId;
-  const visions = { ...state.visions, open: { ...state.visions.open, channelId: action.channelId, chatId, plainThreadId } };
+  // A profile or a worker's thread belongs to its channel; the channel's details follow the open one.
+  const was = state.visions.open;
+  const panel = was.channelId !== action.channelId && (was.panel?.kind === "vision" || was.panel?.kind === "worker") ? null : was.panel;
+  const visions = { ...state.visions, open: { ...was, channelId: action.channelId, chatId, plainThreadId, panel } };
   if (chatId === null) return { ...state, visions };
   const root = Object.keys(visions.channels).find(each => visions.channels[each]!.some(channel => channel.id === action.channelId));
   return { ...state, visions, activeThreadId: chatId, activeProjectRoot: root ?? state.activeProjectRoot };

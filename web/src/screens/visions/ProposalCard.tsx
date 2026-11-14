@@ -1,10 +1,13 @@
 // The admin's proposal in # administration: what it would set up, in its words and item by item, and whether it
 // waits for the person's answer or was set up (with links to the channels it made or changed). A
-// setup whose proposal is not loaded shows on its own.
+// setup whose proposal is not loaded shows on its own. A team or a hire (board AdminChannel) is a
+// card of its own: the channel, the chief and workers with their roles, then "Created" once set up.
 import type { ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
+import { useApp } from "../../state/store";
 import { LEVELS } from "./autonomy";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
+import type { ProposedMember, TeamProposal } from "./team";
 
 type Proposed = Extract<ChannelEntry, { type: "proposal" }>;
 type Applied = Extract<ChannelEntry, { type: "proposal_applied" }>;
@@ -82,7 +85,57 @@ function SetUp({ items, onOpenChannel }: { items: SetUpItem[]; onOpenChannel: (c
   );
 }
 
+function Member({ member }: { member: ProposedMember }) {
+  return <li className="themis-team-card-member">
+    <CharacterAvatar look={lookOf({ shape: member.shape ?? "", color: member.color ?? "", accessory: member.accessory })} size={22} />
+    <b>{member.name}</b>{member.role && <span>{member.role}</span>}
+  </li>;
+}
+
+/** The channel as a pill; once it exists, the pill opens it. */
+function ChannelPill({ name, channelId, onOpenChannel }: { name: string; channelId?: string; onOpenChannel: (channelId: string) => void }) {
+  return channelId
+    ? <button type="button" className="themis-mention" aria-label={`Open # ${name}`} onClick={() => onOpenChannel(channelId)}># {name}</button>
+    : <span className="themis-mention"># {name}</span>;
+}
+
+const Created = () => <span className="themis-team-card-done"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7" /></svg>Created</span>;
+
+/** A team or a hire, as a card under the admin's words. */
+function TeamCard({ proposal, applied, onOpenChannel }: { proposal: Proposal & TeamProposal; applied?: Applied; onOpenChannel: (channelId: string) => void }) {
+  const { state } = useApp();
+  const made = applied?.items.find(item => item.kind === "channel");
+  if (proposal.team) {
+    const { team } = proposal;
+    const name = team.channel.name;
+    return <>
+      <p className="themis-channel-text">{proposal.summary}</p>
+      <div className="themis-team-card" role="group" aria-label={`New channel # ${name}`}>
+        <h3><ChannelPill name={name} channelId={made?.id} onOpenChannel={onOpenChannel} />New channel{applied && <Created />}</h3>
+        <ul>{[{ ...team.chief, role: "Chief of staff" }, ...team.workers].map(member => <Member key={member.name} member={member} />)}</ul>
+        {(team.autonomy || team.daily_budget_usd !== undefined) && <div className="themis-team-card-facts">
+          {team.autonomy && <span>Autonomy <b>{LEVELS[team.autonomy]}</b></span>}
+          {team.daily_budget_usd !== undefined && <span>Budget <b>${team.daily_budget_usd} a day</b></span>}
+        </div>}
+      </div>
+    </>;
+  }
+  const hire = proposal.hire!;
+  // A hire names its channel by name, in this project.
+  const channel = (state.visions.channels[state.activeProjectRoot ?? ""] ?? []).find(each => each.name === hire.channel);
+  const name = channel?.name ?? "";
+  return <>
+    <p className="themis-channel-text">{proposal.summary}</p>
+    <div className="themis-team-card" role="group" aria-label={name ? `New worker for # ${name}` : "New worker"}>
+      <h3>{name && <ChannelPill name={name} channelId={channel?.id} onOpenChannel={onOpenChannel} />}New worker{applied && <Created />}</h3>
+      <ul><Member member={hire.worker} /></ul>
+    </div>
+  </>;
+}
+
 export function ProposalCard({ entry, applied, onOpenChannel }: { entry?: Proposed; applied?: Applied; onOpenChannel: (channelId: string) => void }) {
+  const proposal = entry?.proposal as (Proposal & TeamProposal) | undefined;
+  if (proposal?.team || proposal?.hire) return <TeamCard proposal={proposal} applied={applied} onOpenChannel={onOpenChannel} />;
   return (
     <div className="themis-question-card themis-proposal" role="group" aria-label="Proposal">
       {entry && <>

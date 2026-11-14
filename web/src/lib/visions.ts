@@ -114,9 +114,9 @@ export interface Proposal {
   hire?: { channel: string; worker: ProposalMember };
 }
 /** A chief or worker in a proposal; its look is filled by the server when absent. */
-export interface ProposalMember { name: string; role: string; shape: string; color: string; accessory: string; soul: string; model?: string }
+export interface ProposalMember { name: string; role?: string; shape?: string; color?: string; accessory?: string; soul?: string; model?: string }
 export interface ProposalTeam {
-  channel: { name: string; topic: string };
+  channel: { name: string; topic?: string };
   chief: ProposalMember;
   workers: ProposalMember[];
   autonomy?: Autonomy;

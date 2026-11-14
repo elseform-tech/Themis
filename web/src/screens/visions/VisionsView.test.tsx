@@ -44,7 +44,8 @@ const entries: ChannelEntry[] = [
   { type: "person", text: "@Rook fix the date test" },
   { type: "vision", vision_id: "rook", text: "On it." },
   { type: "chat_started", vision_id: "rook", thread_id: "w1", title: "Fix the date test" },
-  { type: "passed_on", vision_id: "wren", thread_id: "w2", question_id: "q1", decision: "wording", question: "Which heading?" },
+  // Posted under the chief, as the server does; the card names the chat's owner.
+  { type: "passed_on", vision_id: "rook", thread_id: "w2", question_id: "q1", decision: "wording", question: "Which heading?" },
 ];
 const approval: ApprovalRequest = { thread_id: "w1", approval_id: "a1", tool: "shell", summary: "git push origin v0.9.0", risk: "network", command: { argv: ["git", "push", "origin", "v0.9.0"] } };
 
@@ -116,14 +117,12 @@ describe("Visions view", () => {
     expect(within(bar).getByRole("button", { name: "# administration" })).toBeTruthy();
     // The channel tag is the server's count of what waits in that channel's own chats.
     expect(within(bar).getByRole("button", { name: "# release, 2 need you" })).toBeTruthy();
-    const wren = within(bar).getByText("Wren").closest("li")!;
-    expect(wren).toHaveTextContent("Needs you");
-    expect(within(bar).getByText("Rook").closest("li")).toHaveTextContent("Needs you");
+    // Channels only: the Visions are reached from their channels.
+    expect(within(bar).queryByText("Wren")).toBeNull();
     expect(within(bar).getByRole("button", { name: "New channel" })).toBeTruthy();
-    expect(within(bar).getByRole("button", { name: "New Vision" })).toBeTruthy();
+    expect(within(bar).queryByRole("button", { name: "New Vision" })).toBeNull();
     // # administration is a channel like any other; with no hq channel yet it is empty and cannot be written to.
     const hq = screen.getByRole("region", { name: "# administration" });
-    expect(hq).toHaveTextContent("No messages yet.");
     expect(within(hq).getByLabelText("Message #administration")).toBeDisabled();
     expect(within(hq).queryByRole("button", { name: /^New / })).toBeNull();
   });
@@ -144,10 +143,11 @@ describe("Visions view", () => {
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).queryByText("Atlas")).toBeNull();
     const room = screen.getByRole("region", { name: "# administration" });
-    expect(within(room).getByRole("img", { name: "Here: Atlas" }).querySelector("[data-accessory='crown']")).toBeTruthy();
-    expect(within(room).getByText("Atlas").closest("li")!.querySelector("[data-accessory='crown']")).toBeTruthy();
+    // Atlas wears its crown in the header and beside its messages.
+    expect(within(room).getByRole("img", { name: "Atlas, Calm" })).toHaveAttribute("data-accessory", "crown");
+    expect(within(room).getByText("Atlas", { selector: ".themis-channel-who" }).closest("li")!.querySelector("[data-accessory='crown']")).toBeTruthy();
     expect(within(room).getByRole("group", { name: "Proposal" })).toHaveTextContent("A channel for releases.");
-    expect(within(room).getByLabelText("Message #administration")).not.toBeDisabled();
+    expect(within(room).getByLabelText("Message Atlas")).not.toBeDisabled();
   });
 
   it("a_visions_message_shows_its_markdown_and_the_persons_stays_as_typed", () => {
@@ -228,9 +228,6 @@ describe("Visions view", () => {
     const avatars = view.querySelectorAll(".themis-channel-entry .themis-cloud");
     expect(avatars.length).toBeGreaterThan(0);
     for (const avatar of avatars) expect(avatar).not.toHaveClass("is-live");
-    // The same Vision's cloud in the bar is live.
-    const bar = screen.getByRole("complementary", { name: "Visions navigation" });
-    expect(within(bar).getByText("Rook").closest("li")!.querySelector(".themis-cloud")).toHaveClass("is-live");
   });
 
   it("a_running_vision_shows_it_is_thinking", () => {
@@ -241,15 +238,14 @@ describe("Visions view", () => {
       open: { channelId: "c1", chatId: null, plainThreadId: null },
     } });
     const { unmount } = render(<Harness initial={thinking([{ type: "person", text: "@Rook check the build" }])} />);
-    const row = screen.getByRole("status");
-    expect(row).toHaveTextContent("Rook is thinking");
+    const row = screen.getByRole("status", { name: "Rook is thinking" });
     expect(row.querySelector(".themis-cloud")).toHaveClass("themis-cloud--think");
     expect(row.querySelectorAll(".themis-thinking-dots > i")).toHaveLength(3);
     unmount();
     // Its run goes on after its own post: still thinking.
     const posted: ChannelEntry[] = [{ type: "person", text: "@Rook check the build" }, { type: "vision", vision_id: "rook", text: "It is green." }];
     const { unmount: again } = render(<Harness initial={thinking(posted)} />);
-    expect(screen.getByRole("status")).toHaveTextContent("Rook is thinking");
+    expect(screen.getByRole("status", { name: "Rook is thinking" })).toBeTruthy();
     again();
     // Once its run is over, no row.
     render(<Harness initial={thinking(posted, false)} />);
@@ -290,7 +286,8 @@ describe("Visions view", () => {
 
   it("new vision saves its name, cloud and role", async () => {
     vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v3", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
-    mount({ mainView: "visions" });
+    const view = await openRelease();
+    fireEvent.click(within(view).getByRole("button", { name: "#release" }));
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });
     fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
@@ -299,13 +296,15 @@ describe("Visions view", () => {
     fireEvent.change(within(sheet).getByLabelText("Role"), { target: { value: "Scribe" } });
     fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", shape: "wide", color: "rose", accessory: "none" }, null));
-    const bar = screen.getByRole("complementary", { name: "Visions navigation" });
-    expect(await within(bar).findByText("Echo")).toBeTruthy();
+    // It can join the channel from there.
+    const details = screen.getByRole("complementary", { name: "Channel details" });
+    expect(await within(details).findByRole("option", { name: "Echo" })).toBeTruthy();
   });
 
   it("new vision saves the accessory the person chose", async () => {
     vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v4", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
-    mount({ mainView: "visions" });
+    const view = await openRelease();
+    fireEvent.click(within(view).getByRole("button", { name: "#release" }));
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });
     fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
@@ -392,41 +391,6 @@ describe("Visions view", () => {
     expect(selectionToSave(stateLive())).toEqual({ root: "/p", threadId: "plain" });
   });
 
-  it("the mention list follows the arrow keys", async () => {
-    const view = await openRelease();
-    const box = within(view).getByLabelText("Message #release");
-    fireEvent.change(box, { target: { value: "@" } });
-    const list = within(view).getByRole("listbox", { name: "Mention" });
-    expect(box).toHaveAttribute("aria-controls", list.id);
-    const [rook, wren] = within(list).getAllByRole("option");
-    expect(box).toHaveAttribute("aria-activedescendant", rook!.id);
-    fireEvent.keyDown(box, { key: "ArrowDown" });
-    expect(box).toHaveAttribute("aria-activedescendant", wren!.id);
-    expect(wren).toHaveAttribute("aria-selected", "true");
-    fireEvent.keyDown(box, { key: "Enter" });
-    expect(box).toHaveValue("@Wren ");
-  });
-
-  it("the mention list closes on Escape, starts over on a new prefix, and is a combobox", async () => {
-    const view = await openRelease();
-    const box = within(view).getByRole("combobox", { name: "Message #release" });
-    expect(box).toHaveAttribute("aria-expanded", "false");
-    fireEvent.change(box, { target: { value: "@" } });
-    expect(box).toHaveAttribute("aria-expanded", "true");
-    fireEvent.keyDown(box, { key: "ArrowDown" });
-    fireEvent.change(box, { target: { value: "@W" } });
-    const [wren] = within(view).getAllByRole("option");
-    expect(box).toHaveAttribute("aria-activedescendant", wren!.id);
-    fireEvent.change(box, { target: { value: "@" } });
-    expect(within(view).getAllByRole("option")[0]).toHaveAttribute("aria-selected", "true");
-    fireEvent.keyDown(box, { key: "Escape" });
-    expect(within(view).queryByRole("listbox")).toBeNull();
-    expect(box).toHaveAttribute("aria-expanded", "false");
-    // Typing on brings it back.
-    fireEvent.change(box, { target: { value: "@R" } });
-    expect(within(view).getByRole("listbox")).toBeTruthy();
-  });
-
   it("re-showing the open chat never changes where Chats returns to", async () => {
     const other: ThreadInfo = { ...plain, id: "other", title: "Other chat" };
     await openChat({ threadsByProject: { "/p": [other, plain] } });
@@ -497,27 +461,24 @@ describe("Visions view", () => {
     expect(view.querySelector(".is-fresh")).toBeNull();
   });
 
-  it("asks to mention a Vision when several are here, and posts the message", async () => {
+  it("posts the person's message to the chief with Enter", async () => {
     const view = await openRelease();
-    const box = within(view).getByLabelText("Message #release");
-    expect(within(view).getByRole("button", { name: "Mention a Vision" })).toBeTruthy();
-    fireEvent.change(box, { target: { value: "@Wr" } });
-    expect(within(view).queryByRole("button", { name: "Mention a Vision" })).toBeNull();
-    fireEvent.click(within(view).getByRole("option", { name: "Wren" }));
-    expect(box).toHaveValue("@Wren ");
-    fireEvent.change(box, { target: { value: "@Wren draft the notes" } });
+    const box = within(view).getByRole("textbox", { name: "Message Rook" });
+    fireEvent.change(box, { target: { value: "Draft the notes" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    await waitFor(() => expect(visionsBridge.postChannelMessage).toHaveBeenCalledWith("c1", "@Wren draft the notes"));
+    await waitFor(() => expect(visionsBridge.postChannelMessage).toHaveBeenCalledWith("c1", "Draft the notes"));
     await waitFor(() => expect(box).toHaveValue(""));
   });
 
-  it("opens a Vision's profile from the bar and the channel's details from its name, one at a time", async () => {
-    const view = await openRelease();
-    const bar = within(screen.getByRole("complementary", { name: "Visions navigation" }));
-    fireEvent.click(bar.getByRole("button", { name: "Rook, Needs you" }));
-    expect(screen.getByRole("complementary", { name: "Rook, profile" })).toBeTruthy();
-    fireEvent.click(within(view).getByRole("button", { name: "# release" }));
-    expect(screen.queryByRole("complementary", { name: "Rook, profile" })).toBeNull();
+  it("opens the chief's profile from the header and the channel's details from its name, one at a time", async () => {
+    let view = await openRelease();
+    fireEvent.click(within(view).getByRole("button", { name: "Rook, chief of staff" }));
+    const profile = screen.getByRole("region", { name: "Rook, profile" });
+    expect(screen.queryByRole("region", { name: "# release" })).toBeNull();
+    fireEvent.click(within(profile).getByRole("button", { name: "# release" }));
+    view = screen.getByRole("region", { name: "# release" });
+    fireEvent.click(within(view).getByRole("button", { name: "#release" }));
+    expect(screen.queryByRole("region", { name: "Rook, profile" })).toBeNull();
     const details = screen.getByRole("complementary", { name: "Channel details" });
     expect(within(details).getByRole("textbox", { name: "Topic" })).toHaveValue("Ship 0.9");
     fireEvent.click(within(details).getByRole("button", { name: "Close" }));

@@ -6,17 +6,6 @@ import { ADMIN_VISION_ID, saveChannel } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
-import { NewVisionSheet } from "./NewVisionSheet";
-
-export type Sheet = "channel" | "vision" | null;
-
-/** The two ways to add something in Visions, shared by the channels bar and `# administration`. */
-export function VisionsSheets({ sheet, onClose }: { sheet: Sheet; onClose: () => void }) {
-  return <>
-    {sheet === "channel" && <NewChannelSheet onClose={onClose} />}
-    {sheet === "vision" && <NewVisionSheet onClose={onClose} />}
-  </>;
-}
 
 /** A channel name as the store takes it: lowercase letters, digits and dashes. */
 function channelName(text: string): string {

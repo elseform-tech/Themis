@@ -10,7 +10,7 @@ export const CloseIcon = () => icon(<path d="M6 6l12 12M18 6 6 18" />);
 export const TrashIcon = () => icon(<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />);
 export const PauseIcon = () => icon(<path d="M9 5v14M15 5v14" />);
 export const PlayIcon = () => icon(<path d="M7 5l12 7-12 7Z" />);
-export const EditIcon = () => icon(<path d="M4 20h4L19 9l-4-4L4 16Z" />);
+export const PlusIcon = () => icon(<path d="M12 5v14M5 12h14" />);
 
 /** A small icon-only action in the panel's head or a block's title. */
 export function PanelButton({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: ReactNode }) {

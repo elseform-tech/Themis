@@ -10,7 +10,6 @@
 .themis-visions-autonomy input[type="range"] { width: 100%; margin: 0; accent-color: var(--themis-accent); }
 .themis-visions-stops { display: flex; justify-content: space-between; margin-top: -2px; color: var(--themis-text-2); font-size: .6875rem; }
 .themis-visions-stops .is-current { color: var(--themis-accent); font-weight: 600; }
-.themis-visions-meta { margin: 0; color: var(--themis-text-2); font-size: .75rem; text-wrap: pretty; }
 .themis-visions-decision { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 31px; border-top: 1px solid var(--themis-border-subtle); font-size: .8125rem; }
 .themis-visions-decides { color: var(--themis-accent); font-weight: 600; }
 .themis-visions-asks { color: var(--themis-text-2); }
@@ -27,27 +26,13 @@
 .themis-visions-panel { flex: none; width: 296px; display: flex; flex-direction: column; gap: 18px; min-height: 0; margin: 0 var(--themis-panel-gap) var(--themis-panel-gap) 0; padding: 14px; overflow-y: auto; border-radius: var(--themis-panel-radius); background: var(--themis-panel-sheen), var(--themis-inspector-bg); box-shadow: var(--themis-panel-edge); -webkit-backdrop-filter: var(--themis-panel-blur); backdrop-filter: var(--themis-panel-blur); font-size: .8125rem; }
 .themis-visions-panel-head { display: flex; align-items: center; gap: 10px; }
 .themis-visions-panel-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.themis-visions-panel-title .themis-visions-meta { font-size: .75rem; font-weight: 400; white-space: normal; }
-.themis-visions-panel-icon { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
+.themis-visions-panel-title .themis-visions-panel-icon { display: inline-grid; place-items: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--themis-text-2); cursor: pointer; }
 .themis-visions-panel-icon:hover:not(:disabled) { background: var(--themis-nav-hover-bg); color: var(--themis-text); }
 .themis-visions-panel-icon:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
 .themis-visions-block { display: flex; flex-direction: column; gap: 8px; }
 .themis-visions-label { display: flex; align-items: center; justify-content: space-between; margin: 0; color: var(--themis-text-2); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
-/* A value too long for the row wraps under its label, whole: a select is as wide as its longest
-   option and never cut. */
-.themis-visions-kv { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; color: var(--themis-text-2); }
-.themis-visions-kv select, .themis-visions-kv input { flex: none; max-width: 100%; margin-left: auto; padding: 2px 0; border: 0; background: transparent; color: var(--themis-text); font: inherit; text-align: right; }
-.themis-visions-kv input { width: 80px; }
-.themis-visions-kv select option { background: var(--themis-surface); }
 .themis-visions-field { height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--themis-well); box-shadow: var(--themis-well-shadow); color: var(--themis-text); font: inherit; }
 .themis-visions-field:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
-.themis-visions-soul { margin: 0; color: var(--themis-text); text-wrap: pretty; white-space: pre-wrap; overflow-wrap: anywhere; }
-.themis-visions-soul.is-empty { color: var(--themis-text-3); }
-.themis-visions-soul-form { display: flex; flex-direction: column; gap: 6px; }
-.themis-visions-soul-form textarea { padding: 8px 10px; border: 0; border-radius: 10px; background: var(--themis-well); box-shadow: var(--themis-well-shadow); color: var(--themis-text); font: inherit; resize: vertical; }
-.themis-visions-soul-actions { display: flex; justify-content: flex-end; gap: 12px; }
-.themis-visions-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-.themis-visions-pills .themis-mention { border: 0; font: inherit; cursor: pointer; }
 .themis-visions-members { display: flex; flex-direction: column; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
 .themis-visions-members li { display: flex; align-items: center; gap: 4px; }
 .themis-visions-member { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; height: 32px; padding: 0 4px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
@@ -55,3 +40,50 @@
 .themis-visions-member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-visions-member small { color: var(--themis-text-2); font-size: .75rem; }
 @media (max-width: 900px) { .themis-visions-panel { width: 260px; } }
+
+/* A worker's thread with its chief (board TeamChannel): read-only, its work chats at the foot. */
+.themis-team-with { color: var(--themis-text-2); font-weight: 400; }
+.themis-team-thread-log { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.themis-team-thread-entry { display: flex; gap: 10px; }
+.themis-team-thread-note { display: flex; align-items: center; gap: 8px; color: var(--themis-text-2); font-size: 12px; }
+.themis-team-thread-note .themis-channel-time { margin-left: 0; }
+.themis-team-thread-chats { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
+
+/* A chief's profile in the channel's place (board ChiefProfile). */
+.themis-profile { display: flex; flex-direction: column; gap: 22px; min-height: 0; padding: 14px 32px 24px; overflow-y: auto; }
+.themis-profile-back { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; color: var(--themis-text-2); font: inherit; cursor: pointer; }
+.themis-profile-back:hover { color: var(--themis-text); }
+.themis-profile-hero { position: relative; display: flex; align-items: center; gap: 24px; }
+.themis-profile-hero::before { content: ""; position: absolute; left: -30px; top: -30px; width: 260px; height: 240px; background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 26%, transparent), transparent); pointer-events: none; }
+.themis-profile-hero .themis-chief-scene { background: none; }
+.themis-profile-who { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.themis-profile-name { margin: 0; font: 700 36px/1 var(--themis-font-display); letter-spacing: -.02em; }
+.themis-profile-pause { align-self: flex-start; margin-top: 4px; }
+.themis-profile-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; }
+.themis-profile-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.themis-profile-block { display: flex; flex-direction: column; gap: 8px; }
+.themis-profile-block .themis-visions-label { margin: 0; }
+.themis-profile-box { margin: 0; border-radius: 14px; background: var(--themis-card); box-shadow: inset 0 0 0 1px var(--themis-border-subtle); }
+.themis-profile-soul { box-sizing: border-box; width: 100%; padding: 12px 14px; border: 0; color: var(--themis-text); font: inherit; line-height: 1.6; resize: vertical; }
+.themis-profile-soul:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-profile-field { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; border-radius: 12px; background: var(--themis-card); box-shadow: inset 0 0 0 1px var(--themis-border-subtle); }
+.themis-profile-field:focus-within { box-shadow: inset 0 0 0 1px var(--themis-accent); }
+.themis-profile-field select { flex: 1; min-width: 0; padding: 0; border: 0; outline: none; background: transparent; color: var(--themis-text); font: inherit; }
+.themis-profile-field select option { background: var(--themis-surface); }
+.themis-provider-mark { flex: none; width: 18px; height: 18px; border-radius: 5px; background: var(--themis-text); color: var(--themis-canvas); font-size: 10px; font-weight: 700; line-height: 18px; text-align: center; }
+.themis-profile-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.themis-profile-budget { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; margin: 0; padding-top: 4px; }
+.themis-profile-of { color: var(--themis-text-2); }
+.themis-profile-bar { flex-basis: 100%; height: 6px; overflow: hidden; border-radius: 3px; background: var(--themis-well); }
+.themis-profile-bar i { display: block; height: 100%; border-radius: 3px; background: var(--themis-accent); }
+.themis-profile-team, .themis-routines { display: flex; flex-direction: column; padding: 4px; list-style: none; }
+.themis-profile-team button { display: flex; align-items: center; gap: 10px; box-sizing: border-box; width: 100%; height: 40px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
+.themis-profile-team button:hover { background: var(--themis-nav-hover-bg); }
+.themis-profile-team b { font-weight: 600; }
+.themis-profile-role { flex: 1; min-width: 0; overflow: hidden; color: var(--themis-text-2); text-overflow: ellipsis; white-space: nowrap; }
+.themis-profile-model { color: var(--themis-text-2); font-size: 11px; }
+.themis-routine { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; }
+.themis-routine-icon { flex: none; color: var(--themis-text-2); }
+.themis-routine b { flex: none; font-weight: 600; }
+.themis-routine-what { flex: 1; min-width: 0; overflow: hidden; color: var(--themis-text-2); text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) { .themis-profile-grid, .themis-profile-pair { grid-template-columns: minmax(0, 1fr); } }

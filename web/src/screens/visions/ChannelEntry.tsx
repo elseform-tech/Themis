@@ -9,6 +9,7 @@ import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
+import { isTeamNoteEntry, scheduleWords, TEAM_NOTE_TYPES, teamNote, type TeamNoteEntry } from "./team";
 
 type AppState = ReturnType<typeof useApp>["state"];
 
@@ -52,37 +53,6 @@ export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: st
   }
 }
 
-type RequestEntry = Extract<Entry, { type: "request_sent" | "request_received" | "request_answered" }>;
-
-type TeamNote = Extract<Entry, { type: "request_sent" | "request_received" | "request_answered" | "routine_set" | "worker_asked" }>;
-const TEAM_NOTES: ReadonlySet<string> = new Set(["request_sent", "request_received", "request_answered", "routine_set", "worker_asked"]);
-function isTeamNote(entry: Entry): entry is TeamNote { return TEAM_NOTES.has(entry.type); }
-
-/** The one-line text of a team note: a request, a worker asked for, a routine. */
-function teamNoteText(state: AppState, entry: TeamNote): string {
-  switch (entry.type) {
-    case "request_sent": case "request_received": case "request_answered": return requestText(state, entry);
-    case "routine_set": {
-      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-      const when = `${entry.schedule.days.map(day => days[day] ?? "?").join(", ")} at ${entry.schedule.time}`;
-      return `${entry.changed ? "Changed a routine" : "Added a routine"} (${when}): ${entry.instruction}`;
-    }
-    case "worker_asked": {
-      const from = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "a channel";
-      return `# ${from} asks for a worker: ${entry.role}. ${entry.why}`;
-    }
-  }
-}
-
-/** One line of a request between channels, from this channel's side. */
-function requestText(state: AppState, entry: RequestEntry): string {
-  const other = `# ${Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel"}`;
-  if (entry.type === "request_sent") return `Asked ${other} to ${entry.ask}`;
-  if (entry.type === "request_received") return `${other} asked us to ${entry.ask}`;
-  const verdict = entry.accepted ? "accepted" : "declined";
-  return entry.note ? `Request ${verdict}: ${entry.note}` : `Request ${verdict}.`;
-}
-
 /** Whether a notice's chat is one of the channel's work chats, the Vision's own chat, or neither. */
 function noticeChat(state: AppState, channelId: string, entry: Extract<Entry, { type: "notice" }>): NoticeChat {
   const id = entry.thread_id;
@@ -105,6 +75,36 @@ function Notice({ line, channelId }: { line: ChannelLine; channelId: string }) {
   );
 }
 
+const ARROW = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7h11v11M18 7 6 19" /></svg>;
+const CLOCK = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5h4" /></svg>;
+
+/** A request between channels or a new routine, as one quiet line (board TeamChannel). The other
+ *  channel's pill opens it. A line missing what it shows is skipped. */
+/** A request line's words around the other channel's pill. */
+function requestWords(entry: Exclude<TeamNoteEntry, { type: "routine_set" }>, pill: ReactNode): ReactNode {
+  switch (entry.type) {
+    case "request_sent": return <><span>Asked</span>{pill}<span>to {entry.ask}.</span></>;
+    case "request_received": return <>{pill}<span>asked us to {entry.ask}.</span></>;
+    case "worker_asked": return <>{pill}<span>asks for a worker: {entry.role}. {entry.why}</span></>;
+    case "request_answered": return <><span>Request with</span>{pill}<span>{entry.accepted ? "taken on" : "declined"}{entry.note ? `: ${entry.note}` : "."}</span></>;
+  }
+}
+
+function TeamNote({ line }: { line: ChannelLine }) {
+  const { state, dispatch } = useApp();
+  const entry = teamNote(line.entry);
+  if (!entry) return null;
+  let body: ReactNode;
+  if (entry.type === "routine_set") {
+    body = <>{CLOCK}<span>{entry.changed ? "Changed a routine" : "Added a routine"}: <b>{scheduleWords(entry.schedule)}</b>, {entry.instruction}</span></>;
+  } else {
+    const name = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel";
+    const pill = <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId: entry.channel_id })}># {name}</button>;
+    body = <>{ARROW}{requestWords(entry, pill)}</>;
+  }
+  return <li className="themis-team-note"><div className="themis-team-note-line" role="note">{body}<time className="themis-channel-time">{clock(line.at_ms)}</time></div></li>;
+}
+
 function Avatar({ vision }: { vision: VisionInfo | undefined }) {
   if (!vision) return <span className="themis-channel-avatar themis-channel-person" aria-hidden="true">?</span>;
   return <span className="themis-channel-avatar"><CharacterAvatar look={lookOf(vision)} size={30} /></span>;
@@ -123,24 +123,27 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
   if (entry.type === "person") return <p className="themis-channel-text">{withMentions(entry.text, names)}</p>;
   // A Vision writes Markdown like any chat reply, and it shows the same way.
   if (entry.type === "vision") return <div className="themis-channel-text themis-channel-markdown"><ResponseBody text={entry.text} /></div>;
-  if (entry.type === "notice") return null;
+  if (entry.type === "notice" || isTeamNoteEntry(entry)) return null;
   if (entry.type === "proposal" || entry.type === "proposal_applied") {
     const open = (id: string) => dispatch({ type: "visions/open", channelId: id });
     return entry.type === "proposal"
       ? <ProposalCard entry={entry} applied={proposalLine(state, channelId, "proposal_applied", entry.proposal_id)} onOpenChannel={open} />
       : <ProposalCard applied={entry} onOpenChannel={open} />;
   }
-  if (isTeamNote(entry)) return <p className="themis-channel-text">{teamNoteText(state, entry)}</p>;
-  const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
-  const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
+  const chat = channelChat(state, channelId, entry.thread_id);
+  // A question passed on under the chief still names whose chat asks.
+  const asker = entry.type === "passed_on" ? chat?.owner.vision_id ?? entry.vision_id : entry.vision_id;
+  const vision = visionById(state, asker)?.name ?? "A Vision";
+  const title = entry.type === "chat_started" ? entry.title : chat?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
-  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`@${vision} about “${entry.question}”: `)} />;
+  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`About “${entry.question}”: `)} />;
   return <PassedOnCard entry={entry} vision={vision} title={title} />;
 }
 
 export function ChannelEntryView({ line, channelId, fresh, onReply }: { line: ChannelLine; channelId: string; fresh: boolean; onReply: (text: string) => void }) {
   const { state } = useApp();
   const { entry } = line;
+  if (TEAM_NOTE_TYPES.has(entry.type)) return <TeamNote line={line} />;
   if (entry.type === "notice") return <Notice line={line} channelId={channelId} />;
   // A setup shows on its proposal's card while that is loaded.
   if (entry.type === "proposal_applied" && proposalLine(state, channelId, "proposal", entry.proposal_id)) return null;

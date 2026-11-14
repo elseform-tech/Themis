@@ -1,12 +1,15 @@
-// Visions mode's main view: a channel (`# administration` is one too), or a chat opened from a channel, with a
-// Vision's profile or the channel's details beside it. What is open is `visions.open` alone; when it
-// is gone the view says so in place and never moves on its own.
+// Visions mode's main view: a channel (`# administration` is one too), a chat opened from a channel,
+// or a chief's profile in the channel's place, with a worker's thread or the channel's details
+// beside it. What is open is `visions.open` alone; when it is gone the view says so in place and
+// never moves on its own.
 import type { ReactNode } from "react";
 import { useApp } from "../../state/store";
 import { ChannelDetails } from "./ChannelDetails";
 import { ChannelView } from "./ChannelView";
 import { channelChat } from "./ChatLink";
 import { projectChannels } from "./channels";
+import { leadsAChannel } from "./team";
+import { TeamThread } from "./TeamThread";
 import { VisionChat } from "./VisionChat";
 import { VisionProfile } from "./VisionProfile";
 
@@ -22,11 +25,15 @@ function Gone({ text, back }: { text: string; back?: { name: string; onBack: () 
 export function VisionsView() {
   const { state } = useApp();
   if (state.mainView !== "visions") return null;
-  const view = <MainView />;
   const panel = state.visions.open.panel;
   const current = projectChannels(state).current;
+  // Only a chief (Atlas too) has a profile; a worker opens its thread with its chief.
+  const profile = panel?.kind === "vision" && leadsAChannel(state, panel.visionId) ? panel.visionId : null;
+  const worker = panel?.kind === "worker" || (panel?.kind === "vision" && !profile) ? panel.visionId : null;
+  const view = profile ? <VisionProfile key={profile} visionId={profile} /> : <MainView />;
   let side: ReactNode = null;
-  if (panel?.kind === "vision") side = <VisionProfile key={panel.visionId} visionId={panel.visionId} />;
+  // TODO(Task 9 wiring): the worker's log needs a person-facing read of its team log.
+  if (worker && current?.members.includes(worker)) side = <TeamThread key={worker} channel={current} workerId={worker} log={null} />;
   else if (panel?.kind === "channel" && current?.id) side = <ChannelDetails key={current.id} channel={current} />;
   return <div className="themis-visions-main">{view}{side}</div>;
 }
