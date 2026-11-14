@@ -155,7 +155,8 @@ export type ChannelEntry =
   | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; ask: string }
   | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; ask: string }
   | { type: "request_answered"; vision_id: string; request_id: string; channel_id: string; accepted: boolean; note: string }
-  | { type: "worker_asked"; vision_id: string; request_id: string; channel_id: string; role: string; why: string };
+  | { type: "worker_asked"; vision_id: string; request_id: string; channel_id: string; role: string; why: string }
+  | { type: "routine_set"; vision_id: string; routine_id: string; schedule: { days: number[]; time: string }; instruction: string; changed: boolean };
 
 export interface ChannelLine {
   seq: number;
@@ -200,6 +201,12 @@ export function pauseVision(visionId: string, paused: boolean): Promise<VisionPr
 export function deleteVision(visionId: string): Promise<void> { return invoke("delete_vision", { visionId }); }
 export function listChannels(projectRoot: string): Promise<ChannelInfo[]> { return invoke("list_channels", { projectRoot }); }
 export function saveChannel(channel: ChannelDraft, revision: string | null): Promise<ChannelInfo> { return invoke("save_channel", { channel, revision }); }
+/** A chief's routine (Rust `Routine`): weekdays 0 (Sunday) to 6 at a local `HH:MM`. */
+export interface RoutineSchedule { days: number[]; time: string }
+export interface Routine { id: string; chief: string; channel_id: string; schedule: RoutineSchedule; instruction: string; enabled: boolean; next_due_ms: number }
+export function listRoutines(channelId: string): Promise<Routine[]> { return invoke("list_routines", { channelId }); }
+export function setRoutineEnabled(routineId: string, enabled: boolean): Promise<void> { return invoke("set_routine_enabled", { routineId, enabled }); }
+export function deleteRoutine(routineId: string): Promise<void> { return invoke("delete_routine", { routineId }); }
 /** The person accepts or declines a request from another channel their chief left open. */
 export function answerChannelRequest(requestId: string, accept: boolean): Promise<void> { return invoke("answer_channel_request", { requestId, accept }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
@@ -231,6 +238,7 @@ export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Ex
   request_received: ["vision_id", "request_id", "channel_id", "ask"],
   request_answered: ["vision_id", "request_id", "channel_id", "accepted", "note"],
   worker_asked: ["vision_id", "request_id", "channel_id", "role", "why"],
+  routine_set: ["vision_id", "routine_id", "schedule", "instruction", "changed"],
 };
 
 /** Every value of the unions the app reads, for the same check. */

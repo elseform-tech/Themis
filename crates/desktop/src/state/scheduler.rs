@@ -48,8 +48,14 @@ impl AppState {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                     let state = state.clone();
-                    let _ =
-                        tokio::task::spawn_blocking(move || state.visions_budget_recheck()).await;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        state.visions_budget_recheck();
+                        // The Visions-only timer for routines (apart from Automations).
+                        if let Some(sink) = state.scheduler_sink() {
+                            state.visions_routines_tick(&sink, chrono::Local::now());
+                        }
+                    })
+                    .await;
                 }
             });
         }

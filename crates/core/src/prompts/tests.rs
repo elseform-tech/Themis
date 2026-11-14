@@ -330,6 +330,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (AGENT_CLI_VISION_PAUSED, "agent-cli-vision-paused", &[]),
     (AGENT_CLI_NOT_YOUR_TEAM, "agent-cli-not-your-team", &[]),
     (
+        AGENT_CLI_ROUTINE_ABOVE_LEVEL,
+        "agent-cli-routine-above-level",
+        &[],
+    ),
+    (
         AGENT_CLI_QUESTION_PASSED_ON,
         "agent-cli-question-passed-on",
         &[],

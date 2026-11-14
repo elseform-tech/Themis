@@ -504,6 +504,9 @@ pub const AGENT_CLI_REQUEST_ABOVE_LEVEL: &str =
 /// The app server's answer to a Vision answering a question already passed on to the person.
 pub const AGENT_CLI_QUESTION_PASSED_ON: &str =
     include_str!("../builtins/prompts/agent-cli-question-passed-on.md");
+/// The app server's answer to a chief adding or changing a routine beyond its channel's level.
+pub const AGENT_CLI_ROUTINE_ABOVE_LEVEL: &str =
+    include_str!("../builtins/prompts/agent-cli-routine-above-level.md");
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");

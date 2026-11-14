@@ -25,6 +25,9 @@ pub(super) const METHODS: &[&str] = &[
     "list_channel_threads",
     "hand_back_thread",
     "answer_channel_request",
+    "list_routines",
+    "set_routine_enabled",
+    "delete_routine",
     "get_visions_settings",
     "update_visions_settings",
 ];
@@ -38,6 +41,35 @@ fn change(channel_id: Option<String>, vision_id: Option<String>) -> Option<Visio
 
 fn to_value(value: impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|err| err.to_string())
+}
+
+/// The person's calls on a team's routines and on a request their chief left open.
+fn team_method(
+    state: &AppState,
+    sink: &Arc<dyn EventSink>,
+    method: &str,
+    args: &Value,
+) -> Result<(Value, Option<VisionsChange>), String> {
+    match method {
+        "list_routines" => {
+            let channel_id: String = arg(args, "channelId")?;
+            Ok((to_value(state.visions_routines(&channel_id))?, None))
+        }
+        "set_routine_enabled" => {
+            let routine_id: String = arg(args, "routineId")?;
+            state.visions_set_routine_enabled(&routine_id, arg(args, "enabled")?)?;
+            Ok((Value::Null, change(None, None)))
+        }
+        "delete_routine" => {
+            state.visions_delete_routine(&arg::<String>(args, "routineId")?)?;
+            Ok((Value::Null, change(None, None)))
+        }
+        _ => {
+            let request_id: String = arg(args, "requestId")?;
+            state.visions_person_answers_request(sink, &request_id, arg(args, "accept")?)?;
+            Ok((Value::Null, change(None, None)))
+        }
+    }
 }
 
 /// Runs one of [`METHODS`], then announces what it wrote.
@@ -199,10 +231,8 @@ async fn chat_method(
             let threads = state.visions_channel_threads(&channel_id).await?;
             Ok((to_value(threads)?, None))
         }
-        "answer_channel_request" => {
-            let request_id: String = arg(args, "requestId")?;
-            state.visions_person_answers_request(sink, &request_id, arg(args, "accept")?)?;
-            Ok((Value::Null, change(None, None)))
+        "list_routines" | "set_routine_enabled" | "delete_routine" | "answer_channel_request" => {
+            team_method(state, sink, method, args)
         }
         "hand_back_thread" => {
             let owner = state.visions_hand_back(sink, &arg::<String>(args, "threadId")?)?;

@@ -1026,3 +1026,25 @@ fn a_project_may_not_switch_to_custom() {
     )
     .is_ok());
 }
+
+#[test]
+fn quiet_hours_cross_midnight_and_need_two_times() {
+    use super::visions::QuietHours;
+    let night = QuietHours {
+        start: "22:00".into(),
+        end: "07:00".into(),
+    };
+    assert!(night.contains(23 * 60) && night.contains(6 * 60 + 59) && night.contains(22 * 60));
+    assert!(!night.contains(7 * 60) && !night.contains(12 * 60));
+    let lunch = QuietHours {
+        start: "12:00".into(),
+        end: "13:00".into(),
+    };
+    assert!(lunch.contains(12 * 60 + 30) && !lunch.contains(13 * 60));
+    let mut config = crate::configuration::RuntimeConfig::default();
+    config.visions.quiet_hours = Some(QuietHours {
+        start: "09:00".into(),
+        end: "09:00".into(),
+    });
+    assert!(crate::configuration::validate(&config).is_err());
+}

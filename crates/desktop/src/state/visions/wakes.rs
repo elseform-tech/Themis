@@ -59,6 +59,8 @@ pub enum WakeReason {
     Request(String),
     /// The channel it asked answered (the request id).
     RequestAnswered(String),
+    /// One of its routines is due (its id and instruction).
+    Routine(String, String),
 }
 
 impl WakeReason {
@@ -77,6 +79,7 @@ impl WakeReason {
             WakeReason::WorkerNote(..) => "worker_note",
             WakeReason::Request(_) => "request",
             WakeReason::RequestAnswered(_) => "request_answered",
+            WakeReason::Routine(..) => "routine",
         }
     }
 
@@ -87,7 +90,8 @@ impl WakeReason {
             | WakeReason::Tasked(_)
             | WakeReason::WorkerNote(..)
             | WakeReason::Request(_)
-            | WakeReason::RequestAnswered(_) => None,
+            | WakeReason::RequestAnswered(_)
+            | WakeReason::Routine(..) => None,
             WakeReason::ChatFinished(thread)
             | WakeReason::ChatFailed(thread)
             | WakeReason::ChatStopped(thread)
@@ -113,6 +117,7 @@ impl WakeReason {
             WakeReason::Request(id) | WakeReason::RequestAnswered(id) => {
                 format!("{} {id}", self.label())
             }
+            WakeReason::Routine(id, instruction) => format!("{} {id}: {instruction}", self.label()),
             other => format!("{} {}", other.label(), other.thread().unwrap_or_default()),
         }
     }
@@ -457,6 +462,18 @@ impl AppState {
         }
     }
 
+    /// Whether quiet hours hold this wake now: they hold what agents start, never the person's
+    /// own doing (a post, a hand back, a stop).
+    fn visions_held_by_quiet(&self, reason: Option<&WakeReason>) -> bool {
+        let persons = matches!(
+            reason,
+            None | Some(
+                WakeReason::Mentioned | WakeReason::HandedBack(_) | WakeReason::ChatStopped(_)
+            )
+        );
+        !persons && self.visions_quiet_at(self.visions_now())
+    }
+
     /// Whether the Vision may wake now, checked and counted under one lock; `Err` names why
     /// not (the reason is then dropped: nothing waits on a paused or removed Vision), except
     /// `over_budget` and `budget_unknown`, where it waits for a wake the budget allows.
@@ -481,6 +498,12 @@ impl AppState {
             .visions;
         if !config.enabled {
             return Err("disabled");
+        }
+        if self.visions_held_by_quiet(reason.as_ref()) {
+            self.visions_cache()
+                .wakes
+                .wait(vision_id, channel_id, reason);
+            return Err("quiet");
         }
         if let Some(reason) = &reason {
             if let Some(thread) = reason.thread() {

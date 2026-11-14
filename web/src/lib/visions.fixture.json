@@ -300,6 +300,27 @@
         "role": "Tests",
         "why": "Releases keep breaking"
       }
+    },
+    {
+      "seq": 13,
+      "at_ms": 13000,
+      "entry": {
+        "type": "routine_set",
+        "vision_id": "v1",
+        "routine_id": "rt1",
+        "schedule": {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "time": "09:00"
+        },
+        "instruction": "Summarise yesterday",
+        "changed": false
+      }
     }
   ],
   "page": {

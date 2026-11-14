@@ -37,6 +37,9 @@ mod marks_tests;
 mod requests;
 #[cfg(test)]
 mod requests_tests;
+mod routines;
+#[cfg(test)]
+mod routines_tests;
 #[cfg(test)]
 mod souls_tests;
 #[cfg(test)]
@@ -59,6 +62,7 @@ use super::AppState;
 pub use admin::{is_admin, Proposal, SetUp, ADMIN_VISION_ID};
 pub(crate) use budget::Over as BudgetOver;
 pub use channel_log::{ChannelLine, ChannelPage};
+pub use routines::{Routine, Schedule};
 pub use team_log::TeamEntry;
 
 pub use runs::vision_decisions;
@@ -323,6 +327,14 @@ pub enum ChannelEntry {
         channel_id: String,
         ask: String,
     },
+    /// The chief (`vision_id`) added a routine, or changed one (`changed`).
+    RoutineSet {
+        vision_id: String,
+        routine_id: String,
+        schedule: routines::Schedule,
+        instruction: String,
+        changed: bool,
+    },
     /// In `# administration`: `channel_id`'s chief (`vision_id`) asks Atlas for a worker.
     WorkerAsked {
         vision_id: String,
@@ -380,6 +392,10 @@ pub(crate) struct VisionsCache {
     conversion_checked: bool,
     /// `# administration` channels still to be told the store moved to teams.
     conversion_pending: Option<Vec<String>>,
+    /// Now, for routines and quiet hours, when a test set it.
+    clock: Option<chrono::DateTime<chrono::Local>>,
+    /// Whether the last Visions tick was in quiet hours.
+    was_quiet: bool,
     /// Why the move to teams could not run (file, event), for the log; it is tried again.
     conversion_failed: Option<(&'static str, &'static str)>,
 }

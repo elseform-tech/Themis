@@ -125,6 +125,16 @@ fn every_entry() -> Vec<ChannelEntry> {
             role: "Tests".into(),
             why: "Releases keep breaking".into(),
         },
+        ChannelEntry::RoutineSet {
+            vision_id: "v1".into(),
+            routine_id: "rt1".into(),
+            schedule: crate::state::Schedule {
+                days: vec![1, 2, 3, 4, 5],
+                time: "09:00".into(),
+            },
+            instruction: "Summarise yesterday".into(),
+            changed: false,
+        },
     ];
     for (at, entry) in entries.iter().enumerate() {
         let place = match entry {
@@ -140,6 +150,7 @@ fn every_entry() -> Vec<ChannelEntry> {
             ChannelEntry::RequestReceived { .. } => 9,
             ChannelEntry::RequestAnswered { .. } => 10,
             ChannelEntry::WorkerAsked { .. } => 11,
+            ChannelEntry::RoutineSet { .. } => 12,
         };
         assert_eq!(place, at);
     }

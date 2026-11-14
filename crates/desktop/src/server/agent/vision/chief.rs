@@ -20,6 +20,9 @@ pub(in crate::server::agent) const CHIEF_CALLS: &[&str] = &[
     "request_channel",
     "answer_request",
     "ask_for_worker",
+    "list_routines",
+    "save_routine",
+    "delete_routine",
 ];
 
 /// A worker's own calls, to its chief.
@@ -190,6 +193,7 @@ pub(super) fn state_refusal(
                 | "resume_worker"
                 | "request_channel"
                 | "ask_for_worker"
+                | "save_routine"
         );
     let paused = state
         .vision_get(&scope.vision_id)
@@ -275,6 +279,7 @@ pub(super) async fn dispatch(
         "request_channel" | "answer_request" | "ask_for_worker" => {
             request(state, sink, scope, method, args)
         }
+        "list_routines" | "save_routine" | "delete_routine" => routine(state, scope, method, args),
         _ => to_worker(state, sink, scope, method, args).await,
     }?;
     sink.emit_visions_changed(&VisionsChange {
@@ -317,6 +322,29 @@ fn request(
         &note,
     )?;
     Ok(json!({"answered": true}))
+}
+
+/// A chief's routines: listed, added or changed (its `undoable` decision), or removed.
+fn routine(
+    state: &AppState,
+    scope: &VisionScope,
+    method: &str,
+    args: &Value,
+) -> Result<Value, String> {
+    let channel = scope.channel_id.as_str();
+    match method {
+        "list_routines" => to_value(state.visions_routines(channel)),
+        "save_routine" => {
+            let routine: crate::state::Routine = arg(args, "routine")?;
+            let now = state.visions_clock();
+            to_value(state.visions_save_routine(channel, &scope.vision_id, routine, now)?)
+        }
+        _ => {
+            let id: String = arg(args, "routineId")?;
+            state.visions_chief_deletes_routine(&scope.vision_id, &id)?;
+            Ok(Value::Null)
+        }
+    }
 }
 
 /// A chief's word to a worker: a task or a redirect (which wake it), or a pause or a resume.

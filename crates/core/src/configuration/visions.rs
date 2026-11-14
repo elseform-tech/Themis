@@ -51,6 +51,16 @@ impl QuietHours {
         let (hours, minutes): (u32, u32) = (hours.parse().ok()?, minutes.parse().ok()?);
         (hours < 24 && minutes < 60).then_some(hours * 60 + minutes)
     }
+
+    /// Whether `minute` (after midnight) is quiet: from `start` up to `end`, crossing midnight
+    /// when `end` is earlier than `start`. Times that cannot be read are never quiet.
+    pub fn contains(&self, minute: u32) -> bool {
+        match (Self::minutes(&self.start), Self::minutes(&self.end)) {
+            (Some(start), Some(end)) if start < end => (start..end).contains(&minute),
+            (Some(start), Some(end)) if start > end => minute >= start || minute < end,
+            _ => false,
+        }
+    }
 }
 
 /// Highest `visions.requests_per_day`.
@@ -199,6 +209,10 @@ fn validate_visions(config: &RuntimeConfig) -> Result<()> {
             QuietHours::minutes(&quiet.start).is_some()
                 && QuietHours::minutes(&quiet.end).is_some(),
             "visions.quiet_hours start and end are HH:MM times of day"
+        );
+        ensure!(
+            quiet.start != quiet.end,
+            "visions.quiet_hours start and end are different times"
         );
     }
     Ok(())

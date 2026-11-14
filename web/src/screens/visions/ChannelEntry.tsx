@@ -54,6 +54,26 @@ export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: st
 
 type RequestEntry = Extract<Entry, { type: "request_sent" | "request_received" | "request_answered" }>;
 
+type TeamNote = Extract<Entry, { type: "request_sent" | "request_received" | "request_answered" | "routine_set" | "worker_asked" }>;
+const TEAM_NOTES: ReadonlySet<string> = new Set(["request_sent", "request_received", "request_answered", "routine_set", "worker_asked"]);
+function isTeamNote(entry: Entry): entry is TeamNote { return TEAM_NOTES.has(entry.type); }
+
+/** The one-line text of a team note: a request, a worker asked for, a routine. */
+function teamNoteText(state: AppState, entry: TeamNote): string {
+  switch (entry.type) {
+    case "request_sent": case "request_received": case "request_answered": return requestText(state, entry);
+    case "routine_set": {
+      const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const when = `${entry.schedule.days.map(day => days[day] ?? "?").join(", ")} at ${entry.schedule.time}`;
+      return `${entry.changed ? "Changed a routine" : "Added a routine"} (${when}): ${entry.instruction}`;
+    }
+    case "worker_asked": {
+      const from = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "a channel";
+      return `# ${from} asks for a worker: ${entry.role}. ${entry.why}`;
+    }
+  }
+}
+
 /** One line of a request between channels, from this channel's side. */
 function requestText(state: AppState, entry: RequestEntry): string {
   const other = `# ${Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel"}`;
@@ -110,13 +130,7 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
       ? <ProposalCard entry={entry} applied={proposalLine(state, channelId, "proposal_applied", entry.proposal_id)} onOpenChannel={open} />
       : <ProposalCard applied={entry} onOpenChannel={open} />;
   }
-  if (entry.type === "request_sent" || entry.type === "request_received" || entry.type === "request_answered") {
-    return <p className="themis-channel-text">{requestText(state, entry)}</p>;
-  }
-  if (entry.type === "worker_asked") {
-    const from = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "a channel";
-    return <p className="themis-channel-text">{`# ${from} asks for a worker: ${entry.role}. ${entry.why}`}</p>;
-  }
+  if (isTeamNote(entry)) return <p className="themis-channel-text">{teamNoteText(state, entry)}</p>;
   const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
