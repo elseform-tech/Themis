@@ -26,6 +26,7 @@ function Line({ line, worker, chief }: { line: TeamLine; worker: VisionInfo; chi
       <div className="themis-channel-body">
         <div className="themis-channel-who">{who.name}<time className="themis-channel-time">{clock(line.at_ms)}</time></div>
         <p className="themis-channel-text">{entry.text}</p>
+        {entry.kind === "pushback" && entry.safer && <p className="themis-channel-text">Instead: {entry.safer}</p>}
       </div>
     </li>
   );

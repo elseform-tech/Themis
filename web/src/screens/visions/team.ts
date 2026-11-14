@@ -73,7 +73,7 @@ export type TeamEntry =
   | { kind: "task"; text: string }
   | { kind: "redirect"; text: string }
   | { kind: "report"; text: string }
-  | { kind: "pushback"; text: string }
+  | { kind: "pushback"; text: string; safer?: string }
   | { kind: "paused" }
   | { kind: "resumed" };
 

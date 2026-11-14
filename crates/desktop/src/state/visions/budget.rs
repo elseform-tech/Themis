@@ -189,13 +189,17 @@ impl AppState {
         }
     }
 
-    /// What the agents of `channel_id` spent today, in US dollars (unknown spend reads as
-    /// nothing spent: the budget check itself fails closed).
-    pub fn visions_channel_spent_today(&self, channel_id: &str) -> f64 {
-        self.visions_tally(None)
-            .ok()
-            .and_then(|tally| tally.by_channel.get(channel_id).map(|spend| spend.usd))
-            .unwrap_or(0.0)
+    /// What the agents of `channel_id` spent today, in US dollars; `None` when it cannot be
+    /// known (shown as unknown, never as nothing spent).
+    pub fn visions_channel_spent_today(&self, channel_id: &str) -> Option<f64> {
+        self.channel_get(channel_id)?;
+        let tally = self.visions_tally(None).ok()?;
+        Some(
+            tally
+                .by_channel
+                .get(channel_id)
+                .map_or(0.0, |spend| spend.usd),
+        )
     }
 
     /// Whether `vision_id` may not spend now in any of its channels (its profile shows so).

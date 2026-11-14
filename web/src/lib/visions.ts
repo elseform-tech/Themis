@@ -207,7 +207,7 @@ export interface Routine { id: string; chief: string; channel_id: string; schedu
 /** A worker's thread with its chief, newest page (the person's read of the team log). */
 export function getTeamLog(channelId: string, workerId: string): Promise<{ entries: Array<{ seq: number; at_ms: number; entry: unknown }>; next_before: number | null }> { return invoke("get_team_log", { channelId, workerId }); }
 /** What a channel's agents spent today, in dollars. */
-export function getChannelSpend(channelId: string): Promise<{ spent_usd: number }> { return invoke("get_channel_spend", { channelId }); }
+export function getChannelSpend(channelId: string): Promise<{ spent_usd: number | null }> { return invoke("get_channel_spend", { channelId }); }
 export function listRoutines(channelId: string): Promise<Routine[]> { return invoke("list_routines", { channelId }); }
 export function setRoutineEnabled(routineId: string, enabled: boolean): Promise<void> { return invoke("set_routine_enabled", { routineId, enabled }); }
 export function deleteRoutine(routineId: string): Promise<void> { return invoke("delete_routine", { routineId }); }

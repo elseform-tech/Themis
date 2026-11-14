@@ -22,12 +22,14 @@ vi.mock("../../state/store", async importOriginal => ({
   useApp: () => live.value,
 }));
 vi.mock("../ThreadView", () => ({ ThreadView: () => <div data-testid="thread-view" /> }));
+const changeListeners: Array<(change: { channel_id?: string }) => void> = [];
 vi.mock("../../lib/tauri", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/tauri")>(),
   listGoModels: vi.fn(async () => [{ id: "longcat-2.5", effort_levels: [] }]),
   listModelProviders: vi.fn(async () => []),
   stopThread: vi.fn(async () => undefined),
   getEffectivePermissions: vi.fn(async () => ({})),
+  onVisionsChanged: vi.fn(async (cb: (change: { channel_id?: string }) => void) => { changeListeners.push(cb); return () => undefined; }),
 }));
 vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
@@ -177,6 +179,15 @@ describe("Team screens", () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
     const thread = screen.getByRole("complementary", { name: "Rook with Juno" });
     expect(await within(thread).findByText("Fix the parser from the server.")).toBeTruthy();
+  });
+
+  it("a worker's thread reads again when the server says the channel changed", async () => {
+    await show();
+    fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
+    await screen.findByText("Fix the parser from the server.");
+    const before = vi.mocked(visions.getTeamLog).mock.calls.length;
+    await act(async () => { for (const listener of changeListeners) listener({ channel_id: "c1" }); });
+    expect(vi.mocked(visions.getTeamLog).mock.calls.length).toBeGreaterThan(before);
   });
 
   it("a worker's thread lists the exchange with its chief, oldest first", async () => {
