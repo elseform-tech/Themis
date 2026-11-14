@@ -126,39 +126,7 @@ impl AppState {
         if to.chief.is_empty() {
             return Err(format!("# {} has no chief of staff to ask", to.name));
         }
-        let cap = self
-            .runtime_configuration(Some(&from.project_root), None)?
-            .config
-            .visions
-            .requests_per_day;
-        let id = uuid::Uuid::new_v4().to_string();
-        {
-            // Counted and recorded under one lock, so two calls cannot both pass the cap.
-            let channels = self.channel_ids();
-            let _guard = self.visions_cache();
-            let mut requests = self.requests_load()?;
-            let today = midnight_ms();
-            let sent = requests
-                .iter()
-                .filter(|request| request.from_channel == from.id && request.at_ms >= today)
-                .count();
-            if sent >= cap as usize {
-                drop(_guard);
-                self.visions_request_cap(&from.id);
-                return Err(themis_core::prompts::fill(
-                    themis_core::prompts::AGENT_CLI_REQUEST_CAP,
-                    &[("cap", &cap.to_string())],
-                ));
-            }
-            requests.push(Request {
-                id: id.clone(),
-                from_channel: from.id.clone(),
-                to_channel: to.id.clone(),
-                at_ms: now_ms(),
-                answered: None,
-            });
-            self.requests_save(&requests, &channels)?;
-        }
+        let id = self.record_request(&from, &to.id)?;
         // Recorded: the posts are best effort, so a channel that cannot record a line still gets
         // its wake (the failure is logged by the store).
         let _ = self.channel_post(
@@ -187,6 +155,81 @@ impl AppState {
         );
         // The receiving channel pays for its chief's wake, whatever it answers.
         self.visions_wake(sink, &to.id, &to.chief, WakeReason::Request(id.clone()));
+        Ok(id)
+    }
+
+    /// Records a request from `from` to `to_id` and returns its id, refused at `from`'s daily
+    /// cap (counted and recorded under one lock, so two calls cannot both pass it).
+    fn record_request(&self, from: &super::Channel, to_id: &str) -> Result<String, String> {
+        let cap = self
+            .runtime_configuration(Some(&from.project_root), None)?
+            .config
+            .visions
+            .requests_per_day;
+        let id = uuid::Uuid::new_v4().to_string();
+        let channels = self.channel_ids();
+        let guard = self.visions_cache();
+        let mut requests = self.requests_load()?;
+        let today = midnight_ms();
+        let sent = requests
+            .iter()
+            .filter(|request| request.from_channel == from.id && request.at_ms >= today)
+            .count();
+        if sent >= cap as usize {
+            drop(guard);
+            self.visions_request_cap(&from.id);
+            return Err(themis_core::prompts::fill(
+                themis_core::prompts::AGENT_CLI_REQUEST_CAP,
+                &[("cap", &cap.to_string())],
+            ));
+        }
+        requests.push(Request {
+            id: id.clone(),
+            from_channel: from.id.clone(),
+            to_channel: to_id.to_owned(),
+            at_ms: now_ms(),
+            answered: None,
+        });
+        self.requests_save(&requests, &channels)?;
+        Ok(id)
+    }
+
+    /// A chief asks Atlas for one more worker: a line in its project's `# administration`, and
+    /// Atlas wakes (counted in the channel's daily requests). Atlas answers with a hire proposal
+    /// the person approves.
+    pub(crate) fn visions_ask_for_worker(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        from_channel: &str,
+        chief: &str,
+        role: &str,
+        why: &str,
+    ) -> Result<String, String> {
+        let (role, why) = (text(role, "role")?, text(why, "reason")?);
+        let from = self.channel_get(from_channel).ok_or("Unknown channel")?;
+        let hq = self
+            .channel_list(&from.project_root)
+            .into_iter()
+            .find(|channel| channel.name == ADMINISTRATION)
+            .ok_or("This project has no # administration yet")?;
+        let id = self.record_request(&from, &hq.id)?;
+        let _ = self.channel_post(
+            &hq.id,
+            chief,
+            ChannelEntry::WorkerAsked {
+                vision_id: chief.to_owned(),
+                request_id: id.clone(),
+                channel_id: from.id.clone(),
+                role,
+                why,
+            },
+        );
+        self.visions_note(
+            "worker_asked",
+            json!({"request_id": id, "from_channel": from.id}),
+        );
+        let admin = super::ADMIN_VISION_ID;
+        self.visions_wake(sink, &hq.id, admin, WakeReason::Request(id.clone()));
         Ok(id)
     }
 

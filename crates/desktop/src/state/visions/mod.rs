@@ -323,6 +323,14 @@ pub enum ChannelEntry {
         channel_id: String,
         ask: String,
     },
+    /// In `# administration`: `channel_id`'s chief (`vision_id`) asks Atlas for a worker.
+    WorkerAsked {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        role: String,
+        why: String,
+    },
     /// A request between this channel and `channel_id` was answered, by the receiving chief
     /// (`vision_id`) or, with an empty `vision_id`, by the person.
     RequestAnswered {

@@ -108,6 +108,19 @@ export interface Proposal {
   channels: Array<{ name: string; topic: string; members: string[] }>;
   visions: Array<{ name: string; role: string; shape: string; color: string; model?: string; autonomy?: Autonomy; daily_budget_usd?: number }>;
   changes: ProposalChange[];
+  /** A whole team for a new channel. */
+  team?: ProposalTeam;
+  /** One more worker for a channel (by name). */
+  hire?: { channel: string; worker: ProposalMember };
+}
+/** A chief or worker in a proposal; its look is filled by the server when absent. */
+export interface ProposalMember { name: string; role: string; shape: string; color: string; accessory: string; soul: string; model?: string }
+export interface ProposalTeam {
+  channel: { name: string; topic: string };
+  chief: ProposalMember;
+  workers: ProposalMember[];
+  autonomy?: Autonomy;
+  daily_budget_usd?: number;
 }
 export interface ProposalChange {
   vision?: string;
@@ -141,7 +154,8 @@ export type ChannelEntry =
   | { type: "proposal_applied"; vision_id: string; proposal_id: string; items: SetUpItem[] }
   | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; ask: string }
   | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; ask: string }
-  | { type: "request_answered"; vision_id: string; request_id: string; channel_id: string; accepted: boolean; note: string };
+  | { type: "request_answered"; vision_id: string; request_id: string; channel_id: string; accepted: boolean; note: string }
+  | { type: "worker_asked"; vision_id: string; request_id: string; channel_id: string; role: string; why: string };
 
 export interface ChannelLine {
   seq: number;
@@ -216,6 +230,7 @@ export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Ex
   request_sent: ["vision_id", "request_id", "channel_id", "ask"],
   request_received: ["vision_id", "request_id", "channel_id", "ask"],
   request_answered: ["vision_id", "request_id", "channel_id", "accepted", "note"],
+  worker_asked: ["vision_id", "request_id", "channel_id", "role", "why"],
 };
 
 /** Every value of the unions the app reads, for the same check. */

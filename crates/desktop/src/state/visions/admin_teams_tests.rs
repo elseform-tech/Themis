@@ -1,0 +1,93 @@
+//! Atlas's team and hire proposals, checked field by field against what exists and against
+//! Settings › Visions (a team's autonomy and budget are never above them).
+
+use serde_json::json;
+
+use super::super::tests::{context, proposal};
+use super::*;
+
+fn team(extra: serde_json::Value) -> serde_json::Value {
+    let mut team = json!({
+        "channel": {"name": "release", "topic": "Ship 0.9"},
+        "chief": {"name": "Juno", "soul": "Calm and direct.", "accessory": "glasses"},
+        "workers": [{"name": "Rook", "role": "Builds"}, {"name": "Tess", "role": "Tests"}]
+    });
+    for (key, value) in extra.as_object().unwrap() {
+        team[key] = value.clone();
+    }
+    json!({"summary": "A release team.", "team": team})
+}
+
+#[test]
+fn a_team_proposal_is_checked_field_by_field() {
+    assert_eq!(check(&proposal(team(json!({}))), &context()), Ok(()));
+    let bad = [
+        (
+            json!({"channel": {"name": "docs"}}),
+            "already has a channel",
+        ),
+        (json!({"chief": {"name": "Wren"}}), "already exists"),
+        (json!({"workers": []}), "worker"),
+        (
+            json!({"workers": [{"name": "Juno", "role": "x"}]}),
+            "already exists",
+        ),
+        (json!({"workers": [{"name": "Rook"}]}), "role"),
+        (json!({"chief": {"name": "Juno", "model": "nope"}}), "model"),
+        (
+            json!({"chief": {"name": "Juno", "accessory": "crown"}}),
+            "accessory",
+        ),
+    ];
+    for (extra, words) in bad {
+        let error = check(&proposal(team(extra.clone())), &context()).unwrap_err();
+        assert!(error.contains(words), "{extra}: {error}");
+    }
+}
+
+#[test]
+fn a_proposal_cannot_raise_autonomy_or_budget() {
+    // Settings › Visions: "small" calls and $1 a day (the defaults).
+    let fits = [json!({"autonomy": "ask"}), json!({"daily_budget_usd": 0.5})];
+    for extra in fits {
+        assert_eq!(
+            check(&proposal(team(extra.clone())), &context()),
+            Ok(()),
+            "{extra}"
+        );
+    }
+    let above = [
+        json!({"autonomy": "most"}),
+        json!({"daily_budget_usd": 2.0}),
+    ];
+    for extra in above {
+        let error = check(&proposal(team(extra.clone())), &context()).unwrap_err();
+        assert!(error.contains("Settings"), "{extra}: {error}");
+    }
+    // The same for a change to an existing channel.
+    let raise = json!({"summary": "x", "changes": [{"channel": "docs", "autonomy": "nearly_all"}]});
+    assert!(check(&proposal(raise), &context())
+        .unwrap_err()
+        .contains("Settings"));
+    let lower = json!({"summary": "x", "changes": [{"channel": "docs", "daily_budget_usd": 0.2}]});
+    assert_eq!(check(&proposal(lower), &context()), Ok(()));
+}
+
+#[test]
+fn a_hire_is_checked() {
+    let hire = |channel: &str, name: &str| {
+        proposal(
+            json!({"summary": "A tester.", "hire": {"channel": channel, "worker": {"name": name, "role": "Tests"}}}),
+        )
+    };
+    assert_eq!(check(&hire("docs", "Tess"), &context()), Ok(()));
+    assert!(check(&hire("administration", "Tess"), &context())
+        .unwrap_err()
+        .contains("administration"));
+    assert!(check(&hire("nowhere", "Tess"), &context())
+        .unwrap_err()
+        .contains("no channel"));
+    assert!(check(&hire("docs", "Wren"), &context())
+        .unwrap_err()
+        .contains("already exists"));
+}

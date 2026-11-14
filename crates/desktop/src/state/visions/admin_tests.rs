@@ -39,7 +39,7 @@ fn channel(id: &str, name: &str, members: &[&str]) -> Channel {
     }
 }
 
-fn context() -> Context {
+pub(super) fn context() -> Context {
     Context {
         visions: vec![admin_profile(), vision("w", "Wren", Some(0.5))],
         channels: vec![
@@ -51,7 +51,7 @@ fn context() -> Context {
     }
 }
 
-fn proposal(json: serde_json::Value) -> Proposal {
+pub(super) fn proposal(json: serde_json::Value) -> Proposal {
     let mut proposal: Proposal = serde_json::from_value(json).unwrap();
     fill_looks(&mut proposal, 2);
     proposal

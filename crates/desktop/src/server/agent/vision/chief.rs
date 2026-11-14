@@ -19,6 +19,7 @@ pub(in crate::server::agent) const CHIEF_CALLS: &[&str] = &[
     "list_team",
     "request_channel",
     "answer_request",
+    "ask_for_worker",
 ];
 
 /// A worker's own calls, to its chief.
@@ -188,6 +189,7 @@ pub(super) fn state_refusal(
                 | "pause_worker"
                 | "resume_worker"
                 | "request_channel"
+                | "ask_for_worker"
         );
     let paused = state
         .vision_get(&scope.vision_id)
@@ -270,7 +272,9 @@ pub(super) async fn dispatch(
             }
             Ok(json!({"seq": seq}))
         }
-        "request_channel" | "answer_request" => request(state, sink, scope, method, args),
+        "request_channel" | "answer_request" | "ask_for_worker" => {
+            request(state, sink, scope, method, args)
+        }
         _ => to_worker(state, sink, scope, method, args).await,
     }?;
     sink.emit_visions_changed(&VisionsChange {
@@ -289,6 +293,12 @@ fn request(
     args: &Value,
 ) -> Result<Value, String> {
     let channel = scope.channel_id.as_str();
+    if method == "ask_for_worker" {
+        let role: String = arg(args, "role")?;
+        let why: String = arg(args, "why")?;
+        let id = state.visions_ask_for_worker(sink, channel, &scope.vision_id, &role, &why)?;
+        return Ok(json!({"requestId": id}));
+    }
     if method == "request_channel" {
         let to: String = arg(args, "channelId")?;
         let ask: String = arg(args, "ask")?;

@@ -113,6 +113,10 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
   if (entry.type === "request_sent" || entry.type === "request_received" || entry.type === "request_answered") {
     return <p className="themis-channel-text">{requestText(state, entry)}</p>;
   }
+  if (entry.type === "worker_asked") {
+    const from = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "a channel";
+    return <p className="themis-channel-text">{`# ${from} asks for a worker: ${entry.role}. ${entry.why}`}</p>;
+  }
   const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
   if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;

@@ -10,7 +10,9 @@ use serde_json::Value;
 use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Autonomy;
 
-use super::admin::{Change, NewChannel, NewVision, SetUpAction, SetUpKind};
+use super::admin::{
+    Change, Hire, NewChannel, NewMember, NewTeam, NewVision, SetUpAction, SetUpKind, TeamChannel,
+};
 use super::listing::{VisionChat, VisionListed};
 use super::*;
 
@@ -116,6 +118,13 @@ fn every_entry() -> Vec<ChannelEntry> {
             accepted: true,
             note: "On it".into(),
         },
+        ChannelEntry::WorkerAsked {
+            vision_id: "v1".into(),
+            request_id: "r3".into(),
+            channel_id: "c2".into(),
+            role: "Tests".into(),
+            why: "Releases keep breaking".into(),
+        },
     ];
     for (at, entry) in entries.iter().enumerate() {
         let place = match entry {
@@ -130,6 +139,7 @@ fn every_entry() -> Vec<ChannelEntry> {
             ChannelEntry::RequestSent { .. } => 8,
             ChannelEntry::RequestReceived { .. } => 9,
             ChannelEntry::RequestAnswered { .. } => 10,
+            ChannelEntry::WorkerAsked { .. } => 11,
         };
         assert_eq!(place, at);
     }
@@ -173,6 +183,44 @@ fn every_proposal_field() -> Proposal {
                 ..Change::default()
             },
         ],
+        team: Some(Box::new(NewTeam {
+            channel: TeamChannel {
+                name: "release".into(),
+                topic: "Ship 0.9".into(),
+            },
+            chief: NewMember {
+                name: "Juno".into(),
+                role: String::new(),
+                shape: "cloud".into(),
+                color: "teal".into(),
+                accessory: "glasses".into(),
+                soul: "Calm and direct.".into(),
+                model: Some("go/test-model".into()),
+            },
+            workers: vec![NewMember {
+                name: "Tess".into(),
+                role: "Tests".into(),
+                shape: "broad".into(),
+                color: "coral".into(),
+                accessory: "magnifier".into(),
+                soul: String::new(),
+                model: None,
+            }],
+            autonomy: Some(Autonomy::Small),
+            daily_budget_usd: Some(0.5),
+        })),
+        hire: Some(Box::new(Hire {
+            channel: "docs".into(),
+            worker: NewMember {
+                name: "Ada".into(),
+                role: "Writes".into(),
+                shape: "wide".into(),
+                color: "rose".into(),
+                accessory: "none".into(),
+                soul: String::new(),
+                model: None,
+            },
+        })),
     }
 }
 

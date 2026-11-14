@@ -499,3 +499,93 @@ async fn a_post_says_which_visions_it_woke() {
     assert_eq!(quiet["woken"], json!([]), "{quiet}");
     fx.shut_down().await;
 }
+
+/// A whole team, as Atlas proposes it after the person's yes: the channel, its chief (with its
+/// soul) and workers (with their roles), and the team's autonomy and budget, nothing else.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_team_proposal_creates_exactly_what_it_says() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (_, admin) = fx.vision_run(ADMIN, &hq).await;
+    let team = json!({"summary": "A release team.", "team": {
+        "channel": {"name": "release", "topic": "Ship 0.9"},
+        "chief": {"name": "Juno", "soul": "Calm and direct.", "accessory": "glasses"},
+        "workers": [{"name": "Rook", "role": "Builds"}, {"name": "Tess", "role": "Tests", "accessory": "magnifier"}],
+        "autonomy": "ask", "daily_budget_usd": 0.5}});
+    let id = proposal_id(&propose(&fx, &admin, &hq, team));
+    say(&fx, &hq, "yes, go ahead");
+    let applied = json_of(&apply(&fx, &admin, &id));
+    assert_eq!(applied["items"].as_array().unwrap().len(), 4, "{applied}");
+    let listed = visions(&fx);
+    let juno = named(&listed, "Juno").unwrap();
+    assert_eq!(juno["soul"], "Calm and direct.");
+    assert_eq!(juno["accessory"], "glasses");
+    assert_eq!(named(&listed, "Tess").unwrap()["role"], "Tests");
+    let release = named(&channels(&fx), "release").cloned().unwrap();
+    assert_eq!(release["chief"], juno["id"]);
+    assert_eq!(release["members"].as_array().unwrap().len(), 3);
+    assert_eq!(release["autonomy"], "ask");
+    assert_eq!(release["daily_budget_usd"], 0.5);
+    assert_eq!(release["topic"], "Ship 0.9");
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hire_needs_the_persons_yes() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (_, docs) = fx.chief_and_channel("Wren", "docs");
+    let (_, admin) = fx.vision_run(ADMIN, &hq).await;
+    let hire = json!({"summary": "A tester for # docs.", "hire": {"channel": "docs", "worker": {"name": "Tess", "role": "Tests"}}});
+    let id = proposal_id(&propose(&fx, &admin, &hq, hire));
+    assert!(!apply(&fx, &admin, &id).status.success(), "no yes yet");
+    say(&fx, &hq, "yes");
+    json_of(&apply(&fx, &admin, &id));
+    let tess = named(&visions(&fx), "Tess").unwrap()["id"].clone();
+    let docs_now = channels(&fx)
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == docs.as_str())
+        .cloned()
+        .unwrap();
+    assert!(
+        docs_now["members"].as_array().unwrap().contains(&tess),
+        "{docs_now}"
+    );
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chief_asking_for_a_worker_wakes_atlas_and_shows_in_administration() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (wren, docs) = fx.chief_and_channel("Wren", "docs");
+    let (_, chief) = fx.vision_run(&wren, &docs).await;
+    let asked = fx.agent_call_ok(
+        &chief,
+        "ask_for_worker",
+        json!({"role": "Tests", "why": "Releases keep breaking"}),
+    );
+    assert!(asked["requestId"].is_string(), "{asked}");
+    let line = fx
+        .entries(&hq)
+        .into_iter()
+        .find(|e| e["type"] == "worker_asked")
+        .expect("in # administration");
+    assert_eq!(line["vision_id"], wren.as_str());
+    assert_eq!(line["channel_id"], docs.as_str());
+    assert_eq!(line["role"], "Tests");
+    // It counts towards the channel's daily requests.
+    fx.set_visions(json!({"enabled": false, "requests_per_day": 1}));
+    let again = fx.agent_call(
+        &chief,
+        "ask_for_worker",
+        json!({"role": "Docs", "why": "x"}),
+    );
+    assert!(!again.status.success());
+    fx.shut_down().await;
+}

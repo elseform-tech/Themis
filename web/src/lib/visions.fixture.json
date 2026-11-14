@@ -190,7 +190,45 @@
                 "Wren B"
               ]
             }
-          ]
+          ],
+          "team": {
+            "channel": {
+              "name": "release",
+              "topic": "Ship 0.9"
+            },
+            "chief": {
+              "name": "Juno",
+              "role": "",
+              "shape": "cloud",
+              "color": "teal",
+              "accessory": "glasses",
+              "soul": "Calm and direct.",
+              "model": "go/test-model"
+            },
+            "workers": [
+              {
+                "name": "Tess",
+                "role": "Tests",
+                "shape": "broad",
+                "color": "coral",
+                "accessory": "magnifier",
+                "soul": ""
+              }
+            ],
+            "autonomy": "small",
+            "daily_budget_usd": 0.5
+          },
+          "hire": {
+            "channel": "docs",
+            "worker": {
+              "name": "Ada",
+              "role": "Writes",
+              "shape": "wide",
+              "color": "rose",
+              "accessory": "none",
+              "soul": ""
+            }
+          }
         }
       }
     },
@@ -249,6 +287,18 @@
         "channel_id": "c2",
         "accepted": true,
         "note": "On it"
+      }
+    },
+    {
+      "seq": 12,
+      "at_ms": 12000,
+      "entry": {
+        "type": "worker_asked",
+        "vision_id": "v1",
+        "request_id": "r3",
+        "channel_id": "c2",
+        "role": "Tests",
+        "why": "Releases keep breaking"
       }
     }
   ],

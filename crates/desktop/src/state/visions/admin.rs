@@ -21,8 +21,14 @@ use themis_core::prompts::{fill, VISIONS_ADMIN};
 use themis_core::visions::Autonomy;
 
 use super::store::{validate_channel, validate_vision};
+
+#[path = "admin_teams.rs"]
+mod teams;
 use super::{Channel, ChannelEntry, Vision};
 use crate::state::AppState;
+pub use teams::{Hire, NewTeam};
+#[cfg(test)]
+pub use teams::{NewMember, TeamChannel};
 
 /// The admin Vision's id.
 pub const ADMIN_VISION_ID: &str = "admin";
@@ -83,6 +89,12 @@ pub struct Proposal {
     pub visions: Vec<NewVision>,
     #[serde(default)]
     pub changes: Vec<Change>,
+    /// A whole team for a new channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<Box<NewTeam>>,
+    /// One more worker for a channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hire: Option<Box<Hire>>,
 }
 
 /// A channel to make in `# administration`'s project; `members` are Vision names.
@@ -169,7 +181,6 @@ pub struct SetUp {
 pub(super) struct Context {
     pub visions: Vec<Vision>,
     pub channels: Vec<Channel>,
-    #[allow(dead_code)] // Team proposals check autonomy and budget against it (plan Task 6).
     pub config: VisionsConfig,
     /// The usable models of the loaded catalog (empty while none is loaded).
     pub models: Vec<String>,
@@ -220,7 +231,9 @@ pub(super) fn check(proposal: &Proposal, context: &Context) -> Result<(), String
         proposal.visions.len(),
         proposal.changes.len(),
     ];
-    if counts.iter().all(|count| *count == 0) || counts.iter().any(|count| *count > MAX_ITEMS) {
+    let teams = proposal.team.is_some() || proposal.hire.is_some();
+    let empty = counts.iter().all(|count| *count == 0) && !teams;
+    if empty || counts.iter().any(|count| *count > MAX_ITEMS) {
         return Err("A proposal holds 1 to 16 channels, Visions and changes, each".to_owned());
     }
     let mut names = HashSet::new();
@@ -228,6 +241,12 @@ pub(super) fn check(proposal: &Proposal, context: &Context) -> Result<(), String
         check_new_vision(vision, context, &mut names)?;
     }
     let mut channel_names = HashSet::new();
+    if let Some(team) = &proposal.team {
+        teams::check_team(team, context, &mut names, &mut channel_names)?;
+    }
+    if let Some(hire) = &proposal.hire {
+        teams::check_hire(hire, context, &mut names)?;
+    }
     for channel in &proposal.channels {
         check_new_channel(channel, context, &names, &mut channel_names)?;
     }
@@ -237,13 +256,13 @@ pub(super) fn check(proposal: &Proposal, context: &Context) -> Result<(), String
     Ok(())
 }
 
-fn check_new_vision(
-    new: &NewVision,
+/// A new Vision's profile: valid, a name no Vision has (nor another new one), a known look.
+fn check_new_profile(
+    vision: &mut Vision,
     context: &Context,
     names: &mut HashSet<String>,
 ) -> Result<(), String> {
-    let mut vision = new_profile(new);
-    validate_vision(&mut vision)?;
+    validate_vision(vision)?;
     let taken = context
         .visions
         .iter()
@@ -251,11 +270,20 @@ fn check_new_vision(
     if taken || !names.insert(vision.name.to_lowercase()) {
         return Err(format!("A Vision named {:?} already exists", vision.name));
     }
-    if !SHAPES.contains(&new.shape.as_str()) || !COLORS.contains(&new.color.as_str()) {
+    if !SHAPES.contains(&vision.shape.as_str()) || !COLORS.contains(&vision.color.as_str()) {
         return Err(format!(
             "A Vision's shape is one of {SHAPES:?} and its colour one of {COLORS:?}"
         ));
     }
+    Ok(())
+}
+
+fn check_new_vision(
+    new: &NewVision,
+    context: &Context,
+    names: &mut HashSet<String>,
+) -> Result<(), String> {
+    check_new_profile(&mut new_profile(new), context, names)?;
     if new.autonomy.is_some() || new.daily_budget_usd.is_some() {
         return Err(TEAM_SETTINGS.to_owned());
     }
@@ -366,13 +394,13 @@ fn check_channel_change(
     if channel.name == ADMINISTRATION {
         return Err("# administration is built in; a proposal cannot change it".to_owned());
     }
-    let vision_only = change.role.is_some()
-        || change.paused.is_some()
-        || change.autonomy.is_some()
-        || change.daily_budget_usd.is_some();
+    let vision_only = change.role.is_some() || change.paused.is_some();
     if vision_only {
-        return Err("A channel's change may set its name, topic and members".to_owned());
+        return Err(
+            "A channel's change may set its name, topic, members, autonomy and budget".to_owned(),
+        );
     }
+    teams::fits_settings(change.autonomy, change.daily_budget_usd, &context.config)?;
     let members = |names: &[String]| {
         names
             .iter()
@@ -445,6 +473,12 @@ fn applied_to_channel(
     if let Some(topic) = &change.topic {
         changed.topic = topic.trim().to_owned();
     }
+    if change.autonomy.is_some() {
+        changed.autonomy = change.autonomy;
+    }
+    if change.daily_budget_usd.is_some() {
+        changed.daily_budget_usd = change.daily_budget_usd;
+    }
     changed.members.retain(|member| !remove.contains(member));
     for member in add {
         if !changed.members.contains(member) {
@@ -460,6 +494,7 @@ fn applied_to_channel(
 
 /// Gives each new Vision without a look one, in turn after the Visions there are.
 fn fill_looks(proposal: &mut Proposal, existing: usize) {
+    teams::fill_member_looks(proposal, existing + proposal.visions.len());
     for (at, vision) in proposal.visions.iter_mut().enumerate() {
         if vision.shape.trim().is_empty() {
             vision.shape = SHAPES[(existing + at) % SHAPES.len()].to_owned();
@@ -641,7 +676,8 @@ impl AppState {
             return Err(error);
         }
         let proposal_id = uuid::Uuid::new_v4().to_string();
-        let counts = json!({"channels": proposal.channels.len(), "visions": proposal.visions.len(), "changes": proposal.changes.len()});
+        let counts = json!({"channels": proposal.channels.len(), "visions": proposal.visions.len(), "changes": proposal.changes.len(),
+            "team": proposal.team.is_some(), "hire": proposal.hire.is_some()});
         let entry = ChannelEntry::Proposal {
             vision_id: ADMIN_VISION_ID.to_owned(),
             proposal_id: proposal_id.clone(),
@@ -828,6 +864,7 @@ impl AppState {
                 SetUpAction::Created,
             ));
         }
+        self.visions_set_up_team(hq, proposal, items)?;
         for change in &proposal.changes {
             let item = match (&change.vision, &change.channel) {
                 (Some(name), _) => self.visions_change_vision(change, context.vision(name)?)?,
