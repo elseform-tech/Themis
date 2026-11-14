@@ -34,7 +34,12 @@ impl AppState {
 
     /// Applies a settings patch (validated) and returns the new settings.
     pub async fn update_settings(&self, patch: SettingsPatch) -> Result<Settings, String> {
-        self.inner.settings.update(patch).await
+        let before = self.inner.settings.get().await.default_model;
+        let settings = self.inner.settings.update(patch).await?;
+        if settings.default_model != before {
+            self.visions_default_model_changed().await;
+        }
+        Ok(settings)
     }
 
     /// Reports whether the Go key is available (the value never leaves the store).

@@ -254,6 +254,19 @@ impl AppState {
         Ok(saved)
     }
 
+    /// The default model changed: every Vision on "Default model" moves its own chats to it.
+    pub(in crate::state) async fn visions_default_model_changed(&self) {
+        for vision in self.visions_list() {
+            if vision
+                .model
+                .as_deref()
+                .is_none_or(|model| model.trim().is_empty())
+            {
+                self.visions_chats_follow_model(&vision).await;
+            }
+        }
+    }
+
     async fn visions_chats_follow_model(&self, vision: &Vision) {
         let model = self.visions_model(vision).await;
         let chats = self.owners_where(|owner| {
