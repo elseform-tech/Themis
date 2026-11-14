@@ -22,7 +22,8 @@ vi.mock("../lib/visions", async importOriginal => ({
   pauseVision: vi.fn(async () => ({})),
 }));
 
-const base: VisionsSettings = { enabled: true, autonomy: "small", custom: {}, daily_budget_usd: 2, max_wakes: 8 };
+const base: VisionsSettings = { enabled: true, autonomy: "small", custom: {}, daily_budget_usd: 2, max_wakes: 8,
+  requests_per_day: 10, routines_per_chief: 10, quiet_hours: null };
 /** The file as the server holds it: each write must name its current revision (r1, r2, …). */
 let file: { settings: VisionsSettings; revision: number };
 function serve(settings: Partial<VisionsSettings>, canRun = true) {
@@ -59,6 +60,24 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Settings › Visions", () => {
+  it("team_limits_and_quiet_hours_save_field_by_field", async () => {
+    await open({});
+    const requests = screen.getByRole("spinbutton", { name: "Requests between channels, a day" });
+    await act(async () => { fireEvent.change(requests, { target: { value: "4" } }); fireEvent.blur(requests); });
+    expect(visions.updateVisionsSettings).toHaveBeenLastCalledWith({ requests_per_day: 4 }, "r1");
+    const routines = screen.getByRole("spinbutton", { name: "Routines per chief" });
+    await act(async () => { fireEvent.change(routines, { target: { value: "99" } }); fireEvent.blur(routines); });
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a number from 1 to 50");
+    expect(visions.updateVisionsSettings).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("Quiet from")).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "Quiet hours" })); });
+    expect(visions.updateVisionsSettings).toHaveBeenLastCalledWith({ quiet_hours: { start: "22:00", end: "07:00" } }, "r2");
+    await act(async () => { fireEvent.change(screen.getByLabelText("Quiet until"), { target: { value: "22:00" } }); });
+    expect(screen.getByRole("alert")).toHaveTextContent("two different times");
+    await act(async () => { fireEvent.change(screen.getByLabelText("Quiet until"), { target: { value: "06:30" } }); });
+    expect(visions.updateVisionsSettings).toHaveBeenLastCalledWith({ quiet_hours: { start: "22:00", end: "06:30" } }, "r3");
+  });
+
   it("presets_are_read_only_and_custom_is_editable", async () => {
     await open({ autonomy: "small" });
     expect(screen.getByRole("slider", { name: "Autonomy" })).toHaveAttribute("aria-valuetext", "Routine decisions");

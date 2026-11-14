@@ -99,6 +99,41 @@ function LimitsGroup({ settings, patch, onError }: { settings: VisionsSettings; 
   </SettingsGroup>;
 }
 
+/** A whole number saved when the box loses focus, within `min`..`max`. */
+function CountField({ label, value, min, max, onSave, onError }: { label: string; value: number; min: number; max: number; onSave: (count: number) => void; onError: (message: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = () => {
+    if (draft === null) return;
+    const count = Number(draft);
+    setDraft(null);
+    if (!Number.isInteger(count) || count < min || count > max) { onError(`Enter a number from ${min} to ${max}`); return; }
+    if (count !== value) onSave(count);
+  };
+  return <label className="themis-settings-control">{label}
+    <input className="themis-settings-number" type="number" min={min} max={max} step={1} aria-label={label} value={draft ?? String(value)}
+      onChange={event => setDraft(event.target.value)} onBlur={save} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+  </label>;
+}
+
+/** Teams: how many requests a channel sends a day, routines per chief, and quiet hours (routines
+ *  and what agents start wait; your own messages always go through). */
+function TeamsGroup({ settings, patch, onError }: { settings: VisionsSettings; patch: (write: Patch) => void; onError: (message: string) => void }) {
+  const quiet = settings.quiet_hours;
+  const setQuiet = (next: { start: string; end: string } | null) => {
+    if (next && next.start === next.end) { onError("Quiet hours need two different times"); return; }
+    patch(() => ({ quiet_hours: next }));
+  };
+  return <SettingsGroup>
+    <CountField label="Requests between channels, a day" value={settings.requests_per_day} min={1} max={100} onError={onError} onSave={count => patch(() => ({ requests_per_day: count }))} />
+    <CountField label="Routines per chief" value={settings.routines_per_chief} min={1} max={50} onError={onError} onSave={count => patch(() => ({ routines_per_chief: count }))} />
+    <label className="themis-settings-check">Quiet hours<Switch checked={quiet !== null} onChange={event => setQuiet(event.target.checked ? { start: "22:00", end: "07:00" } : null)} /></label>
+    {quiet && <div className="themis-settings-control">
+      <input type="time" aria-label="Quiet from" value={quiet.start} onChange={event => event.target.value && setQuiet({ ...quiet, start: event.target.value })} />
+      <input type="time" aria-label="Quiet until" value={quiet.end} onChange={event => event.target.value && setQuiet({ ...quiet, end: event.target.value })} />
+    </div>}
+  </SettingsGroup>;
+}
+
 /** Settings › Visions: field-level writes to the `visions` block of the user runtime.jsonc,
  *  refused when the file changed since the page loaded. Writes run one at a time, each naming
  *  the revision the one before it returned. */
@@ -134,5 +169,6 @@ export function VisionsSettingsSection({ onSaved }: { onSaved?: () => void } = {
     {!view.can_run && <p role="status" className="themis-settings-hint">Visions can't run on this computer: it has no sandbox that can confine them.</p>}
     <AutonomyCard settings={view.settings} patch={patch} />
     <LimitsGroup settings={view.settings} patch={patch} onError={setError} />
+    <TeamsGroup settings={view.settings} patch={patch} onError={setError} />
   </>;
 }

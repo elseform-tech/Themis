@@ -441,12 +441,15 @@ impl AppState {
         changes: serde_json::Map<String, Value>,
         revision: Option<&str>,
     ) -> Result<(configuration::VisionsConfig, String), String> {
-        const EDITABLE: [&str; 5] = [
+        const EDITABLE: [&str; 8] = [
             "enabled",
             "autonomy",
             "custom",
             "daily_budget_usd",
             "max_wakes",
+            "requests_per_day",
+            "routines_per_chief",
+            "quiet_hours",
         ];
         if let Some(key) = changes.keys().find(|key| !EDITABLE.contains(&key.as_str())) {
             return Err(format!("Settings › Visions cannot change `{key}`"));

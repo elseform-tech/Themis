@@ -177,6 +177,12 @@ export interface VisionsSettings {
   custom: Record<string, boolean>;
   daily_budget_usd: number;
   max_wakes: number;
+  /** Requests a channel may send other channels a day (1–100). */
+  requests_per_day: number;
+  /** Routines a chief may keep (1–50). */
+  routines_per_chief: number;
+  /** Local hours when routines and other agent-started wakes wait; null for none. */
+  quiet_hours: { start: string; end: string } | null;
 }
 export interface VisionsSettingsView {
   settings: VisionsSettings;

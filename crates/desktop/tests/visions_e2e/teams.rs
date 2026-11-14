@@ -259,3 +259,28 @@ async fn the_person_reads_a_workers_thread_and_the_channels_spend() {
     assert_eq!(spend["spent_usd"], 0.0, "{spend}");
     fx.shut_down().await;
 }
+
+/// Settings › Visions writes the team limits and quiet hours in your runtime.jsonc.
+#[tokio::test(flavor = "multi_thread")]
+async fn settings_write_the_team_limits_and_quiet_hours() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let read = fx.call_ok("get_visions_settings", json!({}));
+    let changes = json!({"requests_per_day": 4, "routines_per_chief": 3,
+        "quiet_hours": {"start": "22:00", "end": "07:00"}});
+    let saved = fx.call_ok(
+        "update_visions_settings",
+        json!({"changes": changes, "revision": read["revision"]}),
+    );
+    assert_eq!(saved["settings"]["requests_per_day"], 4, "{saved}");
+    assert_eq!(saved["settings"]["quiet_hours"]["start"], "22:00");
+    // Quiet hours off again.
+    let off = fx.call_ok(
+        "update_visions_settings",
+        json!({"changes": {"quiet_hours": null}, "revision": saved["revision"]}),
+    );
+    assert!(off["settings"]["quiet_hours"].is_null(), "{off}");
+    let same = fx.call("update_visions_settings", json!({"changes": {"quiet_hours": {"start": "09:00", "end": "09:00"}}, "revision": off["revision"]}));
+    assert!(!same.status.success());
+    fx.shut_down().await;
+}
