@@ -495,6 +495,12 @@ pub const AGENT_CLI_HELD_BY_PERSON: &str =
 /// channel, a chief that no longer leads it, or a worker no longer on the team.
 pub const AGENT_CLI_NOT_YOUR_TEAM: &str =
     include_str!("../builtins/prompts/agent-cli-not-your-team.md");
+/// The app server's answer to a chief's request past its channel's daily cap; `{{cap}}`.
+pub const AGENT_CLI_REQUEST_CAP: &str =
+    include_str!("../builtins/prompts/agent-cli-request-cap.md");
+/// The app server's answer to a chief accepting a request beyond its channel's level.
+pub const AGENT_CLI_REQUEST_ABOVE_LEVEL: &str =
+    include_str!("../builtins/prompts/agent-cli-request-above-level.md");
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");

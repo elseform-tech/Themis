@@ -17,6 +17,8 @@ pub(in crate::server::agent) const CHIEF_CALLS: &[&str] = &[
     "resume_worker",
     "get_team_log",
     "list_team",
+    "request_channel",
+    "answer_request",
 ];
 
 /// A worker's own calls, to its chief.
@@ -50,7 +52,8 @@ pub(super) fn refusal(
     if !scope.chief {
         return worker_refusal(scope, method, args, names_channel);
     }
-    if CHIEF_CALLS.contains(&method) && !names_channel {
+    // A request names the other channel by design; the server checks it is one of this project.
+    if CHIEF_CALLS.contains(&method) && (!names_channel || method == "request_channel") {
         return Some(None);
     }
     if CHIEF_CALLS.contains(&method) || WORKER_CALLS.contains(&method) || method == "create_thread"
@@ -177,7 +180,12 @@ pub(super) fn state_refusal(
     }
     let gives_work = matches!(
         method,
-        "assign_task" | "redirect_worker" | "pause_worker" | "resume_worker"
+        "assign_task"
+            | "redirect_worker"
+            | "pause_worker"
+            | "resume_worker"
+            | "request_channel"
+            | "answer_request"
     );
     let paused = state
         .vision_get(&scope.vision_id)
@@ -260,6 +268,7 @@ pub(super) async fn dispatch(
             }
             Ok(json!({"seq": seq}))
         }
+        "request_channel" | "answer_request" => request(state, sink, scope, method, args),
         _ => to_worker(state, sink, scope, method, args).await,
     }?;
     sink.emit_visions_changed(&VisionsChange {
@@ -267,6 +276,35 @@ pub(super) async fn dispatch(
         vision_id: Some(scope.vision_id.clone()),
     });
     Ok(result)
+}
+
+/// A chief's request to another channel of its project, or its answer to one it received.
+fn request(
+    state: &AppState,
+    sink: &Arc<dyn EventSink>,
+    scope: &VisionScope,
+    method: &str,
+    args: &Value,
+) -> Result<Value, String> {
+    let channel = scope.channel_id.as_str();
+    if method == "request_channel" {
+        let to: String = arg(args, "channelId")?;
+        let ask: String = arg(args, "ask")?;
+        let id = state.visions_request(sink, channel, &scope.vision_id, &to, &ask)?;
+        return Ok(json!({"requestId": id}));
+    }
+    let id: String = arg(args, "requestId")?;
+    let note: Option<String> = arg(args, "note")?;
+    let note = note.unwrap_or_default();
+    state.visions_answer_request(
+        sink,
+        channel,
+        &scope.vision_id,
+        &id,
+        arg(args, "accept")?,
+        &note,
+    )?;
+    Ok(json!({"answered": true}))
 }
 
 /// A chief's word to a worker: a task or a redirect (which wake it), or a pause or a resume.

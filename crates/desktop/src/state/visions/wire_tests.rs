@@ -97,6 +97,25 @@ fn every_entry() -> Vec<ChannelEntry> {
                 },
             ],
         },
+        ChannelEntry::RequestSent {
+            vision_id: "v1".into(),
+            request_id: "r1".into(),
+            channel_id: "c2".into(),
+            ask: "Fix the export".into(),
+        },
+        ChannelEntry::RequestReceived {
+            vision_id: "v2".into(),
+            request_id: "r2".into(),
+            channel_id: "c2".into(),
+            ask: "Add a flag".into(),
+        },
+        ChannelEntry::RequestAnswered {
+            vision_id: "v1".into(),
+            request_id: "r2".into(),
+            channel_id: "c2".into(),
+            accepted: true,
+            note: "On it".into(),
+        },
     ];
     for (at, entry) in entries.iter().enumerate() {
         let place = match entry {
@@ -108,6 +127,9 @@ fn every_entry() -> Vec<ChannelEntry> {
             ChannelEntry::Notice { .. } => 5,
             ChannelEntry::Proposal { .. } => 6,
             ChannelEntry::ProposalApplied { .. } => 7,
+            ChannelEntry::RequestSent { .. } => 8,
+            ChannelEntry::RequestReceived { .. } => 9,
+            ChannelEntry::RequestAnswered { .. } => 10,
         };
         assert_eq!(place, at);
     }
@@ -168,6 +190,7 @@ fn every_notice_kind() -> Vec<NoticeKind> {
         NoticeKind::Unpriced,
         NoticeKind::TeamsArrived,
         NoticeKind::TeamPaused,
+        NoticeKind::RequestCap,
     ];
     for (at, kind) in kinds.iter().enumerate() {
         let place = match kind {
@@ -182,6 +205,7 @@ fn every_notice_kind() -> Vec<NoticeKind> {
             NoticeKind::Unpriced => 8,
             NoticeKind::TeamsArrived => 9,
             NoticeKind::TeamPaused => 10,
+            NoticeKind::RequestCap => 11,
         };
         assert_eq!(place, at);
     }

@@ -53,6 +53,10 @@ pub enum WakeReason {
     Tasked(u64),
     /// One of its workers wrote to it (a report, a pushback): the worker and the seq in its log.
     WorkerNote(String, u64),
+    /// Another channel's chief asked it for something (the request id).
+    Request(String),
+    /// The channel it asked answered (the request id).
+    RequestAnswered(String),
 }
 
 impl WakeReason {
@@ -69,13 +73,19 @@ impl WakeReason {
             WakeReason::BudgetStopped(..) => "budget_stopped",
             WakeReason::Tasked(_) => "tasked",
             WakeReason::WorkerNote(..) => "worker_note",
+            WakeReason::Request(_) => "request",
+            WakeReason::RequestAnswered(_) => "request_answered",
         }
     }
 
     /// The owned chat it is about, if any.
     fn thread(&self) -> Option<&str> {
         match self {
-            WakeReason::Mentioned | WakeReason::Tasked(_) | WakeReason::WorkerNote(..) => None,
+            WakeReason::Mentioned
+            | WakeReason::Tasked(_)
+            | WakeReason::WorkerNote(..)
+            | WakeReason::Request(_)
+            | WakeReason::RequestAnswered(_) => None,
             WakeReason::ChatFinished(thread)
             | WakeReason::ChatFailed(thread)
             | WakeReason::ChatStopped(thread)
@@ -98,6 +108,9 @@ impl WakeReason {
             }
             WakeReason::Tasked(seq) => format!("{} {seq}", self.label()),
             WakeReason::WorkerNote(worker, seq) => format!("{} {worker} {seq}", self.label()),
+            WakeReason::Request(id) | WakeReason::RequestAnswered(id) => {
+                format!("{} {id}", self.label())
+            }
             other => format!("{} {}", other.label(), other.thread().unwrap_or_default()),
         }
     }

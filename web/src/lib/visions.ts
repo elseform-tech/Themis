@@ -98,7 +98,8 @@ export type NoticeKind =
   | "budget_unknown"
   | "unpriced"
   | "teams_arrived"
-  | "team_paused";
+  | "team_paused"
+  | "request_cap";
 
 /** What the admin would set up (Rust `Proposal`): new channels and Visions by name, and changes
  *  to existing ones (a change names one `vision` or one `channel`). */
@@ -137,7 +138,10 @@ export type ChannelEntry =
   | { type: "passed_on"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string }
   | { type: "notice"; kind: NoticeKind; vision_id?: string; thread_id?: string; unpriced_requests?: number; reason?: string }
   | { type: "proposal"; vision_id: string; proposal_id: string; proposal: Proposal }
-  | { type: "proposal_applied"; vision_id: string; proposal_id: string; items: SetUpItem[] };
+  | { type: "proposal_applied"; vision_id: string; proposal_id: string; items: SetUpItem[] }
+  | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; ask: string }
+  | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; ask: string }
+  | { type: "request_answered"; vision_id: string; request_id: string; channel_id: string; accepted: boolean; note: string };
 
 export interface ChannelLine {
   seq: number;
@@ -182,6 +186,8 @@ export function pauseVision(visionId: string, paused: boolean): Promise<VisionPr
 export function deleteVision(visionId: string): Promise<void> { return invoke("delete_vision", { visionId }); }
 export function listChannels(projectRoot: string): Promise<ChannelInfo[]> { return invoke("list_channels", { projectRoot }); }
 export function saveChannel(channel: ChannelDraft, revision: string | null): Promise<ChannelInfo> { return invoke("save_channel", { channel, revision }); }
+/** The person accepts or declines a request from another channel their chief left open. */
+export function answerChannelRequest(requestId: string, accept: boolean): Promise<void> { return invoke("answer_channel_request", { requestId, accept }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
 export function getChannelPage(channelId: string, beforeSeq: number | null = null, maxBytes: number | null = null): Promise<ChannelPage> { return invoke("get_channel_page", { channelId, beforeSeq, maxBytes }); }
 /** The post's seq and the Visions whose run will answer it (started, or queued behind one going). */
@@ -207,6 +213,9 @@ export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Ex
   notice: ["kind", "vision_id", "thread_id", "unpriced_requests", "reason"],
   proposal: ["vision_id", "proposal_id", "proposal"],
   proposal_applied: ["vision_id", "proposal_id", "items"],
+  request_sent: ["vision_id", "request_id", "channel_id", "ask"],
+  request_received: ["vision_id", "request_id", "channel_id", "ask"],
+  request_answered: ["vision_id", "request_id", "channel_id", "accepted", "note"],
 };
 
 /** Every value of the unions the app reads, for the same check. */
@@ -218,5 +227,5 @@ export const APPROVAL_MODES: Record<ApprovalModeName, true> = { custom: true, au
 export const NOTICE_KINDS: Record<NoticeKind, true> = {
   stopped: true, paused: true, resumed: true, budget_reached: true, chat_failed: true,
   handed_back: true, sandbox_unavailable: true, budget_unknown: true, unpriced: true,
-  teams_arrived: true, team_paused: true,
+  teams_arrived: true, team_paused: true, request_cap: true,
 };

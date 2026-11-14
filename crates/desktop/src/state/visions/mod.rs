@@ -34,6 +34,9 @@ mod drive_tests;
 mod listing_tests;
 #[cfg(test)]
 mod marks_tests;
+mod requests;
+#[cfg(test)]
+mod requests_tests;
 #[cfg(test)]
 mod souls_tests;
 #[cfg(test)]
@@ -238,6 +241,8 @@ pub enum NoticeKind {
     /// The team woke `visions.max_wakes` times since the person last wrote: nothing more starts
     /// in the channel until they do. Posted once per stop.
     TeamPaused,
+    /// The channel sent `visions.requests_per_day` requests today; more are refused. Once a day.
+    RequestCap,
 }
 
 /// One entry in a channel's log.
@@ -303,6 +308,29 @@ pub enum ChannelEntry {
         vision_id: String,
         proposal_id: String,
         items: Vec<SetUp>,
+    },
+    /// This channel's chief (`vision_id`) asked `channel_id` for something.
+    RequestSent {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        ask: String,
+    },
+    /// `channel_id`'s chief (`vision_id`) asked this channel for something.
+    RequestReceived {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        ask: String,
+    },
+    /// A request between this channel and `channel_id` was answered, by the receiving chief
+    /// (`vision_id`) or, with an empty `vision_id`, by the person.
+    RequestAnswered {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        accepted: bool,
+        note: String,
     },
 }
 

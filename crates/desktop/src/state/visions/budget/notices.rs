@@ -162,6 +162,14 @@ impl AppState {
 
     /// Takes `key` for today when no notice of it was given or is being given, and no failed
     /// post waits to be tried again.
+    pub(in crate::state::visions) fn visions_notice_claim_today(&self, key: &str) -> bool {
+        let claimed = self.visions_notice_claim(key);
+        if claimed {
+            self.visions_notices_save(key, NoticeKind::RequestCap);
+        }
+        claimed
+    }
+
     fn visions_notice_claim(&self, key: &str) -> bool {
         let day = today();
         let dir = self.inner.visions_dir.clone();

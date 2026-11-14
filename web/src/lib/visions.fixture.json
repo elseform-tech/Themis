@@ -72,7 +72,8 @@
     "budget_unknown",
     "unpriced",
     "teams_arrived",
-    "team_paused"
+    "team_paused",
+    "request_cap"
   ],
   "lines": [
     {
@@ -214,6 +215,40 @@
             "action": "changed"
           }
         ]
+      }
+    },
+    {
+      "seq": 9,
+      "at_ms": 9000,
+      "entry": {
+        "type": "request_sent",
+        "vision_id": "v1",
+        "request_id": "r1",
+        "channel_id": "c2",
+        "ask": "Fix the export"
+      }
+    },
+    {
+      "seq": 10,
+      "at_ms": 10000,
+      "entry": {
+        "type": "request_received",
+        "vision_id": "v2",
+        "request_id": "r2",
+        "channel_id": "c2",
+        "ask": "Add a flag"
+      }
+    },
+    {
+      "seq": 11,
+      "at_ms": 11000,
+      "entry": {
+        "type": "request_answered",
+        "vision_id": "v1",
+        "request_id": "r2",
+        "channel_id": "c2",
+        "accepted": true,
+        "note": "On it"
       }
     }
   ],

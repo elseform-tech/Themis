@@ -24,6 +24,7 @@ pub(super) const METHODS: &[&str] = &[
     "post_channel_message",
     "list_channel_threads",
     "hand_back_thread",
+    "answer_channel_request",
     "get_visions_settings",
     "update_visions_settings",
 ];
@@ -197,6 +198,11 @@ async fn chat_method(
             let channel_id: String = arg(args, "channelId")?;
             let threads = state.visions_channel_threads(&channel_id).await?;
             Ok((to_value(threads)?, None))
+        }
+        "answer_channel_request" => {
+            let request_id: String = arg(args, "requestId")?;
+            state.visions_person_answers_request(sink, &request_id, arg(args, "accept")?)?;
+            Ok((Value::Null, change(None, None)))
         }
         "hand_back_thread" => {
             let owner = state.visions_hand_back(sink, &arg::<String>(args, "threadId")?)?;

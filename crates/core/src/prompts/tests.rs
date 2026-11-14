@@ -329,6 +329,12 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (AGENT_CLI_HELD_BY_PERSON, "agent-cli-held-by-person", &[]),
     (AGENT_CLI_VISION_PAUSED, "agent-cli-vision-paused", &[]),
     (AGENT_CLI_NOT_YOUR_TEAM, "agent-cli-not-your-team", &[]),
+    (AGENT_CLI_REQUEST_CAP, "agent-cli-request-cap", &["cap"]),
+    (
+        AGENT_CLI_REQUEST_ABOVE_LEVEL,
+        "agent-cli-request-above-level",
+        &[],
+    ),
     (
         AGENT_CLI_VISION_OVER_BUDGET,
         "agent-cli-vision-over-budget",

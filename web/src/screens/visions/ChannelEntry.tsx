@@ -48,7 +48,19 @@ export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: st
     case "unpriced": return say(`${entry.unpriced_requests ?? "Some"} of today's requests had no price`);
     case "teams_arrived": return say("Each channel now has a chief of staff: its first Vision. The others work for the chief");
     case "team_paused": return say(`${vision}'s team paused after many turns in a row. Write here to carry on`);
+    case "request_cap": return say(`${vision} reached today's limit of requests to other channels`);
   }
+}
+
+type RequestEntry = Extract<Entry, { type: "request_sent" | "request_received" | "request_answered" }>;
+
+/** One line of a request between channels, from this channel's side. */
+function requestText(state: AppState, entry: RequestEntry): string {
+  const other = `# ${Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel"}`;
+  if (entry.type === "request_sent") return `Asked ${other} to ${entry.ask}`;
+  if (entry.type === "request_received") return `${other} asked us to ${entry.ask}`;
+  const verdict = entry.accepted ? "accepted" : "declined";
+  return entry.note ? `Request ${verdict}: ${entry.note}` : `Request ${verdict}.`;
 }
 
 /** Whether a notice's chat is one of the channel's work chats, the Vision's own chat, or neither. */
@@ -97,6 +109,9 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
     return entry.type === "proposal"
       ? <ProposalCard entry={entry} applied={proposalLine(state, channelId, "proposal_applied", entry.proposal_id)} onOpenChannel={open} />
       : <ProposalCard applied={entry} onOpenChannel={open} />;
+  }
+  if (entry.type === "request_sent" || entry.type === "request_received" || entry.type === "request_answered") {
+    return <p className="themis-channel-text">{requestText(state, entry)}</p>;
   }
   const vision = visionById(state, entry.vision_id)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : channelChat(state, channelId, entry.thread_id)?.title ?? "a chat";
