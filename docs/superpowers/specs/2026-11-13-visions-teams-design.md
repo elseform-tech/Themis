@@ -6,9 +6,27 @@ Date: 2026-11-13 · Branch: `codex/visions-design` · Design only. Builds on the
 Order (owner, 2026-11-13): Phase 1 is finished and merged first; this is built on top as Phase 2,
 with the one-time conversion of existing channels described below.
 
-Design canvas: https://claude.ai/artifact/JZgtvsAnv7iiDQUmE7zjqq (version 81 and later), boards
-"Visions redesign: a team channel", "the chief's expressions, then the whole cast in 3D",
-"# administration, Atlas builds a team and adds a worker" and "the chief of staff's profile".
+## Design source: the canvas boards the owner approved
+
+The look and layout of Phase 2 are the four boards on the design canvas
+https://claude.ai/artifact/JZgtvsAnv7iiDQUmE7zjqq, as approved by the owner on 2026-11-13
+("i love them absolutely", canvas version 81). They are the binding reference for every screen
+below: where this text and a board differ, the board wins, and any change to a board's design
+needs the owner's yes on the canvas first. Each board is drawn in the four skies (Morning, Noon,
+Night, Classic), and every Phase 2 UI task checks its screen against its board in all four.
+
+| Board (file on the canvas) | What it fixes |
+|---|---|
+| "Visions redesign: a team channel" (`project/TeamChannel.dc.html`) | The sidebar (project switcher, Channels with `# administration` first, each channel with its chief's small cloud, no Visions list); the channel header (the chief in 3D about 130 px with glow and ground shadow, the channel name in the display font and gradient, "<chief>, Chief of staff" with a state dot and label, one chip per worker with its cloud, accessory, name, role and status dot, the open worker's chip outlined); the channel (only the person and the chief, the one-line note for a request between channels, the chief passing on pushback in its own words, the three-dot thinking row, "Message <chief>" with the mode shield and no @mention button); the read-only worker thread panel ("<worker> with <chief>", the exchange, a link to the work chat, Close, no reply box). Each sky shows a different chief state. |
+| "Visions redesign: the chief's expressions, then the whole cast in 3D" (`project/ChiefMoods.dc.html`) | The chief's six expressions with mouth and accessory and their state dots (Calm, Working, Done, Needs you, Stuck, Paused) and their motion; the cast in 3D, each with its own colour, body shape and accessory (Juno, Atlas, Rook, Wren, Pip, Sol, Tess). |
+| "Visions redesign: # administration, Atlas builds a team and adds a worker" (`project/AdminChannel.dc.html`) | `# administration` pinned first and open; Atlas's 3D header with the crown and no worker chips; a team proposal card (channel pill, chief and workers with their accessories and roles, Autonomy and Budget, "Created" once applied); a new-worker card from a chief's request; the channel's badge while it waits; "Message Atlas" with no mode shield. |
+| "Visions redesign: the chief of staff's profile" (`project/ChiefProfile.dc.html`) | The profile opened from the header with "← # channel": the chief in 3D, name in the display font, "Chief of staff, # channel", state, Pause; Soul (the text box and "Open soul.md"); Model (picker with the provider mark); the channel's Autonomy and Budget (today's spend of the daily limit); Team (each worker's cloud with accessory, name, role, model, status; no add button); Routines (each with its schedule, instruction, on/off switch and Remove). |
+
+The canvas's older Visions boards (`Visions`, `VisionProfile`, `VisionChannel`, `VisionsHq` and the
+rest) show Phase 1 and are superseded wherever they conflict with these four. Two agreed details
+are in this text but not drawn: the one-line channel note when a chief adds a routine, and the
+"Stuck" and "Paused" states inside a channel header; they follow the drawn patterns (the request
+note's style, the expressions board).
 
 ## Why
 
