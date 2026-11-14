@@ -305,3 +305,73 @@ fn the_person_can_pause_and_remove_any_routine() {
     t.state.visions_delete_routine(&saved.id).unwrap();
     assert!(t.state.visions_routines(&t.channel).is_empty());
 }
+
+/// What waited in quiet hours stays waiting when the queue drains while it is still quiet.
+#[test]
+fn a_queue_drain_in_quiet_hours_starts_nothing() {
+    let t = team(Autonomy::Most);
+    t.state.set_scheduler_sink(sink());
+    runtime(
+        &t,
+        r#"{"visions": {"quiet_hours": {"start": "22:00", "end": "07:00"}}}"#,
+    );
+    t.state.visions_set_clock_for_test(Some(at(16, 23, 0)));
+    assert_eq!(
+        t.state
+            .visions_wake(&sink(), &t.channel, &t.rook, WakeReason::Tasked(1)),
+        "quiet"
+    );
+    t.state
+        .visions_wake_waiting_in(&sink(), &t.channel, &t.juno);
+    assert!(!wakes(&t.state)
+        .iter()
+        .any(|(v, _, outcome)| v == &t.rook && outcome == "started"));
+}
+
+/// Routines belong to the channel: a new chief changes and removes its predecessor's.
+#[test]
+fn a_new_chief_keeps_the_channels_routines() {
+    let t = team(Autonomy::Most);
+    let saved = t
+        .state
+        .visions_save_routine(
+            &t.channel,
+            &t.juno,
+            routine(&t, &[1], "09:00", "Summarise"),
+            at(16, 8, 0),
+        )
+        .unwrap();
+    let mut channel = t.state.channel_get(&t.channel).unwrap();
+    channel.chief = t.rook.clone();
+    let revision = channel.revision.clone();
+    t.state.channel_save(channel, Some(&revision)).unwrap();
+    let changed = Routine {
+        instruction: "Summarise briefly".into(),
+        ..saved.clone()
+    };
+    t.state
+        .visions_save_routine(&t.channel, &t.rook, changed, at(16, 8, 0))
+        .unwrap();
+    t.state
+        .visions_chief_deletes_routine(&t.channel, &saved.id)
+        .unwrap();
+    assert!(t.state.visions_routines(&t.channel).is_empty());
+}
+
+/// A deleted channel's routines go with it.
+#[test]
+fn a_deleted_channels_routines_are_dropped() {
+    let t = team(Autonomy::Most);
+    t.state
+        .visions_save_routine(
+            &t.channel,
+            &t.juno,
+            routine(&t, &[1], "09:00", "Summarise"),
+            at(16, 8, 0),
+        )
+        .unwrap();
+    t.state.visions_delete_channel(&sink(), &t.channel).unwrap();
+    t.state.visions_routines_tick(&sink(), at(16, 9, 0));
+    let stored = std::fs::read_to_string(t.state.inner.visions_dir.join("routines.json")).unwrap();
+    assert!(!stored.contains("Summarise"), "{stored}");
+}

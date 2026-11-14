@@ -170,14 +170,18 @@ impl AppState {
             let _guard = self.visions_cache();
             let mut routines = self.routines_load()?;
             if changed {
+                // Routines belong to the channel: its chief now changes any of them.
                 let at = routines
                     .iter()
-                    .position(|old| old.id == routine.id && old.chief == chief)
-                    .ok_or("That routine is not yours to change")?;
+                    .position(|old| old.id == routine.id && old.channel_id == channel_id)
+                    .ok_or("That routine is not this channel's")?;
                 routine.enabled = routines[at].enabled;
                 routines[at] = routine.clone();
             } else {
-                let mine = routines.iter().filter(|old| old.chief == chief).count();
+                let mine = routines
+                    .iter()
+                    .filter(|old| old.channel_id == channel_id)
+                    .count();
                 if mine >= config.routines_per_chief as usize {
                     return Err(format!(
                         "A chief keeps at most {} routines; remove one first",
@@ -209,13 +213,13 @@ impl AppState {
         self.routines_edit(routine_id, None, |_| None)
     }
 
-    /// A chief removes one of its own routines.
+    /// A chief removes one of its channel's routines.
     pub(crate) fn visions_chief_deletes_routine(
         &self,
-        chief: &str,
+        channel_id: &str,
         routine_id: &str,
     ) -> Result<(), String> {
-        self.routines_edit(routine_id, Some(chief), |_| None)
+        self.routines_edit(routine_id, Some(channel_id), |_| None)
     }
 
     /// The person turns a routine on or off (on again: next due from now).
@@ -230,18 +234,20 @@ impl AppState {
         })
     }
 
-    /// Applies `edit` to one routine (`None` removes it), when `chief` (if given) owns it.
+    /// Applies `edit` to one routine (`None` removes it), when it is `channel`'s (if given).
     fn routines_edit(
         &self,
         routine_id: &str,
-        chief: Option<&str>,
+        channel: Option<&str>,
         edit: impl FnOnce(Routine) -> Option<Routine>,
     ) -> Result<(), String> {
         let _guard = self.visions_cache();
         let mut routines = self.routines_load()?;
         let at = routines
             .iter()
-            .position(|r| r.id == routine_id && chief.is_none_or(|chief| r.chief == chief))
+            .position(|r| {
+                r.id == routine_id && channel.is_none_or(|channel| r.channel_id == channel)
+            })
             .ok_or("No such routine")?;
         if let Some(edited) = edit(routines.remove(at)) {
             routines.insert(at, edited);
@@ -261,11 +267,21 @@ impl AppState {
             self.visions_wake_waiting();
         }
         let now_ms = now.timestamp_millis();
+        // Read before the lock is taken (reading them takes it).
+        let channels: std::collections::HashSet<String> = self
+            .channels_all()
+            .into_iter()
+            .map(|channel| channel.id)
+            .collect();
         let due: Vec<Routine> = {
             let _guard = self.visions_cache();
             let Ok(mut routines) = self.routines_load() else {
                 return;
             };
+            // A deleted channel's routines go with it.
+            let before = routines.len();
+            routines.retain(|routine| channels.contains(&routine.channel_id));
+            let pruned = routines.len() != before;
             let mut due = Vec::new();
             for routine in routines.iter_mut() {
                 if routine.enabled && routine.next_due_ms <= now_ms {
@@ -273,7 +289,7 @@ impl AppState {
                     routine.next_due_ms = routine.schedule.next_after(now);
                 }
             }
-            if due.is_empty() || self.routines_save(&routines).is_err() {
+            if (due.is_empty() && !pruned) || self.routines_save(&routines).is_err() {
                 return;
             }
             due

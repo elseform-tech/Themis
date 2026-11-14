@@ -360,7 +360,7 @@ fn routine(
         }
         _ => {
             let id: String = arg(args, "routineId")?;
-            state.visions_chief_deletes_routine(&scope.vision_id, &id)?;
+            state.visions_chief_deletes_routine(channel, &id)?;
             Ok(Value::Null)
         }
     }

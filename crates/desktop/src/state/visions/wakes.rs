@@ -462,14 +462,12 @@ impl AppState {
         }
     }
 
-    /// Whether quiet hours hold this wake now: they hold what agents start, never the person's
-    /// own doing (a post, a hand back, a stop).
+    /// Whether quiet hours hold this wake now: they hold what agents start, and a drain of what
+    /// waited (no reason), never the person's own doing (a post, a hand back, a stop).
     fn visions_held_by_quiet(&self, reason: Option<&WakeReason>) -> bool {
         let persons = matches!(
             reason,
-            None | Some(
-                WakeReason::Mentioned | WakeReason::HandedBack(_) | WakeReason::ChatStopped(_)
-            )
+            Some(WakeReason::Mentioned | WakeReason::HandedBack(_) | WakeReason::ChatStopped(_))
         );
         !persons && self.visions_quiet_at(self.visions_now())
     }
