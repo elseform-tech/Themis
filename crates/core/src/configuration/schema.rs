@@ -26,7 +26,6 @@ pub fn schema() -> Value {
         "max_wakes":{"type":"integer","minimum":1,"maximum":MAX_VISION_WAKES,"default":6,"description":"Most wakes on one thing before a Vision hands back to you. A project or run layer may only lower it."},
         "requests_per_day":{"type":"integer","minimum":1,"maximum":MAX_VISION_REQUESTS,"default":10,"description":"Most requests a channel's chief may send other channels in a day. A project or run layer may only lower it."},
         "routines_per_chief":{"type":"integer","minimum":1,"maximum":MAX_VISION_ROUTINES,"default":10,"description":"Most routines one chief may keep. A project or run layer may only lower it."},
-        "routine_min_minutes":{"type":"integer","minimum":60,"maximum":1440,"default":60,"description":"Shortest time between two runs of one routine, in minutes. A project or run layer may only raise it."},
         "quiet_hours":{"type":["object","null"],"default":null,"additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"end":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"}},"description":"Local hours when routines and other agent-started wakes wait; your messages always go through. Your own runtime.jsonc only."}
     }});
     schema

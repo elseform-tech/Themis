@@ -561,60 +561,89 @@ prints the full effective view. See [sandbox](sandbox.md) for details and limits
 
 ## Visions
 
-A Vision is an agent that runs Themis chats for you. You give it work in a channel; it starts
-chats in the channel's project, answers what they ask within the limits you set, and tells you
-in the channel what it did. Visions are not on all the time: one wakes when you mention it
-(`@Name`, or just write in a channel with one Vision), when a chat it started finishes, stops
-or needs something, and then goes quiet again.
+A Vision is an agent that runs Themis chats for you. Visions work in teams: every channel has one
+**chief of staff** you talk to, and **workers** with roles (for example "tests" or "docs") who do
+the work by running chats in the channel's project. You never manage the workers. You write to
+the chief; it gives the workers their tasks, checks what they did, answers what their chats ask
+within the limits you set, and tells you in the channel what happened. A chief never runs a chat
+itself, and a worker never writes to you. Visions are not on all the time: a post from you wakes
+only the chief (there are no `@mentions`), and the team wakes again when a chat finishes, stops or
+needs something, when another channel asks for help, or when a routine is due.
 
 Visions run only where the app can confine them: on macOS, and on Linux 6.7 or later (Landlock
 ABI 4). On Windows and older Linux they cannot run yet; each wake says so in the channel, and
 Settings › Visions shows "Visions can't run on this computer".
 
 **Where.** The cloud in the rail opens Visions. Its face shows the most urgent state of your
-Visions and a badge counts what waits on you. The sidebar lists **Channels** (`# hq` first) and
-**Visions**, each with a + to make a new one: a channel has a name, a project and members; a
-Vision has a name, a shape and a colour. A channel is one project's conversation with its
-Visions: write in the box at the bottom (Enter sends, Shift+Enter starts a new line, `@` picks a
-member). A Vision's chats show in the channel as links with their state; open one to read it,
-and Stop ends a running one. Vision messages are formatted like any chat reply.
+Visions and a badge counts what waits on you. The sidebar lists **Channels** (`# administration`
+first), each with its chief's small cloud, and **+ New channel**; there is no separate list of
+Visions. A channel is one project's conversation with its chief: write in the box at the bottom
+(Enter sends, Shift+Enter starts a new line). The channel header shows the chief in 3D (a still
+picture when 3D is not available) with its state, and a chip for each worker with its role and
+status. Click a chip to read that worker's thread with the chief, read-only: what it was asked,
+what it reported or pushed back on, and links to its work chats; Close shuts it. A worker's chats
+show in the channel as links with their state; open one to read it, and Stop ends a running one.
 
-**While a Vision is working** the channel shows "<Name> is thinking" with three moving dots from
-the moment your post wakes it until its run ends, for at least about a second. Its posts appear
-one after another.
+**While the chief is working** the channel shows "<Name> is thinking" with three moving dots from
+the moment your post wakes it until its run ends, for at least about a second.
 
-**# hq and Atlas.** Every project has `# hq`, where Atlas (the cloud with a crown) sets things
-up for you. Ask for "a channel that ships releases": Atlas replies with a card listing the new
-channel and Vision, then waits. Answer yes and it sets them up; answer anything else and it asks
-again or changes the plan. Atlas never drives chats. `# hq` and Atlas cannot be deleted, and
-Atlas is `# hq`'s only member.
+**# administration and Atlas.** Every project has `# administration`, pinned first, where Atlas
+(the cloud with a crown) sets teams up for you. Ask for "a team that ships releases": Atlas
+replies with a card showing the new channel, its chief and workers with their roles, the
+autonomy and the daily budget, then waits. A clear yes sets all of it up at once; anything else
+and it asks again or changes the plan. To add a worker to an existing channel, ask Atlas (or let
+that channel's chief ask: the request shows here as a new-worker card). Atlas never drives chats,
+and neither it nor `# administration` can be deleted. A card is never set up above Settings, and
+never in Custom mode: choose that yourself afterwards.
 
-**Your chats stay yours.** A chat a Vision started shows in the ordinary chat list with a small
-cloud in the Vision's colour. In the chat, what the Vision wrote (sent, queued or steered in)
-carries its name; your own messages look as always. If you write in it, you **took over**: the Vision stops steering
-it, and a **Hand back to <Name>** button (in the channel and above the chat) gives it back. If
-you stop it, it stays stopped until you write in it or hand it back. A Vision cannot answer
-a held chat's questions, and it never switches on a hook or a command-based MCP server.
+**Your chats stay yours.** A chat a worker started shows in the ordinary chat list with a small
+cloud in the worker's colour. In the chat, what the worker wrote (sent, queued or steered in)
+carries its name; your own messages look as always. If you write in it, you **took over**: the
+worker stops steering it, and a **Hand back to <Name>** button (in the channel and above the
+chat) gives it back. If you stop it, it stays stopped until you write in it or hand it back. A
+worker cannot answer a held chat's questions, and no Vision ever switches on a hook or a
+command-based MCP server. A question the team may not decide, or leaves unanswered, reaches you in
+the channel under the chief's name.
 
-**What a Vision decides.** Settings › Visions sets, for all Visions, how much they decide
-without asking you when a chat they run asks something; see [Settings reference](#settings-reference).
-A Vision never gets more than the Settings level (its own override can only lower it). Approvals
-for actions stay yours: a Vision's chats use the channel's **Approval mode**, which only you set.
+**What a team decides.** Settings › Visions sets, for all Visions, the most a team decides without
+asking you when a chat asks something; see [Settings reference](#settings-reference). Each
+channel has its own level and daily budget, never above Settings (the chief's profile shows and
+sets them). Approvals for actions stay yours: a team's chats use the channel's **Approval
+mode**, which only you set.
 
-**A Vision's profile** opens when you click it in the Visions list (Atlas: from `# hq`'s
-details): Pause or Resume, Delete (its work chats become ordinary chats), its **Model**
-(**Default model**, the one Settings › Models sets, unless you pick one), **Autonomy** ("Same as
-Settings (...)", or a lower level only), its own **Daily budget** ($0 to $100; empty means none),
-its **Soul** (the pencil edits it) and the channels it works in. Atlas has only Model, Daily
-budget and Pause. Click a channel's name in its header for its **details**: the topic, the
-**Approval mode** its Visions' chats run in, its members (Visions only) and Delete (its Visions'
-chats stop and become ordinary chats). `# hq` has no approval mode, member controls or Delete.
+**Requests between channels.** A chief may ask another channel of the same project for help
+(a limited number of requests a day for each channel, 10 unless you change it). The other chief
+may take it on only when its channel's level lets it decide the scope of its work; otherwise a
+line in the channel asks you: **Take it on** or **Decline**. Declining is always the chief's to
+do. Each channel shows the request as one line.
 
-**Budget.** Visions have a daily budget, all together (Settings › Visions) and one per Vision.
-When one is reached, the Vision starts nothing, its running chats stop and the channel says so
-once; raising the cap lets its next wake run. When the app cannot tell what has been spent (for
-example no price list is loaded yet) Visions start nothing and the channel says why. The cost
-is an estimate from the usage recorded for the chats a Vision owns.
+**Routines.** A chief can keep routines in its channel: pick weekdays, a time of day and an
+instruction ("every weekday at 9, check the failing tests"). It tells you in the channel when it
+adds or changes one, and only when the channel's level lets it decide undoable steps; otherwise
+it asks. A routine that was missed (the app was closed) runs once when it can, not once for every
+missed time. On the chief's profile you switch a routine off or **Remove** it. To keep the team
+quiet at night, set `visions.quiet_hours` in your `runtime.jsonc` (for example 22:00 to 07:00):
+routines and everything the agents start themselves wait until it ends. Your own messages, Hand
+back and Stop always go through.
+
+**The chief's profile** opens from the channel header: its **Soul** (a text box saved in place, at
+most 16 KiB, where you write who it is and how it works; only chiefs and Atlas have one), its
+**Model** (**Default model**, the one Settings › Models sets, unless you pick one), the channel's
+**Autonomy** and **Budget** with today's spend, the **Team** (each worker, role, model and status)
+and the **Routines**. Pause stops the chief; a worker can be paused by its chief in that channel
+only. Click a channel's name in its header for its **details**: the topic, the **Approval mode**
+its chats run in, its members and Delete (the team's chats stop and become ordinary chats);
+deleting one Vision is in the member rows. `# administration` has no approval mode, member
+controls or Delete.
+
+**Budget.** Visions have a daily budget, all together (Settings › Visions) and one for each
+channel's whole team (chief and workers). When the channel's is reached, its team starts nothing,
+its running chats stop and the chief says so in the channel once a day; raising the cap lets the
+next wake run. A team also stops after a number of runs in a row without a message from you
+(`visions.max_wakes`, 6 unless you change it): the channel says so once, and your next message
+carries on. When the app cannot tell what has been spent (for example no price list is loaded
+yet) Visions start nothing and the channel says why. The cost is an estimate from the usage
+recorded for the chats a team owns.
 
 Visions follow `visions.*` in your `runtime.jsonc` ([configuration](configuration.md)), and
 `themis` can drive them ([Visions methods](configuration.md#visions-methods)).
@@ -760,7 +789,7 @@ totals for 400 days, in `usage.sqlite3` in the app data folder (numbers and ids 
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
-**Visions** sets how much Visions decide on their own when a chat they drive asks something
+**Visions** sets the most a team may decide on its own when a chat it drives asks something
 (on a computer that cannot confine Visions, one line at the top says they can't run there):
 a slider from **Always ask** through **Routine decisions** (the default), **Most decisions** and
 **Nearly all decisions** to **Custom**. Each kind of decision shows **Decides** or **Asks you**,
@@ -769,10 +798,10 @@ from, so nothing changes until you edit a row. "Anything that leaves this comput
 "Spending past the budget" show a lock and **Always asks you**, Custom included, and approvals
 stay yours at every level. A drag saves once, where you let go. Below are the **Daily budget,
 all Visions** ($0.10 to $100 a day for every Vision together) and **Pause all Visions**, which
-pauses every Vision but Atlas, so you can still ask Atlas in `# hq`; it shows on when all of
+pauses every Vision but Atlas, so you can still ask Atlas in `# administration`; it shows on when all of
 them are paused. It saves to the `visions` block of your `runtime.jsonc`, one field at a time;
 a change made to the file since the page loaded is refused and the page shows the file again.
-A Vision's own settings are in its profile, see [Visions](#visions).
+A channel's own level and budget (never above these) and a chief's soul are on the chief's profile, see [Visions](#visions).
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.

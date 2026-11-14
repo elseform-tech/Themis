@@ -166,9 +166,6 @@
     "requests_per_day": 10,
     // Most routines one chief may keep (1-50). A project file may only lower it.
     "routines_per_chief": 10,
-    // Shortest time between two runs of one routine, in minutes (60-1440). A project file may
-    // only raise it.
-    "routine_min_minutes": 60,
     // Hours when routines and other agent-started wakes wait, e.g. {"start": "22:00", "end":
     // "07:00"} (your messages always go through). Your own file only.
     "quiet_hours": null,
