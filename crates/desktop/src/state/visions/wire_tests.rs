@@ -47,6 +47,7 @@ fn every_entry() -> Vec<ChannelEntry> {
         ChannelEntry::Vision {
             vision_id: "v1".into(),
             text: "On it.".into(),
+            tasked: Vec::new(),
         },
         ChannelEntry::ChatStarted {
             vision_id: "v1".into(),

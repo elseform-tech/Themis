@@ -163,6 +163,7 @@ async fn apply_is_refused_without_a_person_message_after_the_proposal() {
             ChannelEntry::Vision {
                 vision_id: ADMIN.into(),
                 text: "Shall I?".into(),
+                tasked: Vec::new(),
             },
         )
         .unwrap();

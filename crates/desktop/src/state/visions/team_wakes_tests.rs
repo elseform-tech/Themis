@@ -224,3 +224,33 @@ fn a_question_no_agent_may_answer_reaches_the_person_anyway() {
     assert_eq!(passed.len(), 1, "{passed:?}");
     assert_eq!(passed[0]["vision_id"], s.wren.as_str());
 }
+
+/// The chief's message after a turn names the workers it tasked in that turn, each once, in the
+/// order it first tasked them; a turn that tasks no one names none.
+#[test]
+fn a_chief_message_lists_the_workers_it_tasked() {
+    let s = setup(true);
+    let chief = Owner {
+        thread_id: "wren-chat".into(),
+        vision_id: s.wren.clone(),
+        channel_id: s.channel.clone(),
+        kind: OwnedKind::VisionChat,
+        hold: Hold::None,
+    };
+    for worker in [&s.ada, &"bo".to_owned(), &s.ada] {
+        s.state.visions_tasked(&s.channel, &s.wren, worker);
+    }
+    s.state.visions_post_reply(&chief, &finished());
+    s.state.visions_post_reply(&chief, &finished());
+    let said: Vec<serde_json::Value> = s
+        .state
+        .channel_page(&s.channel, None, 1 << 20)
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|line| serde_json::to_value(line.entry).unwrap())
+        .filter(|entry| entry["type"] == "vision")
+        .collect();
+    assert_eq!(said[0]["tasked"], serde_json::json!([s.ada, "bo"]), "{said:?}");
+    assert!(said[1].get("tasked").is_none(), "{said:?}");
+}

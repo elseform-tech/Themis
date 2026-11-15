@@ -578,15 +578,31 @@ impl AppState {
         )
     }
 
+    /// `chief` tasked `worker` in its running turn: its message at the turn's end names it.
+    pub(crate) fn visions_tasked(&self, channel_id: &str, chief: &str, worker: &str) {
+        let mut cache = self.visions_cache();
+        let list = cache
+            .tasked
+            .entry((channel_id.to_owned(), chief.to_owned()))
+            .or_default();
+        if !list.iter().any(|each| each == worker) {
+            list.push(worker.to_owned());
+        }
+    }
+
     /// Posts a Vision chat's final reply in its channel as the Vision's message (a failure, not
     /// a stop, as a notice). Returns whether the run finished.
     pub(super) fn visions_post_reply(&self, owner: &Owner, terminal: &ThreadEvent) -> bool {
+        // The workers it tasked belong to this turn's message, or to none when the turn failed.
+        let key = (owner.channel_id.clone(), owner.vision_id.clone());
+        let tasked = self.visions_cache().tasked.remove(&key).unwrap_or_default();
         let entry = match terminal {
             ThreadEvent::Finished { result, .. } | ThreadEvent::Incomplete { result, .. } => {
                 let text = bounded(result.trim());
                 (!text.is_empty()).then(|| ChannelEntry::Vision {
                     vision_id: owner.vision_id.clone(),
                     text,
+                    tasked,
                 })
             }
             ThreadEvent::Failed { error }

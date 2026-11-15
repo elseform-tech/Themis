@@ -402,6 +402,9 @@ async fn to_worker(
     };
     let wakes = matches!(entry, TeamEntry::Task { .. } | TeamEntry::Redirect { .. });
     let seq = state.team_append(channel, &worker, entry)?;
+    if method == "assign_task" {
+        state.visions_tasked(channel, &scope.vision_id, &worker);
+    }
     if wakes {
         state.visions_wake(sink, channel, &worker, WakeReason::Tasked(seq));
     }

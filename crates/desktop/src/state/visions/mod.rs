@@ -259,6 +259,10 @@ pub enum ChannelEntry {
     Vision {
         vision_id: String,
         text: String,
+        /// The workers this chief tasked in the turn this message ends, each once, in first-task
+        /// order; the app shows each one's thread under the message.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tasked: Vec<String>,
     },
     ChatStarted {
         vision_id: String,
@@ -399,6 +403,8 @@ pub(crate) struct VisionsCache {
     /// Channels the person wrote in (or handed back, or stopped) during these quiet hours: the
     /// work that follows there goes on; cleared when quiet hours end.
     awake_in_quiet: std::collections::HashSet<String>,
+    /// The workers each chief (channel, chief) tasked in its running turn, for its message.
+    tasked: HashMap<(String, String), Vec<String>>,
     /// Why the move to teams could not run (file, event), for the log; it is tried again.
     conversion_failed: Option<(&'static str, &'static str)>,
 }
