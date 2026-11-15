@@ -158,24 +158,20 @@ fn a_request_wakes_the_other_chief_and_shows_in_both_channels() {
                 && reason == "request"),
         "{woke:?}"
     );
-}
-
-/// At Settings' default level a chief takes another channel's request on itself: the person
-/// is not asked to Take it on.
-#[test]
-fn a_chief_takes_a_request_on_without_the_person() {
-    let c = company();
-    let (release, juno) = &c.release;
-    let (api, tess) = &c.api;
-    let asked = c
-        .state
-        .visions_request(&sink(), release, juno, api, "Fix the export date format")
-        .unwrap();
-    c.state
-        .visions_answer_request(&sink(), api, tess, &asked, true, "on it")
-        .unwrap();
-    let answered = lines(&c.state, release);
-    assert_eq!(of_type(&answered, "request_answered")[0]["accepted"], true);
+    // Above Always ask the request is taken on at once: both channels say so, and the asking
+    // chief is not woken for it (it hears when the result comes).
+    for channel in [release, api] {
+        let all = lines(&c.state, channel);
+        let taken = of_type(&all, "request_answered");
+        assert_eq!(taken.len(), 1, "{all:?}");
+        assert_eq!(taken[0]["accepted"], true);
+    }
+    assert!(
+        !woke
+            .iter()
+            .any(|(vision, _, reason, _)| vision == juno && reason == "request_answered"),
+        "{woke:?}"
+    );
 }
 
 #[test]
@@ -322,6 +318,11 @@ fn the_persons_accept_wakes_the_receiving_chief() {
     let c = company();
     let (release, juno) = &c.release;
     let (api, tess) = &c.api;
+    // At Always ask the request waits on the person.
+    let mut channel = c.state.channel_get(api).unwrap();
+    channel.autonomy = Some(Autonomy::Ask);
+    let revision = channel.revision.clone();
+    c.state.channel_save(channel, Some(&revision)).unwrap();
     let id = c
         .state
         .visions_request(&sink(), release, juno, api, "Ship it")
@@ -416,13 +417,7 @@ fn a_result_reaches_the_asking_channel() {
         .state
         .visions_request(&sink(), release, juno, api, "Sketch a layout")
         .unwrap();
-    let early = c
-        .state
-        .visions_send_result(&sink(), api, tess, &asked, "too soon");
-    assert!(early.is_err(), "not taken on yet");
-    c.state
-        .visions_answer_request(&sink(), api, tess, &asked, true, "on it")
-        .unwrap();
+    // Taken on when it arrived: the receiving chief only sends the result.
     assert!(c
         .state
         .visions_send_result(&sink(), release, juno, &asked, "wrong side")
@@ -446,7 +441,7 @@ fn a_result_reaches_the_asking_channel() {
         woke.iter()
             .filter(|(vision, _, reason, _)| vision == juno && reason == "request_answered")
             .count()
-            >= 2
+            >= 1
     );
     assert!(c
         .state

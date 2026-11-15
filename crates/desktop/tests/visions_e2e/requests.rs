@@ -8,7 +8,8 @@ async fn a_request_goes_out_and_its_answer_comes_back() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let (juno, release) = fx.chief_and_channel("Juno", "release");
-    let (tess, api) = fx.chief_and_channel("Tess", "api");
+    // At Always ask the request waits for an answer (above it, it is taken on at once).
+    let (tess, api) = fx.chief_and_channel_in("Tess", "api", "custom");
     let (_, asker) = fx.vision_run(&juno, &release).await;
     let (_, helper) = fx.vision_run(&tess, &api).await;
     let asked = fx.agent_call_ok(
@@ -60,7 +61,8 @@ async fn a_paused_chief_may_still_decline_but_not_accept() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let (juno, release) = fx.chief_and_channel("Juno", "release");
-    let (tess, api) = fx.chief_and_channel("Tess", "api");
+    // At Always ask a request waits for an answer.
+    let (tess, api) = fx.chief_and_channel_in("Tess", "api", "custom");
     let (_, asker) = fx.vision_run(&juno, &release).await;
     let (_, helper) = fx.vision_run(&tess, &api).await;
     let ask = |what: &str| {
@@ -114,8 +116,8 @@ async fn a_chief_asks_another_channel_by_its_name() {
     fx.shut_down().await;
 }
 
-/// The whole exchange through each chief's `themis`: asked, taken on by the receiving chief
-/// itself (no person), and its result back in the asking channel; a worker sends no result.
+/// The whole exchange through each chief's `themis`: asked, taken on for the receiving channel
+/// at once (no person), and its result back in the asking channel; a worker sends no result.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_result_reaches_the_asking_channel() {
     let _turn = ONE_SERVER.lock().await;
@@ -130,11 +132,13 @@ async fn a_result_reaches_the_asking_channel() {
         json!({"channel": "design", "ask": "a layout for the recipe page"}),
     );
     let id = asked["requestId"].as_str().unwrap().to_owned();
-    fx.agent_call_ok(
-        &helper,
-        "answer_request",
-        json!({"requestId": id, "accept": true, "note": "on it"}),
-    );
+    // Taken on when it arrived: both channels say so before any result.
+    for channel in [&release, &design] {
+        assert!(fx
+            .entries(channel)
+            .iter()
+            .any(|e| e["type"] == "request_answered" && e["accepted"] == true));
+    }
     fx.agent_call_ok(
         &helper,
         "send_result",

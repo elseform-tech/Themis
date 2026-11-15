@@ -619,8 +619,8 @@ worker's thread and the chief does not repeat it; a permission question shows in
 
 **Requests between channels.** A chief may ask another channel of the same project for help
 (a limited number of requests a day for each channel, 10 unless you change it). The other chief
-takes it on itself, or declines it with a reason; only at **Always ask** does a line in its
-channel ask you: **Take it on** or **Decline**. When the work is done, that chief sends the
+takes it on as soon as it arrives (both channels say so at once); only at **Always ask** does a
+line in its channel ask you: **Take it on** or **Decline**. When the work is done, that chief sends the
 result back, and the asking channel shows it ("# design sent: …"). Each channel shows the
 request as one line.
 

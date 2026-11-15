@@ -97,12 +97,13 @@ impl AppState {
         let now = now_ms();
         let kept: Vec<&Request> = requests
             .iter()
+            // A request to or from a deleted channel goes with it, answered or not.
+            .filter(|request| {
+                channels.contains(&request.to_channel) && channels.contains(&request.from_channel)
+            })
             .filter(|request| match &request.answered {
                 Some(answered) => answered.at_ms >= now - KEEP_ANSWERED_DAYS * DAY_MS,
-                None => {
-                    channels.contains(&request.to_channel)
-                        && request.at_ms >= now - KEEP_OPEN_DAYS * DAY_MS
-                }
+                None => request.at_ms >= now - KEEP_OPEN_DAYS * DAY_MS,
             })
             .collect();
         write_store(&self.inner.visions_dir, REQUESTS_FILE, &kept)
@@ -155,6 +156,20 @@ impl AppState {
             "request_sent",
             json!({"request_id": id, "from_channel": from.id, "to_channel": to.id}),
         );
+        // Above Always ask, the request is the receiving team's work at once: both channels say
+        // so now, and its chief wakes to do it and send the result back.
+        if self.visions_takes_requests(&to) {
+            let open = |request: &Request| request.answered.is_none();
+            let taken = self.request_update(&to.id, &id, open, |request| {
+                request.answered = Some(Answered {
+                    accepted: true,
+                    at_ms: now_ms(),
+                });
+            });
+            if let Ok(request) = taken {
+                self.post_answered(&request, &to.chief, true, "");
+            }
+        }
         // The receiving channel pays for its chief's wake, whatever it answers.
         self.visions_wake(sink, &to.id, &to.chief, WakeReason::Request(id.clone()));
         Ok(id)
@@ -347,6 +362,36 @@ impl AppState {
         Ok(request)
     }
 
+    /// Whether `channel`'s team takes another channel's requests on itself: above Always ask
+    /// (its level leaves it some decision); at Always ask the person answers.
+    fn visions_takes_requests(&self, channel: &super::Channel) -> bool {
+        self.runtime_configuration(Some(&channel.project_root), None)
+            .is_ok_and(|resolved| {
+                !super::vision_decisions(channel, &resolved.config.visions).is_empty()
+            })
+    }
+
+    /// Shows an answer to `request` in both its channels (`by` answered; empty for the person).
+    fn post_answered(&self, request: &Request, by: &str, accept: bool, note: &str) {
+        for (here, there) in [
+            (&request.to_channel, &request.from_channel),
+            (&request.from_channel, &request.to_channel),
+        ] {
+            let entry = ChannelEntry::RequestAnswered {
+                vision_id: by.to_owned(),
+                request_id: request.id.clone(),
+                channel_id: there.clone(),
+                accepted: accept,
+                note: note.to_owned(),
+            };
+            let _ = self.channel_post(here, by, entry);
+        }
+        self.visions_note(
+            "request_answered",
+            json!({"request_id": request.id, "accepted": accept, "by_person": by.is_empty()}),
+        );
+    }
+
     /// Records the answer once, shows it in both channels and wakes the asking chief.
     fn answer_request(
         &self,
@@ -368,23 +413,7 @@ impl AppState {
                 at_ms: now_ms(),
             });
         })?;
-        for (here, there) in [
-            (&request.to_channel, &request.from_channel),
-            (&request.from_channel, &request.to_channel),
-        ] {
-            let entry = ChannelEntry::RequestAnswered {
-                vision_id: by.to_owned(),
-                request_id: request.id.clone(),
-                channel_id: there.clone(),
-                accepted: accept,
-                note: note.to_owned(),
-            };
-            let _ = self.channel_post(here, by, entry);
-        }
-        self.visions_note(
-            "request_answered",
-            json!({"request_id": request.id, "accepted": accept, "by_person": by.is_empty()}),
-        );
+        self.post_answered(&request, by, accept, note);
         let answered = || WakeReason::RequestAnswered(request.id.clone());
         if let Some(asker) = self.channel_get(&request.from_channel).map(|c| c.chief) {
             self.visions_wake(sink, &request.from_channel, &asker, answered());
