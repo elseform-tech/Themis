@@ -182,3 +182,22 @@ Owner: approvals should stop destructive actions, not legitimate work; answered 
 - New chief call `send_result {requestId, text}` (receiving chief, accepted request, once; 1–2000 characters): posts `request_result {request_id, channel_id, vision_id, text}` in the asking channel (announced), wakes the asking chief with `request_answered RID` (the entry shows the result), and a short line in the receiving channel. Grant: CHIEF_CALLS; refused for workers and for requests not accepted by this channel.
 - Web: the asking channel shows a result card: "# design sent:" with the text.
 - Tests: `a_result_reaches_the_asking_channel` (e2e through themis), grant test, web `a_request_result_shows_in_the_asking_channel`.
+
+---
+
+## Addendum 2026-11-15 17:41 (owner, board TwoLevels v92 approved): two levels; requests need no answer
+
+### The model (binding for both lanes)
+- `themis_core::visions::Level` replaces `Autonomy`: `AutoReview` (serde `"auto_review"`, default) and `FullAccess` (`"full_access"`). No compatibility: `visions.autonomy`, `visions.custom`, the channel's `autonomy`, `custom` and `full_access` are removed outright.
+- `VisionsConfig.level: Level` (`visions.level` in runtime.jsonc; a project layer may only set `auto_review`). It is the level of new channels and of channels with none.
+- `Channel.level: Option<Level>` (absent = Settings'). Only the person sets it (`save_channel`); an admin proposal has no level field (team/hire/new channel specs lose `autonomy`).
+- Approval mode of a team's chats: `FullAccess` → YOLO, `AutoReview` → Auto (`channel_approval_mode`); held chats keep the stricter rule of 2a47b399.
+- What a chief decides itself, at both levels: every `Decision` except the locked ones, `delete`, `external` and `spend`, which always go to the person (`vision_decisions` returns all minus those three). The routine `undoable` gate and the request gate read this.
+- `update_visions_settings` edits `level` in place of `autonomy`/`custom`.
+
+### Requests need no answer
+- `answer_request` (chief) and `answer_channel_request` (person) are removed, with their grants, refusal prompts that only they used, web buttons and docs. A request is taken on when it arrives if the receiving chief can run (not paused, budget known and not reached); otherwise it stays open and is taken on at the receiving chief's next run start. Its result comes back with `send_result`; a chief that cannot do it says why in `send_result`.
+
+### Lanes
+- **Server lane** (Rust core + desktop, prompts, eval script `evals/visions/run.py` `--level`, docs configuration.md / user-guide.md / live-verification.md, fixture `web/src/lib/visions.fixture.json` with `wire_tests.rs`): the model above and requests.
+- **Web lane** (`web/src`): Settings › Visions level switch with the three locked rows (board TwoLevels Morning frame), channel details Level switch (Night frame; the AutonomyField and the Full access switch go), chief profile Level (Classic frame), types (`level` on settings and channels; `autonomy`, `custom`, `full_access` gone), request lines without Take it on / Decline, `autonomy.ts` table removed. It must not edit the fixture JSON (the server lane owns it).
