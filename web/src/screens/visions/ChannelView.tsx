@@ -3,39 +3,15 @@
 // chats stay in their threads with the chief), the approvals the chief's own chats wait on (a
 // worker's wait in its thread), the chief's thinking row and the composer.
 import { useLayoutEffect, useRef, useState } from "react";
-import { ApprovalBox } from "../../components/approval/ApprovalBox";
-import { approveAction } from "../../lib/tauri";
-import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
 import { type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
-import { describeError, toast, useApp } from "../../state/store";
-import { AskFirstBox } from "../AskFirstBox";
+import { useApp } from "../../state/store";
+import { ChannelApproval } from "./ChannelApproval";
 import { ChannelComposer } from "./ChannelComposer";
 import { ChannelEntryView, visionById } from "./ChannelEntry";
 import { ChannelTop, ChiefWelcome } from "./ChannelTop";
-import { channelChat } from "./ChatLink";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { reducedMotion, useArrivals, useShownAMoment, useWakes } from "./thinking";
-
-/** An approval one of the channel's chats waits on, with whose chat asks. */
-export function ChannelApproval({ request, channelId }: { request: ApprovalRequest; channelId: string }) {
-  const { state, dispatch } = useApp();
-  const chat = channelChat(state, channelId, request.thread_id);
-  const vision = visionById(state, chat?.owner.vision_id)?.name ?? "A Vision";
-  const done = () => dispatch({ type: "approval/dequeued", approvalId: request.approval_id });
-  async function decide(decision: ApprovalDecision) {
-    try { await approveAction(request.thread_id, request.approval_id, decision); done(); }
-    catch (error) { toast(dispatch, `Approval failed: ${describeError(error)}`, "danger"); }
-  }
-  return (
-    <li className="themis-channel-approval">
-      <p className="themis-question-from">{vision}'s chat <b>{chat?.title}</b> asks</p>
-      {request.ask_first
-        ? <AskFirstBox request={request} onDecided={done} onError={error => toast(dispatch, `Could not answer: ${describeError(error)}`, "danger")} />
-        : <ApprovalBox request={request} open onDecide={decision => void decide(decision)} />}
-    </li>
-  );
-}
 
 /** The Visions whose run in this channel is going (also after a post of their own). */
 function runningHere(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): string[] {

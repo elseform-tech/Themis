@@ -28,6 +28,7 @@ vi.mock("../../lib/tauri", async importOriginal => ({
   listGoModels: vi.fn(async () => [{ id: "longcat-2.5", effort_levels: [] }]),
   listModelProviders: vi.fn(async () => []),
   stopThread: vi.fn(async () => undefined),
+  approveAction: vi.fn(async () => undefined),
   getEffectivePermissions: vi.fn(async () => ({})),
   onVisionsChanged: vi.fn(async (cb: (change: { channel_id?: string }) => void) => { changeListeners.push(cb); return () => undefined; }),
 }));
@@ -263,9 +264,42 @@ describe("Team screens", () => {
     ];
     await show(() => <TeamThread channel={release} workerId="rook" log={log} />);
     const items = within(screen.getByRole("complementary", { name: "Rook with Juno" })).getAllByRole("listitem");
-    expect(items[0]).toHaveTextContent(/^Juno.*Fix the date rollover in the parser\.$/);
-    expect(items[1]).toHaveTextContent(/^Rook.*Changing the parser breaks old exports\.$/);
+    // The chief's lines on the right, the worker's on the left, each with "name · time" above.
+    expect(items[0]).toHaveTextContent(/^Juno · \S+.*Fix the date rollover in the parser\.$/);
+    expect(items[0]).toHaveClass("is-mine");
+    expect(items[0]!.querySelector(".themis-bubble")).toBeTruthy();
+    expect(items[1]).toHaveTextContent(/^Rook · \S+.*Changing the parser breaks old exports\.$/);
+    expect(items[1]).toHaveClass("is-theirs");
     expect(items[2]).toHaveTextContent("Juno paused Rook");
+  });
+
+  it("the_thread_header_shows_both_clouds", async () => {
+    await show(() => <TeamThread channel={release} workerId="rook" log={[]} />);
+    const thread = screen.getByRole("complementary", { name: "Rook with Juno" });
+    const head = thread.querySelector(".themis-visions-panel-head")!;
+    expect(head).toHaveTextContent(/^Rook with Juno$/);
+    const clouds = head.querySelectorAll("svg.themis-cloud");
+    expect([...clouds].map(cloud => cloud.getAttribute("width"))).toEqual(["22", "16"]);
+  });
+
+  it("a_workers_approval_waits_in_its_thread", async () => {
+    const waiting = fixture({ open: { ...initialState.visions.open, channelId: "c1", panel: { kind: "worker", visionId: "rook" } } });
+    waiting.approvals = [{ thread_id: "w1", approval_id: "a1", tool: "write_file", summary: "Write src/date.rs", risk: "write" } as AppState["approvals"][number]];
+    await show(app, waiting);
+    const thread = screen.getByRole("complementary", { name: "Rook with Juno" });
+    const box = within(thread).getByRole("region", { name: "Approval needed" });
+    // Under the log, above the chat link at the foot.
+    const link = within(thread).getByRole("button", { name: /^Open Fix the date rollover/ });
+    expect(box.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => { fireEvent.click(within(box).getByRole("button", { name: "Allow once" })); });
+    expect(tauri.approveAction).toHaveBeenCalledWith("w1", "a1", "once");
+    expect(within(thread).queryByRole("region", { name: "Approval needed" })).toBeNull();
+    // Another worker's approval is not in Rook's thread.
+    cleanup();
+    const wrens = fixture({ open: { ...initialState.visions.open, channelId: "c1", panel: { kind: "worker", visionId: "rook" } }, chats: { c1: [owned("w1", "Fix the date rollover", "rook", true), owned("w2", "Review", "wren", true)] } });
+    wrens.approvals = [{ thread_id: "w2", approval_id: "a2", tool: "write_file", summary: "Write notes.md", risk: "write" } as AppState["approvals"][number]];
+    await show(app, wrens);
+    expect(within(screen.getByRole("complementary", { name: "Rook with Juno" })).queryByRole("region", { name: "Approval needed" })).toBeNull();
   });
 
   it("the_chief_profile_edits_soul_and_routines", async () => {

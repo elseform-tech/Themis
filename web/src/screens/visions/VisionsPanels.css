@@ -54,8 +54,14 @@
 
 /* A worker's thread with its chief (board TeamChannel): read-only, its work chats at the foot. */
 .themis-team-with { color: var(--themis-text-2); font-weight: 400; }
-.themis-team-thread-log { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
-.themis-team-thread-entry { display: flex; gap: 10px; }
+.themis-team-thread-title { display: flex; align-items: center; gap: 6px; }
+.themis-team-thread-log { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.themis-team-thread-entry { display: flex; flex-direction: column; gap: 3px; }
+.themis-team-thread-entry.is-mine { align-items: flex-end; }
+.themis-team-thread-entry.is-theirs { align-items: flex-start; }
+.themis-team-thread-entry .themis-bubble { max-width: 86%; padding: 8px 11px; font-size: 12.5px; }
+.themis-team-thread-who { margin: 0 4px; color: var(--themis-text-2); font-size: 11px; }
+.themis-team-thread-approvals { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .themis-team-thread-note { display: flex; align-items: center; gap: 8px; color: var(--themis-text-2); font-size: 12px; }
 .themis-team-thread-note .themis-channel-time { margin-left: 0; }
 .themis-team-thread-chats { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
