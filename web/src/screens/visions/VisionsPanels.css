@@ -56,6 +56,7 @@
 .themis-profile-hero .themis-chief-scene { background: none; }
 .themis-profile-who { position: relative; display: flex; flex-direction: column; gap: 8px; }
 .themis-profile-name { margin: 0; font: 700 36px/1 var(--themis-font-display); letter-spacing: -.02em; }
+.themis-profile-status { display: flex; align-items: center; gap: 6px; }
 .themis-profile-pause { align-self: flex-start; margin-top: 4px; }
 .themis-profile-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; }
 .themis-profile-column { display: flex; flex-direction: column; gap: 18px; min-width: 0; }

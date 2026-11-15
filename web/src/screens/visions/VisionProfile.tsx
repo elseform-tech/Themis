@@ -131,7 +131,7 @@ function ProfileHero({ vision, channel, onError }: { vision: VisionInfo; channel
     <ChiefScene look={lookOf(vision)} expression={expression} name={vision.name} size={150} />
     <div className="themis-profile-who">
       <h1 className="themis-team-gradient themis-profile-name">{vision.name}</h1>
-      <div className="themis-team-chief">
+      <div className="themis-profile-status">
         <span>{job}{channel ? `, # ${channel.name}` : ""}</span>
         <span className="themis-state-dot" style={{ background: status.dot }} aria-hidden="true" />
         <span>{EXPRESSION_LABEL[expression]}</span>
