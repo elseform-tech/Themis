@@ -109,19 +109,39 @@ function requestWords(entry: Exclude<TeamNoteEntry, { type: "routine_set" }>, pi
   }
 }
 
-function TeamNote({ line }: { line: ChannelLine }) {
+/** Another channel's `# name` pill, which opens it. */
+function ChannelPill({ channelId }: { channelId: string }) {
   const { state, dispatch } = useApp();
+  const name = Object.values(state.visions.channels).flat().find(channel => channel.id === channelId)?.name ?? "another channel";
+  return <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId })}># {name}</button>;
+}
+
+function TeamNote({ line }: { line: ChannelLine }) {
   const entry = teamNote(line.entry);
   if (!entry) return null;
   let body: ReactNode;
   if (entry.type === "routine_set") {
     body = <>{CLOCK}<span>{entry.changed ? "Changed a routine" : "Added a routine"}: <b>{scheduleWords(entry.schedule)}</b>, {entry.instruction}</span></>;
   } else {
-    const name = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel";
-    const pill = <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId: entry.channel_id })}># {name}</button>;
-    body = <>{ARROW}{requestWords(entry, pill)}</>;
+    body = <>{ARROW}{requestWords(entry, <ChannelPill channelId={entry.channel_id} />)}</>;
   }
   return <li className="themis-team-note"><div className="themis-team-note-line" role="note">{body}<time className="themis-channel-time">{clock(line.at_ms)}</time></div></li>;
+}
+
+/** What another channel did with a request this one sent: its pill, then the text as Markdown. */
+function RequestResult({ line }: { line: ChannelLine }) {
+  const { state } = useApp();
+  const entry = line.entry as Extract<Entry, { type: "request_result" }>;
+  const name = Object.values(state.visions.channels).flat().find(channel => channel.id === entry.channel_id)?.name ?? "another channel";
+  return (
+    <li className="themis-channel-entry is-theirs">
+      <article className="themis-question-card themis-request-result" aria-label={`# ${name} sent`}>
+        <p className="themis-question-from"><ChannelPill channelId={entry.channel_id} /> sent:</p>
+        <div className="themis-channel-markdown"><ResponseBody text={entry.text} /></div>
+      </article>
+      <time className="themis-channel-time">{clock(line.at_ms)}</time>
+    </li>
+  );
 }
 
 /** The loaded line of the proposal or setup `proposalId` of type `type`, if any. */
@@ -134,7 +154,7 @@ function proposalLine<T extends "proposal" | "proposal_applied">(state: AppState
 function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: string; onReply: (text: string) => void }): ReactNode {
   const { state, dispatch } = useApp();
   const { entry } = line;
-  if (entry.type === "person" || entry.type === "vision" || entry.type === "notice" || isTeamNoteEntry(entry)) return null;
+  if (entry.type === "person" || entry.type === "vision" || entry.type === "notice" || entry.type === "request_result" || isTeamNoteEntry(entry)) return null;
   if (entry.type === "proposal" || entry.type === "proposal_applied") {
     const open = (id: string) => dispatch({ type: "visions/open", channelId: id });
     return entry.type === "proposal"
@@ -162,6 +182,7 @@ export function ChannelEntryView({ line, channel, fresh, onReply }: { line: Chan
   const channelId = channel.id;
   if (TEAM_NOTE_TYPES.has(entry.type)) return <TeamNote line={line} />;
   if (entry.type === "notice") return <Notice line={line} channelId={channelId} />;
+  if (entry.type === "request_result") return <RequestResult line={line} />;
   // A setup shows on its proposal's card while that is loaded.
   if (entry.type === "proposal_applied" && proposalLine(state, channelId, "proposal", entry.proposal_id)) return null;
   const names = state.visions.list.map(vision => vision.name);

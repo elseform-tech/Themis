@@ -420,6 +420,17 @@ describe("Team screens", () => {
     expect(screen.getByRole("region", { name: "# api" })).toBeTruthy();
   });
 
+  it("a_request_result_shows_in_the_asking_channel", async () => {
+    const result = [{ type: "request_result", request_id: "q1", channel_id: "c2", vision_id: "sol", text: "The export now writes **ISO** dates." }] as ChannelEntry[];
+    await show(app, fixture({ lines: { c1: result.map((entry, index) => ({ seq: 40 + index, at_ms: 0, entry })) } }));
+    const card = within(screen.getByRole("region", { name: "# release" })).getByRole("article", { name: "# api sent" });
+    expect(card).toHaveTextContent(/^# api sent:The export now writes ISO dates\./);
+    // The text shows as Markdown, like a chief's message.
+    expect(within(card).getByText("ISO").tagName).toBe("STRONG");
+    fireEvent.click(within(card).getByRole("button", { name: "# api" }));
+    expect(screen.getByRole("region", { name: "# api" })).toBeTruthy();
+  });
+
   it("a request waiting on the person can be taken on or declined from its line", async () => {
     const waiting = [{ type: "request_received", vision_id: "tess", request_id: "q9", channel_id: "c2", ask: "review the changelog" }] as unknown as ChannelEntry[];
     await show(app, fixture({ lines: { c1: waiting.map((entry, index) => ({ seq: 30 + index, at_ms: 0, entry })) } }));

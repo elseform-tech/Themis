@@ -137,6 +137,7 @@
 .themis-question-foot { display: flex; align-items: center; gap: 12px; }
 .themis-question-why { flex: 1; margin: 0; color: var(--themis-text-2); font-size: 11px; }
 .themis-question-text { margin: 0; font-weight: 600; }
+.themis-request-result .themis-mention { border: 0; font: inherit; cursor: pointer; }
 .themis-question-folded { max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The admin's proposal in # administration: its items, then what it set up. */
 .themis-proposal-items { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }

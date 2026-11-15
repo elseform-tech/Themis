@@ -43,7 +43,7 @@ function fromTheChief(channel: ChannelInfo, line: ChannelLine): boolean {
   const { entry } = line;
   const id = "vision_id" in entry ? entry.vision_id : undefined;
   if (!channel.chief || !id || id === channel.chief || !channel.members.includes(id)) return true;
-  return entry.type === "passed_on" || (entry.type === "notice" && PERSON_ACTS.has(entry.kind));
+  return entry.type === "passed_on" || entry.type === "request_result" || (entry.type === "notice" && PERSON_ACTS.has(entry.kind));
 }
 
 /** The chats here whose approvals wait in the channel: all but the workers' (theirs wait in the

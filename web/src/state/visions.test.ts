@@ -342,7 +342,7 @@ describe("wire fixture", () => {
     const seen = new Set(lines.map(l => l.entry.type));
     expect([...seen].sort()).toEqual(Object.keys(ENTRY_FIELDS).sort());
     for (const { entry } of lines) {
-      expect(Object.keys(entry).sort(), entry.type).toEqual(["type", ...ENTRY_FIELDS[entry.type]].sort());
+      expect(Object.keys(entry).sort(), entry.type).toEqual(["type", ...ENTRY_FIELDS[entry.type as keyof typeof ENTRY_FIELDS]].sort());
     }
     expect([...fixture.notice_kinds].sort()).toEqual(Object.keys(NOTICE_KINDS).sort());
   });
