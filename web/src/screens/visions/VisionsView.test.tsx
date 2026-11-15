@@ -240,8 +240,9 @@ describe("Visions view", () => {
     expect(card).toHaveTextContent("Which heading?");
     fireEvent.click(await within(card).findByRole("button", { name: "Changed (recommended)" }));
     await waitFor(() => expect(tauri.answerQuestion).toHaveBeenCalledWith("w2", "q1", "Changed"));
-    await waitFor(() => expect(card).toHaveTextContent("You answered: Changed"));
-    expect(within(card).queryByRole("button", { name: "Fixed" })).toBeNull();
+    // Answered, the card folds to one line.
+    await waitFor(() => expect(within(view).queryByRole("group", { name: /^Wren's chat/ })).toBeNull());
+    expect(within(view).getAllByRole("note").some(note => note.textContent?.startsWith("Answered “Changed”: Which heading?"))).toBe(true);
   });
 
   it("a passed question can be answered in the person's own words", async () => {
@@ -252,11 +253,26 @@ describe("Visions view", () => {
     await waitFor(() => expect(tauri.answerQuestion).toHaveBeenCalledWith("w2", "q1", "Under Fixed"));
   });
 
-  it("a question someone already answered shows as answered", async () => {
-    render(<Harness initial={fixture({ mainView: "visions", visions: { ...fixture().visions, questions: { w2: [] }, open: { channelId: "c1", chatId: null, plainThreadId: null } } })} />);
-    const card = screen.getByRole("group", { name: "Wren's chat Draft the notes asks you" });
-    expect(card).toHaveTextContent("Answered");
-    expect(within(card).queryByLabelText("Answer in your own words")).toBeNull();
+  it("an_answered_question_folds_to_one_line", async () => {
+    const blocked = (questionId: string, action: string): ChannelEntry => ({ type: "passed_on", vision_id: "rook", thread_id: "w2", question_id: questionId, decision: "external", question: `Auto mode blocked an action: ${action}. Why: it reaches outside the project. What should the agent do?` });
+    const lines = [...entries, blocked("q2", "touch omelette.md"), blocked("q3", "rm -rf build")].map((entry, seq) => ({ seq, at_ms: Date.UTC(2026, 10, 12, 9, seq), entry }));
+    const answers = { w2: { q1: "Changed", q2: "Allow once", q3: "Skip it" } };
+    render(<Harness initial={fixture({ mainView: "visions", visions: { ...fixture().visions, lines: { c1: lines }, questions: { w2: [] }, answers, open: { channelId: "c1", chatId: null, plainThreadId: null } } })} />);
+    const view = screen.getByRole("region", { name: "# release" });
+    expect(within(view).queryByRole("group", { name: /^Wren's chat/ })).toBeNull();
+    const folded = within(view).getAllByRole("note").map(note => note.textContent);
+    expect(folded).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^Answered “Changed”: Which heading\?/),
+      expect.stringMatching(/^Allowed once: touch omelette\.md/),
+      expect.stringMatching(/^Skipped: rm -rf build/),
+    ]));
+  });
+
+  it("a_question_its_chat_dropped_is_not_shown", async () => {
+    render(<Harness initial={fixture({ mainView: "visions", visions: { ...fixture().visions, questions: { w2: [] }, answers: { w2: {} }, open: { channelId: "c1", chatId: null, plainThreadId: null } } })} />);
+    const view = screen.getByRole("region", { name: "# release" });
+    expect(within(view).queryByRole("group", { name: /^Wren's chat/ })).toBeNull();
+    expect(view).not.toHaveTextContent("Which heading?");
   });
 
   // w1 is Rook's, and Rook is this channel's chief: a chief's own chat's approval stays in the

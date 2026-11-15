@@ -8,7 +8,7 @@ import { ResponseBody } from "../../components/ResponseBody";
 import { describeError, toast, useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
 import { ProposalCard } from "./ProposalCard";
-import { AnsweredCard, PassedOnCard } from "./QuestionCards";
+import { AnsweredCard, PassedOnLine } from "./QuestionCards";
 import { isTeamNoteEntry, scheduleWords, TEAM_NOTE_TYPES, teamNote, type TeamNoteEntry } from "./team";
 import { ThreadIndicators } from "./ThreadIndicator";
 
@@ -141,14 +141,19 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
       ? <ProposalCard entry={entry} applied={proposalLine(state, channelId, "proposal_applied", entry.proposal_id)} onOpenChannel={open} />
       : <ProposalCard applied={entry} onOpenChannel={open} />;
   }
+  if (entry.type === "passed_on") return null;
+  const { vision, title } = chatNames(state, channelId, entry);
+  if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
+  return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`About “${entry.question}”: `)} />;
+}
+
+/** The Vision whose chat a line is about, and that chat's title. */
+function chatNames(state: AppState, channelId: string, entry: Extract<Entry, { type: "chat_started" | "answered" | "passed_on" }>): { vision: string; title: string } {
   const chat = channelChat(state, channelId, entry.thread_id);
   // A question passed on still names whose chat asks.
   const asker = entry.type === "passed_on" ? chat?.owner.vision_id ?? entry.vision_id : entry.vision_id;
   const vision = visionById(state, asker)?.name ?? "A Vision";
-  const title = entry.type === "chat_started" ? entry.title : chat?.title ?? "a chat";
-  if (entry.type === "chat_started") return <><p className="themis-channel-text">Started a chat.</p><ChatLink channelId={channelId} threadId={entry.thread_id} title={title} visionName={vision} /></>;
-  if (entry.type === "answered") return <AnsweredCard entry={entry} vision={vision} title={title} onReply={() => onReply(`About “${entry.question}”: `)} />;
-  return <PassedOnCard entry={entry} vision={vision} title={title} />;
+  return { vision, title: entry.type === "chat_started" ? entry.title : chat?.title ?? "a chat" };
 }
 
 export function ChannelEntryView({ line, channel, fresh, onReply }: { line: ChannelLine; channel: ChannelInfo; fresh: boolean; onReply: (text: string) => void }) {
@@ -167,6 +172,10 @@ export function ChannelEntryView({ line, channel, fresh, onReply }: { line: Chan
     </li>;
   }
   const className = `themis-channel-entry is-theirs${fresh ? " is-fresh" : ""}`;
+  if (entry.type === "passed_on") {
+    const { vision, title } = chatNames(state, channelId, entry);
+    return <PassedOnLine entry={entry} vision={vision} title={title} className={className} time={<time className="themis-channel-time">{clock(line.at_ms)}</time>} />;
+  }
   // A Vision writes Markdown like any chat reply, and it shows the same way.
   if (entry.type === "vision") {
     return <li className={className}>

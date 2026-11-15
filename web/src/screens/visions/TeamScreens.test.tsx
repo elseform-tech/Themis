@@ -136,7 +136,8 @@ describe("Team screens", () => {
   });
 
   it("the_channel_shows_only_the_person_and_the_chief", async () => {
-    await show();
+    // Both passed-on questions are still open in their chat.
+    await show(app, fixture({ questions: { w9: ["q0", "q1"] } }));
     const channel = screen.getByRole("region", { name: "# release" });
     // No header: the channel's name small at the top left, the chief floating at the top middle.
     expect(within(channel).queryByRole("banner")).toBeNull();
