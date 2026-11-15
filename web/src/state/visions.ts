@@ -38,6 +38,9 @@ export interface VisionsState {
   chats: Record<string, OwnedChat[]>;
   /** The open questions of the chats a window passed questions on from, by chat, as last read. */
   questions: Record<string, string[]>;
+  /** The answered questions of the same chats, by chat and question id: what was answered. A
+   *  question in neither, in a chat that was read, is gone from its chat unanswered. */
+  answers: Record<string, Record<string, string>>;
   /** What the Visions view shows: a channel (null is `# administration`), and a chat opened from it. */
   open: VisionsOpen;
 }
@@ -54,12 +57,12 @@ export interface VisionsOpen {
 
 export type VisionsPanel = { kind: "vision"; visionId: string } | { kind: "worker"; visionId: string } | { kind: "channel" } | null;
 
-export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {}, open: { channelId: null, chatId: null, plainThreadId: null } };
+export const initialVisions: VisionsState = { list: [], channels: {}, lines: {}, nextBefore: {}, keep: {}, chats: {}, questions: {}, answers: {}, open: { channelId: null, chatId: null, plainThreadId: null } };
 
 export type VisionsAction =
   | { type: "visions/loaded"; visions?: VisionInfo[]; projectRoot?: string; channels?: ChannelInfo[] }
-  | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]> }
-  | { type: "visions/older"; channelId: string; page: ChannelPage }
+  | { type: "visions/changed"; channelId: string; page: ChannelPage; chats: OwnedChat[]; questions: Record<string, string[]>; answers?: Record<string, Record<string, string>> }
+  | { type: "visions/older"; channelId: string; page: ChannelPage; questions?: Record<string, string[]>; answers?: Record<string, Record<string, string>> }
   | { type: "visions/open"; channelId: string | null; chatId?: string | null }
   | { type: "visions/project"; root: string }
   | { type: "visions/reshow" }
@@ -160,6 +163,8 @@ function older(state: AppState, action: Extract<VisionsAction, { type: "visions/
       lines: { ...state.visions.lines, [channelId]: lines },
       nextBefore: { ...state.visions.nextBefore, [channelId]: page.next_before },
       keep: { ...state.visions.keep, [channelId]: Math.max(lines.length, WINDOW_LINES) },
+      questions: { ...state.visions.questions, ...action.questions },
+      answers: { ...state.visions.answers, ...action.answers },
     },
   };
 }
@@ -260,6 +265,7 @@ export function reduceVisionsActions(state: AppState, action: AppAction): AppSta
       nextBefore: { ...v.nextBefore, [channelId]: joined.next },
       chats: { ...v.chats, [channelId]: action.chats },
       questions: { ...v.questions, ...action.questions },
+      answers: { ...v.answers, ...action.answers },
     },
   };
 }
@@ -269,7 +275,10 @@ export function visionsAnswered(state: AppState, envelope: ThreadEventEnvelope):
   const { thread_id: threadId, event } = envelope;
   const open = state.visions.questions[threadId];
   if (event.kind !== "question_answered" || !open?.includes(event.id)) return state;
-  return { ...state, visions: { ...state.visions, questions: { ...state.visions.questions, [threadId]: open.filter(id => id !== event.id) } } };
+  const { questions, answers } = state.visions;
+  return { ...state, visions: { ...state.visions,
+    questions: { ...questions, [threadId]: open.filter(id => id !== event.id) },
+    answers: { ...answers, [threadId]: { ...answers[threadId], [event.id]: event.answer } } } };
 }
 
 /** The server calls the Visions state reads. */
@@ -312,21 +321,36 @@ function fulfilled<T>(results: PromiseSettledResult<T>[]): T[] {
   return results.flatMap(result => result.status === "fulfilled" ? [result.value] : []);
 }
 
-/** One channel read again: its newest page, its chats and the open questions of the chats its
- *  page passed questions on from. A question read that fails keeps what was read before. */
-async function readChannel(bridge: VisionsBridge, channelId: string, shown: Record<string, string[]>): Promise<VisionsAction> {
-  const [page, chats] = await Promise.all([bridge.getChannelPage(channelId), bridge.listChannelThreads(channelId)]);
-  const passedFrom = new Set(page.entries.flatMap(({ entry }) => entry.type === "passed_on" ? [entry.thread_id] : []));
+/** The chats `page` passed questions on from. */
+function passedFrom(page: ChannelPage): Set<string> {
+  return new Set(page.entries.flatMap(({ entry }) => entry.type === "passed_on" ? [entry.thread_id] : []));
+}
+
+/** The open and the answered questions of `threadIds`. A chat whose read fails is left out, so
+ *  what was read before stays. */
+async function readQuestions(bridge: VisionsBridge, threadIds: Iterable<string>): Promise<{ questions: Record<string, string[]>; answers: Record<string, Record<string, string>> }> {
   const questions: Record<string, string[]> = {};
-  await Promise.all([...passedFrom].map(async threadId => {
+  const answers: Record<string, Record<string, string>> = {};
+  await Promise.all([...threadIds].map(async threadId => {
     try {
       const listed = await bridge.listQuestions(threadId);
-      questions[threadId] = listed.filter(question => question.answer === undefined || question.answer === null).map(question => question.id);
-    } catch {
-      if (shown[threadId] !== undefined) questions[threadId] = shown[threadId];
-    }
+      questions[threadId] = [];
+      answers[threadId] = {};
+      for (const { id, answer } of listed) {
+        if (answer === undefined || answer === null) questions[threadId].push(id);
+        else answers[threadId][id] = answer;
+      }
+    } catch { /* what was read before stays */ }
   }));
-  return { type: "visions/changed", channelId, page, chats, questions };
+  return { questions, answers };
+}
+
+/** One channel read again: its newest page, its chats and the questions of the chats its page
+ *  passed questions on from. */
+async function readChannel(bridge: VisionsBridge, channelId: string): Promise<VisionsAction> {
+  const [page, chats] = await Promise.all([bridge.getChannelPage(channelId), bridge.listChannelThreads(channelId)]);
+  const { questions, answers } = await readQuestions(bridge, passedFrom(page));
+  return { type: "visions/changed", channelId, page, chats, questions, answers };
 }
 
 /** The projects whose channel lists are read again for `want`. */
@@ -369,7 +393,7 @@ async function reload(bridge: VisionsBridge, want: Wanted, state: AppState, disp
     read.set(projectRoot, channels);
   }
   const toRead = [...listRoots].flatMap(root => read.get(root) ?? known[root] ?? []).filter(channel => wantsChannel(want, channel));
-  const results = await Promise.allSettled(toRead.map(channel => readChannel(bridge, channel.id, state.visions.questions)));
+  const results = await Promise.allSettled(toRead.map(channel => readChannel(bridge, channel.id)));
   for (const action of fulfilled(results)) dispatch(action);
 }
 
@@ -426,8 +450,11 @@ export function followVisions(bridge: VisionsBridge, getState: () => AppState, d
     const before = getState().visions.nextBefore[channelId];
     if (before === null || before === undefined || isCancelled()) return false;
     const page = await bridge.getChannelPage(channelId, before);
+    // The questions of chats this page passed on from that no window read yet.
+    const known = getState().visions.questions;
+    const { questions, answers } = await readQuestions(bridge, [...passedFrom(page)].filter(threadId => known[threadId] === undefined));
     const first = getState().visions.lines[channelId]?.[0]?.seq ?? Infinity;
-    guarded({ type: "visions/older", channelId, page });
+    guarded({ type: "visions/older", channelId, page, questions, answers });
     return !isCancelled() && page.entries.some(line => line.seq < first);
   };
   return { changed, approvalChanged, loadOlder };

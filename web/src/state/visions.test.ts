@@ -237,6 +237,34 @@ describe("reloadVisions", () => {
     expect(await follower.loadOlder("c1")).toBe(false);
   });
 
+  it("a channel read keeps its chats' answers, and an answer arriving moves its question there", async () => {
+    const api = bridge();
+    api.listQuestions = vi.fn(async (): Promise<Question[]> => [
+      { id: "q1", run_id: "r", question: "?", blocking: false, asked_at: 1 },
+      { id: "q0", run_id: "r", question: "?", blocking: false, asked_at: 0, answer: "Skip it" },
+    ]);
+    const dispatch = vi.fn();
+    let state = withChannel([], []);
+    await reloadVisions(api, { channel_id: "c1" }, state, dispatch);
+    state = apply(state, dispatch);
+    expect(state.visions.questions).toEqual({ w1: ["q1"] });
+    expect(state.visions.answers).toEqual({ w1: { q0: "Skip it" } });
+    state = appReducer(state, { type: "thread/event", envelope: { thread_id: "w1", run_id: "r", event: { kind: "question_answered", id: "q1", answer: "Allow once" } } });
+    expect(state.visions.questions).toEqual({ w1: [] });
+    expect(state.visions.answers).toEqual({ w1: { q0: "Skip it", q1: "Allow once" } });
+  });
+
+  it("older lines read the questions of chats not read yet", async () => {
+    const api = bridge();
+    let state = withChannel([line(5), line(6)], []);
+    const dispatch = (action: Parameters<typeof reducer>[1]) => { state = reducer(state, action); };
+    const follower = followVisions(api, () => state, dispatch, () => false);
+    api.getChannelPage = vi.fn(async () => ({ entries: [line(3, { type: "passed_on", vision_id: "v1", thread_id: "w7", question_id: "q1", decision: "scope", question: "?" })], next_before: null }));
+    await follower.loadOlder("c1");
+    expect(api.listQuestions).toHaveBeenCalledWith("w7");
+    expect(state.visions.questions).toEqual({ w7: ["q1"] });
+  });
+
   it("one channel failing to read keeps the others", async () => {
     const api = bridge();
     api.getChannelPage = vi.fn(async (id: string) => {
@@ -314,7 +342,7 @@ describe("wire fixture", () => {
     const seen = new Set(lines.map(l => l.entry.type));
     expect([...seen].sort()).toEqual(Object.keys(ENTRY_FIELDS).sort());
     for (const { entry } of lines) {
-      expect(Object.keys(entry).sort(), entry.type).toEqual(["type", ...ENTRY_FIELDS[entry.type]].sort());
+      expect(Object.keys(entry).sort(), entry.type).toEqual(["type", ...ENTRY_FIELDS[entry.type as keyof typeof ENTRY_FIELDS]].sort());
     }
     expect([...fixture.notice_kinds].sort()).toEqual(Object.keys(NOTICE_KINDS).sort());
   });

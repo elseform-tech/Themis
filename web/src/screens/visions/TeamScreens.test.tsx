@@ -136,7 +136,8 @@ describe("Team screens", () => {
   });
 
   it("the_channel_shows_only_the_person_and_the_chief", async () => {
-    await show();
+    // Both passed-on questions are still open in their chat.
+    await show(app, fixture({ questions: { w9: ["q0", "q1"] } }));
     const channel = screen.getByRole("region", { name: "# release" });
     // No header: the channel's name small at the top left, the chief floating at the top middle.
     expect(within(channel).queryByRole("banner")).toBeNull();
@@ -416,6 +417,17 @@ describe("Team screens", () => {
     expect(notesShown[1]).toHaveTextContent(/^Added a routine: Weekdays 09:00, Tell me what happened overnight/);
     expect(notesShown[2]).toHaveTextContent(/^Request with# apitaken on: Friday/);
     fireEvent.click(within(notesShown[0]!).getByRole("button", { name: "# api" }));
+    expect(screen.getByRole("region", { name: "# api" })).toBeTruthy();
+  });
+
+  it("a_request_result_shows_in_the_asking_channel", async () => {
+    const result = [{ type: "request_result", request_id: "q1", channel_id: "c2", vision_id: "sol", text: "The export now writes **ISO** dates." }] as ChannelEntry[];
+    await show(app, fixture({ lines: { c1: result.map((entry, index) => ({ seq: 40 + index, at_ms: 0, entry })) } }));
+    const card = within(screen.getByRole("region", { name: "# release" })).getByRole("article", { name: "# api sent" });
+    expect(card).toHaveTextContent(/^# api sent:The export now writes ISO dates\./);
+    // The text shows as Markdown, like a chief's message.
+    expect(within(card).getByText("ISO").tagName).toBe("STRONG");
+    fireEvent.click(within(card).getByRole("button", { name: "# api" }));
     expect(screen.getByRole("region", { name: "# api" })).toBeTruthy();
   });
 

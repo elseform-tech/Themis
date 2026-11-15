@@ -158,6 +158,8 @@ export type ChannelEntry =
   | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; ask: string }
   | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; ask: string }
   | { type: "request_answered"; vision_id: string; request_id: string; channel_id: string; accepted: boolean; note: string }
+  /** What another channel did with a request this one sent: `channel_id` sent it, `vision_id` is its chief. */
+  | { type: "request_result"; vision_id: string; request_id: string; channel_id: string; text: string }
   | { type: "worker_asked"; vision_id: string; request_id: string; channel_id: string; role: string; why: string }
   | { type: "routine_set"; vision_id: string; routine_id: string; schedule: { days: number[]; time: string }; instruction: string; changed: boolean };
 
@@ -237,8 +239,8 @@ export function listQuestions(threadId: string): Promise<Question[]> { return in
 export const ADMINISTRATION = "administration";
 
 /** Every channel entry's fields besides `type`, optional ones included: the wire fixture test
- *  checks them against Rust. */
-export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Extract<ChannelEntry, { type: K }>, "type">> } = {
+ *  checks them against Rust. `request_result` joins once the Rust side adds it to the fixture. */
+export const ENTRY_FIELDS: { [K in Exclude<ChannelEntry["type"], "request_result">]: Array<Exclude<keyof Extract<ChannelEntry, { type: K }>, "type">> } = {
   person: ["text"],
   vision: ["vision_id", "text", "tasked"],
   chat_started: ["vision_id", "thread_id", "title"],
