@@ -39,7 +39,7 @@ const owned = (id: string, title: string, visionId: string, running: boolean): O
 });
 // The approval on w1 and the passed-on question on w2 wait on the person: two in # release, one
 // for each Vision, as the server counts them.
-const channel: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook", "wren"], chief: "rook", revision: "r", needs: 2 };
+const channel: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", full_access: false, members: ["rook", "wren"], chief: "rook", revision: "r", needs: 2 };
 const entries: ChannelEntry[] = [
   { type: "person", text: "@Rook fix the date test" },
   { type: "vision", vision_id: "rook", text: "On it." },
@@ -128,7 +128,7 @@ describe("Visions view", () => {
   });
 
   it("the_admin_lives_in_hq_with_its_proposals", () => {
-    const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "r" };
+    const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", full_access: false, members: ["admin"], chief: "admin", revision: "r" };
     const proposal: ChannelEntry = { type: "proposal", vision_id: "admin", proposal_id: "p1", proposal: { summary: "A channel for releases.", channels: [{ name: "releases", topic: "", members: [] }], visions: [], changes: [] } };
     const start = fixture();
     mount({
@@ -281,7 +281,7 @@ describe("Visions view", () => {
     fireEvent.change(within(sheet).getByLabelText("Topic"), { target: { value: "Keep main green" } });
     fireEvent.click(within(sheet).getByRole("button", { name: "Wren" }));
     fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(visionsBridge.saveChannel).toHaveBeenCalledWith({ name: "watch-ci", topic: "Keep main green", project_root: "/p", approval_mode: "custom", members: ["wren"] }, null));
+    await waitFor(() => expect(visionsBridge.saveChannel).toHaveBeenCalledWith({ name: "watch-ci", topic: "Keep main green", project_root: "/p", full_access: false, members: ["wren"] }, null));
     expect(await screen.findByRole("region", { name: "# watch-ci" })).toBeTruthy();
   });
 

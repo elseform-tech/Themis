@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { listGoModels, listModelProviders } from "../../lib/tauri";
 import type { GoModel, ModelProvider } from "../../lib/types";
-import { ADMIN_VISION_ID, getVisionsSettings, pauseVision, saveVision, type Autonomy, type ChannelInfo, type VisionInfo, type VisionProfile as Profile, type VisionsSettings } from "../../lib/visions";
+import { ADMIN_VISION_ID, pauseVision, saveVision, type Autonomy, type ChannelInfo, type VisionInfo, type VisionProfile as Profile, type VisionsSettings } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { ModelOptions } from "../ModelsSettings";
 import { AUTONOMY_STOPS, LEVELS } from "./autonomy";
@@ -17,6 +17,7 @@ import { Routines, type RoutineControls } from "./Routines";
 import { PauseIcon, PlayIcon } from "./SidePanel";
 import { ChiefScene } from "./three/ChiefScene";
 import { chiefExpression, statusOf, teamOf, workerStatus } from "./team";
+import { useVisionsSettings } from "./teamData";
 import "./VisionsPanels.css";
 
 type Save = (change: Partial<Profile>) => Promise<void>;
@@ -32,13 +33,6 @@ function useModels() {
   }, []);
   const providerName = (id: string | null) => id === null ? "OpenCode Go" : providers.find(provider => provider.id === id)?.name ?? id;
   return { models, providerName };
-}
-
-/** Settings › Visions, for the channel's autonomy and budget when it sets none of its own. */
-function useVisionsSettings(): VisionsSettings | null {
-  const [settings, setSettings] = useState<VisionsSettings | null>(null);
-  useEffect(() => { void getVisionsSettings().then(view => setSettings(view.settings)).catch(() => setSettings(null)); }, []);
-  return settings;
 }
 
 /** The model picker with its provider's mark (none for the chat model). */

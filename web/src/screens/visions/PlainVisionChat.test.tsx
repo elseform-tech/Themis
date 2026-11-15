@@ -30,7 +30,7 @@ const rookMark = { id: "rook", name: "Rook", shape: "flat", color: "amber" };
 const plain: ThreadInfo = { ...base, id: "plain", title: "Plain chat", last_activity_seq: 1, vision: null };
 const work: ThreadInfo = { ...base, id: "w1", title: "Fix the date test", last_activity_seq: 2, vision: rookMark };
 const rook: VisionInfo = { ...rookMark, role: "", soul: "", paused: false, revision: "r", over_budget: false, vision_chats: [], needs: 0, sorry: false };
-const channel: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", approval_mode: "custom", members: ["rook"], chief: "rook", revision: "r" };
+const channel: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", full_access: false, members: ["rook"], chief: "rook", revision: "r" };
 const owned = (hold: OwnedChat["owner"]["hold"]): OwnedChat => ({ ...work, owner: { thread_id: "w1", vision_id: "rook", channel_id: "c1", kind: "work", hold } });
 
 function fixture(extra: Partial<AppState> = {}): AppState {

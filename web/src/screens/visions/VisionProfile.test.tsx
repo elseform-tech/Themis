@@ -36,8 +36,8 @@ const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): Visi
   id, name, role: "Builder", shape: "flat", color: "teal", soul: "Careful and brief.", paused: false, revision: "r1",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
-const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", approval_mode: "custom", members: ["rook"], chief: "rook", revision: "c1r" };
-const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "h1r" };
+const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", full_access: false, members: ["rook"], chief: "rook", revision: "c1r" };
+const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", full_access: false, members: ["admin"], chief: "admin", revision: "h1r" };
 
 function state(): AppState {
   return {
@@ -140,14 +140,13 @@ describe("A chief's profile", () => {
 });
 
 describe("Channel details", () => {
-  it("saves the topic, the approval mode and the members, and offers only Visions", async () => {
+  it("saves the topic and the members, and offers only Visions", async () => {
     await show(() => <OpenChannelDetails />, opened("c1"));
     const topic = screen.getByRole("textbox", { name: "Topic" });
     fireEvent.change(topic, { target: { value: "Ship 1.0" } });
     await act(async () => { fireEvent.blur(topic); });
     expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ id: "c1", topic: "Ship 1.0" }), "c1r");
-    await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Approval mode" }), { target: { value: "auto" } }); });
-    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ approval_mode: "auto" }), "c2");
+    expect(screen.queryByRole("combobox", { name: "Approval mode" })).toBeNull();
     const add = screen.getByRole("combobox", { name: "Add a member" });
     expect(within(add).getAllByRole("option").map(option => option.textContent)).toEqual(["Add a member", "Wren"]);
     await act(async () => { fireEvent.change(add, { target: { value: "wren" } }); });

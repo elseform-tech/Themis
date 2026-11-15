@@ -55,7 +55,9 @@ export interface ChannelInfo {
   name: string;
   topic: string;
   project_root: string;
-  approval_mode: ApprovalModeName;
+  /** Full access: the team's chats run in YOLO. Off, the autonomy decides: Always ask runs them in
+   *  Custom, every other level in Auto (the server derives the mode). */
+  full_access: boolean;
   members: string[];
   /** The member the person talks to; the others are its workers. */
   chief: string;

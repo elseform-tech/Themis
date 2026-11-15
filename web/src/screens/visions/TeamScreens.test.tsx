@@ -54,9 +54,9 @@ const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): Visi
 const owned = (id: string, title: string, visionId: string, running: boolean): OwnedChat => ({
   ...base, id, title, running, owner: { thread_id: id, vision_id: visionId, channel_id: "c1", kind: "work", hold: "none" },
 });
-const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", approval_mode: "custom", members: ["admin"], chief: "admin", revision: "h" };
-const release: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", approval_mode: "custom", members: ["juno", "rook", "wren"], chief: "juno", autonomy: "most", daily_budget_usd: 3, revision: "c" };
-const api: ChannelInfo = { id: "c2", name: "api", topic: "", project_root: "/p", approval_mode: "auto", members: ["sol"], chief: "sol", revision: "a" };
+const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", full_access: false, members: ["admin"], chief: "admin", revision: "h" };
+const release: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", full_access: false, members: ["juno", "rook", "wren"], chief: "juno", autonomy: "most", daily_budget_usd: 3, revision: "c" };
+const api: ChannelInfo = { id: "c2", name: "api", topic: "", project_root: "/p", full_access: false, members: ["sol"], chief: "sol", revision: "a" };
 const releaseLines: ChannelEntry[] = [
   { type: "person", text: "Release notes for 0.9 are due Friday." },
   { type: "vision", vision_id: "juno", text: "Yes. Rook fixes the date rollover, Wren checks it." },
@@ -153,9 +153,8 @@ describe("Team screens", () => {
     expect(channel).not.toHaveTextContent("Which heading, Wren asks?");
     expect(channel).toHaveTextContent("You paused Rook.");
     expect(channel).not.toHaveTextContent("A chat Rook started failed");
-    // The box talks to Juno, with the mode shield and no mention button.
+    // The box talks to Juno, with no mention button.
     expect(within(channel).getByRole("textbox", { name: "Message Juno" })).toHaveAttribute("placeholder", "Message Juno");
-    expect(within(channel).getByLabelText("Permissions: Custom")).toBeTruthy();
     expect(within(channel).queryByRole("button", { name: "Mention a Vision" })).toBeNull();
     fireEvent.change(within(channel).getByRole("textbox", { name: "Message Juno" }), { target: { value: "@" } });
     expect(screen.queryByRole("listbox")).toBeNull();
@@ -342,15 +341,51 @@ describe("Team screens", () => {
     expect(within(channel).queryAllByRole("note")).toHaveLength(0);
   });
 
-  it("the channel's shield says what YOLO still keeps and a blocked network", async () => {
-    vi.mocked(tauri.getEffectivePermissions).mockResolvedValue({ sandbox: { network: "block" }, approval: { rules: [{ action: "deny" }] } } as never);
-    const yolo = fixture();
-    yolo.visions.channels = { "/p": [hq, { ...release, approval_mode: "yolo" }, api] };
-    await show(app, yolo);
-    expect(tauri.getEffectivePermissions).toHaveBeenCalledWith("/p", null);
-    const shield = screen.getByLabelText("Permissions: YOLO").closest("details")!;
-    expect(shield).toHaveTextContent("Still applies: 1 deny rule");
-    expect(shield).toHaveTextContent("Network blocked by your configuration");
+  it("the_channel_composer_has_no_shield", async () => {
+    await show();
+    const channel = screen.getByRole("region", { name: "# release" });
+    expect(within(channel).getByRole("textbox", { name: "Message Juno" })).toBeTruthy();
+    expect(within(channel).queryByLabelText(/^Permissions/)).toBeNull();
+    expect(tauri.getEffectivePermissions).not.toHaveBeenCalled();
+  });
+
+  it("channel_details_set_autonomy_and_full_access", async () => {
+    await show(app, fixture({ open: { ...initialState.visions.open, channelId: "c1", panel: { kind: "channel" } } }));
+    const details = screen.getByRole("complementary", { name: "Channel details" });
+    expect(within(details).queryByRole("combobox", { name: "Approval mode" })).toBeNull();
+    const field = within(details).getByRole("button", { name: "Autonomy" });
+    expect(field).toHaveTextContent("Most decisions");
+    fireEvent.click(field);
+    const menu = within(details).getByRole("listbox", { name: "Autonomy" });
+    // Each level says the approval mode it sets for the team's chats.
+    expect(within(menu).getAllByRole("option").map(option => option.textContent)).toEqual([
+      "Always askAsks before changes", "Routine decisionsAuto", "Most decisionsAuto", "Nearly all decisionsAuto", "CustomAuto",
+    ]);
+    expect(within(menu).getByRole("option", { name: /^Most decisions/ })).toHaveAttribute("aria-selected", "true");
+    await act(async () => { fireEvent.click(within(menu).getByRole("option", { name: /^Always ask/ })); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ id: "c1", autonomy: "ask", full_access: false }), "c");
+    expect(within(details).queryByRole("listbox")).toBeNull();
+    // Custom starts from the rows the current level hands over.
+    fireEvent.click(within(details).getByRole("button", { name: "Autonomy" }));
+    await act(async () => { fireEvent.click(within(details).getByRole("option", { name: /^Custom/ })); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ autonomy: "custom", custom: expect.objectContaining({ wording: false, scope: false }) }), "c2");
+    // Full access is its own switch.
+    const full = within(details).getByRole("switch", { name: "Full access" });
+    expect(full).not.toBeChecked();
+    await act(async () => { fireEvent.click(full); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ full_access: true }), "c2");
+  });
+
+  it("a channel with no autonomy of its own shows Settings' level", async () => {
+    const own = fixture({ open: { ...initialState.visions.open, channelId: "c2", panel: { kind: "channel" } } });
+    await show(app, own);
+    const details = screen.getByRole("complementary", { name: "Channel details" });
+    expect(await within(details).findByText("Most decisions")).toBeTruthy();
+    // # administration has neither.
+    cleanup();
+    await show(app, fixture({ open: { ...initialState.visions.open, channelId: "h1", panel: { kind: "channel" } } }));
+    expect(screen.queryByRole("button", { name: "Autonomy" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Full access" })).toBeNull();
   });
 
   it("a hire for a channel that is not listed shows no empty pill", async () => {

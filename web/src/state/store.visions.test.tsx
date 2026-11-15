@@ -27,7 +27,7 @@ function Probe() {
   return <div data-testid="open">{String(state.visions.open.channelId)}</div>;
 }
 
-const channel = (id: string, root: string): ChannelInfo => ({ id, name: id, topic: "", project_root: root, approval_mode: "custom", members: [], chief: "", revision: "r" });
+const channel = (id: string, root: string): ChannelInfo => ({ id, name: id, topic: "", project_root: root, full_access: false, members: [], chief: "", revision: "r" });
 
 beforeEach(() => {
   vi.mocked(bridge.getSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, recent_roots: [] });

@@ -4,7 +4,7 @@
 // channel or worker changed, and keeps the last good value when a read fails.
 import { useEffect, useState } from "react";
 import { onVisionsChanged } from "../../lib/tauri";
-import { deleteRoutine, getChannelSpend, getTeamLog, listRoutines, setRoutineEnabled, type Routine } from "../../lib/visions";
+import { deleteRoutine, getChannelSpend, getTeamLog, getVisionsSettings, listRoutines, setRoutineEnabled, type Routine, type VisionsSettings } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import type { RoutineControls } from "./Routines";
 import type { TeamLine } from "./team";
@@ -68,4 +68,11 @@ export function useChannelSpend(channelId: string | undefined): number | undefin
   const tick = useChannelTick(channelId ?? "");
   const [read] = useRead(channelId, tick, getChannelSpend);
   return read?.spent_usd ?? undefined;
+}
+
+/** Settings › Visions, for a channel's autonomy and budget when it sets none of its own. */
+export function useVisionsSettings(): VisionsSettings | null {
+  const [settings, setSettings] = useState<VisionsSettings | null>(null);
+  useEffect(() => { void getVisionsSettings().then(view => setSettings(view.settings)).catch(() => setSettings(null)); }, []);
+  return settings;
 }
