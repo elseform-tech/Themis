@@ -913,7 +913,10 @@ async fn a_vision_cannot_allow_an_auto_hard_block() {
     let fx = fixture().await;
     std::fs::write(
         fx.data.join("runtime.jsonc"),
-        r#"{"memory":{"models":["mem-one","mem-two","mem-three"]}}"#,
+        // The person's own rule sends commands to the reviewer (a team chat would otherwise run
+        // without asking): their rules come before the team's allow rules.
+        r#"{"memory":{"models":["mem-one","mem-two","mem-three"]},
+            "approval":{"rules":[{"tool":"shell","action":"ask"}]}}"#,
     )
     .unwrap();
     let provider = reviewed_provider().await;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
-use themis_core::configuration::ApprovalMode;
+use themis_core::configuration::{ApprovalMode, ApprovalPolicy, ApprovalRule, PolicyAction};
 use themis_core::visions::Decision;
 
 use super::{Channel, ChannelEntry, Hold, OwnedKind, Owner};
@@ -71,6 +71,55 @@ impl AppState {
         self.runtime_configuration(Some(&channel.project_root), None)
             .map(|resolved| super::channel_approval_mode(channel, &resolved.config.visions))
             .unwrap_or(ApprovalMode::Custom)
+    }
+
+    /// The approval policy a run in `thread_id` uses: for a team's work chat in Auto, the
+    /// person's rules then allow rules for writes and commands, so project work goes on without
+    /// asking. Destructive steps still ask the person first, and sandbox escapes, sensitive files
+    /// and deny rules keep their own gates; any other chat keeps `policy` as written.
+    pub(crate) fn visions_run_policy(
+        &self,
+        thread_id: &str,
+        mode: ApprovalMode,
+        mut policy: ApprovalPolicy,
+    ) -> ApprovalPolicy {
+        let team = mode == ApprovalMode::Auto
+            && self
+                .owner_of(thread_id)
+                .is_some_and(|owner| owner.kind == OwnedKind::Work && owner.hold == Hold::None);
+        if team {
+            for risk in ["write", "execute"] {
+                policy.rules.push(ApprovalRule {
+                    tool: "*".into(),
+                    action: PolicyAction::Allow,
+                    risk: Some(risk.into()),
+                    command: None,
+                });
+            }
+        }
+        policy
+    }
+
+    /// The person's latest messages in the channel of `thread_id`, a team's work chat, oldest
+    /// first (none for any other chat), for Auto's reviewer: what the person asked for.
+    pub(crate) fn visions_person_words(&self, thread_id: &str) -> Vec<String> {
+        let Some(owner) = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+        else {
+            return Vec::new();
+        };
+        self.channel_page(&owner.channel_id, None, 64 * 1024)
+            .map(|page| {
+                page.entries
+                    .into_iter()
+                    .filter_map(|line| match line.entry {
+                        ChannelEntry::Person { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// The mode a run in `thread_id` starts in: [`Self::visions_work_mode`], else `own`.

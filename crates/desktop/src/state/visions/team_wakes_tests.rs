@@ -341,3 +341,50 @@ fn a_work_chats_run_takes_its_channels_mode_when_it_starts() {
     assert_eq!(s.state.visions_work_mode("ada-work"), None);
     assert_eq!(s.state.visions_work_mode("not-owned"), None);
 }
+
+/// A team's work chat in Auto writes and runs commands in the project without asking: its run's
+/// policy gains allow rules for those risks, after the person's own rules. A plain chat, or a
+/// team chat at Always ask (Custom), keeps the policy as written.
+#[test]
+fn a_team_chat_writes_and_runs_without_asking() {
+    use themis_core::configuration::{ApprovalMode, ApprovalPolicy, PolicyAction};
+    let s = setup(true);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+    let written = ApprovalPolicy::default();
+    let mine = written.rules.len();
+    let team = s.state.visions_run_policy("ada-work", ApprovalMode::Auto, written.clone());
+    let added: Vec<_> = team.rules[mine..]
+        .iter()
+        .map(|rule| (rule.tool.as_str(), rule.risk.as_deref(), rule.action))
+        .collect();
+    assert_eq!(
+        added,
+        [("*", Some("write"), PolicyAction::Allow), ("*", Some("execute"), PolicyAction::Allow)]
+    );
+    let plain = s.state.visions_run_policy("plain", ApprovalMode::Auto, written.clone());
+    assert_eq!(plain.rules.len(), mine);
+    let custom = s.state.visions_run_policy("ada-work", ApprovalMode::Custom, written);
+    assert_eq!(custom.rules.len(), mine);
+}
+
+/// The reviewer of a team's work chat reads what the person asked in the channel (a Vision's
+/// own messages in the chat are not the person's words).
+#[test]
+fn the_reviewer_reads_the_persons_channel_words() {
+    let s = setup(true);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+    s.state
+        .channel_append(&s.channel, ChannelEntry::Person { text: "Write the omelette recipe".into() })
+        .unwrap();
+    let reviewer = crate::state::auto_review::DesktopReviewer {
+        state: s.state.clone(),
+        sink: sink(),
+        thread_id: "ada-work".into(),
+        run_id: "r1".into(),
+        project_root: std::path::PathBuf::new(),
+        config: themis_core::configuration::RuntimeConfig::default(),
+        is_git: false,
+        chat_model: String::new(),
+    };
+    assert!(reviewer.person_words().contains("Write the omelette recipe"));
+}

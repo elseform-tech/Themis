@@ -175,6 +175,8 @@ impl DesktopReviewer {
                 _ => None,
             })
             .collect();
+        // A team's work chat: what the person asked in its channel comes first.
+        let words = [self.state.visions_person_words(&self.thread_id), words].concat();
         let latest = &words[words.len().saturating_sub(PERSON_MESSAGES)..];
         let joined = latest.join("\n---\n");
         let count = joined.chars().count();
