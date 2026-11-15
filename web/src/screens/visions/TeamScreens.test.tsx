@@ -59,10 +59,11 @@ const release: ChannelInfo = { id: "c1", name: "release", topic: "", project_roo
 const api: ChannelInfo = { id: "c2", name: "api", topic: "", project_root: "/p", full_access: false, members: ["sol"], chief: "sol", revision: "a" };
 const releaseLines: ChannelEntry[] = [
   { type: "person", text: "Release notes for 0.9 are due Friday." },
-  { type: "vision", vision_id: "juno", text: "Yes. Rook fixes the date rollover, Wren checks it." },
+  { type: "vision", vision_id: "juno", text: "Yes. Rook fixes the date rollover, Wren checks it.", tasked: ["rook", "wren"] },
   { type: "vision", vision_id: "rook", text: "Fallback is in." },
   { type: "chat_started", vision_id: "rook", thread_id: "w1", title: "Fix the date rollover" },
-  // The server posts questions passed on to the person under the chief; a worker's own stays out.
+  // A question passed on to the person shows whoever's chat asks: a worker's chat passes its
+  // permission questions straight to the person.
   { type: "passed_on", vision_id: "wren", thread_id: "w9", question_id: "q0", decision: "wording", question: "Which heading, Wren asks?" },
   { type: "passed_on", vision_id: "juno", thread_id: "w9", question_id: "q1", decision: "wording", question: "Which heading for the notes?" },
   // The person's own action on a worker stays; anything else a worker caused does not.
@@ -135,22 +136,19 @@ describe("Team screens", () => {
   it("the_channel_shows_only_the_person_and_the_chief", async () => {
     await show();
     const channel = screen.getByRole("region", { name: "# release" });
-    const header = within(channel).getByRole("banner");
-    expect(within(header).getByRole("heading", { level: 1 })).toHaveTextContent("#release");
-    // Once there is a conversation the chief is a small badge at the top right that opens its
-    // profile; no big 3D chief takes room from the log.
-    // Rook's work chat runs; Juno's own reply does not: her state is Calm, Rook's chip says Working.
-    expect(within(header).getByRole("button", { name: "Juno, chief of staff, Calm" })).toBeTruthy();
+    // No header: the channel's name small at the top left, the chief floating at the top middle.
+    expect(within(channel).queryByRole("banner")).toBeNull();
+    expect(within(channel).queryByRole("group", { name: "Team" })).toBeNull();
+    // Rook's work chat runs; Juno's own reply does not: her state is Calm.
+    expect(within(channel).getByRole("button", { name: "Juno, chief of staff, Calm" })).toHaveTextContent("JunoCalm");
     expect(within(channel).queryByRole("img", { name: "Juno, Calm" })).toBeNull();
-    const team = within(header).getByRole("group", { name: "Team" });
-    expect(within(team).getAllByRole("button").map(chip => chip.getAttribute("aria-label"))).toEqual(["Rook, Builder, Working", "Wren, Reviewer, Idle"]);
     // The log: the person and Juno; Rook's post and his chat stay in his thread.
     expect(channel).toHaveTextContent("Release notes for 0.9 are due Friday.");
     expect(channel).toHaveTextContent("Rook fixes the date rollover");
     expect(channel).not.toHaveTextContent("Fallback is in.");
     expect(within(channel).queryByRole("button", { name: /^Open Fix the date rollover/ })).toBeNull();
     expect(channel).toHaveTextContent("Which heading for the notes?");
-    expect(channel).not.toHaveTextContent("Which heading, Wren asks?");
+    expect(channel).toHaveTextContent("Which heading, Wren asks?");
     expect(channel).toHaveTextContent("You paused Rook.");
     expect(channel).not.toHaveTextContent("A chat Rook started failed");
     // The box talks to Juno, with no mention button.
@@ -160,12 +158,78 @@ describe("Team screens", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("a_worker_chip_opens_its_thread_read_only", async () => {
+  it("the_person_writes_on_the_right_and_the_chief_on_the_left", async () => {
     await show();
-    const team = screen.getByRole("group", { name: "Team" });
-    fireEvent.click(within(team).getByRole("button", { name: /^Rook/ }));
-    expect(within(team).getByRole("button", { name: /^Rook/ })).toHaveAttribute("aria-pressed", "true");
-    expect(within(team).getByRole("button", { name: /^Wren/ })).toHaveAttribute("aria-pressed", "false");
+    const channel = screen.getByRole("region", { name: "# release" });
+    const mine = within(channel).getByText("Release notes for 0.9 are due Friday.").closest(".themis-bubble")!;
+    const chief = within(channel).getByText(/Rook fixes the date rollover/).closest(".themis-bubble")!;
+    expect(mine).toHaveClass("themis-bubble-me");
+    expect(chief).toHaveClass("themis-bubble-chief");
+    // No avatar or name in either bubble's row; the person's keeps its time.
+    for (const bubble of [mine, chief]) {
+      const row = bubble.closest("li")!;
+      expect(row.querySelector("svg.themis-cloud")).toBeNull();
+      expect(row).not.toHaveTextContent(/^(You|Juno)/);
+    }
+    expect(mine.closest("li")!.querySelector("time")).toBeTruthy();
+  });
+
+  it("a_handoff_shows_one_indicator_per_tasked_worker", async () => {
+    const waiting = fixture();
+    waiting.approvals = [{ thread_id: "w1", approval_id: "a1", tool: "write_file", summary: "Write src/date.rs", risk: "write" } as AppState["approvals"][number]];
+    await show(app, waiting);
+    const channel = screen.getByRole("region", { name: "# release" });
+    const chief = within(channel).getByText(/Rook fixes the date rollover/).closest("li")!;
+    const shown = () => within(chief).getAllByRole("button", { name: /'s thread/ });
+    expect(shown().map(button => button.getAttribute("aria-label"))).toEqual(["Rook's thread, Needs you", "Wren's thread, Idle"]);
+    expect(shown()[0]).toHaveTextContent("Rook's threadNeeds you");
+    // No cloud on an indicator.
+    expect(chief.querySelector("svg.themis-cloud")).toBeNull();
+    // Answered, and his chat finished: Done.
+    const live2 = live.value as { state: AppState; dispatch: (action: AppAction) => void };
+    await act(async () => {
+      live2.dispatch({ type: "approval/dequeued", approvalId: "a1" });
+      live2.dispatch({ type: "visions/changed", channelId: "c1", page: { entries: live2.state.visions.lines.c1!, next_before: null }, chats: [{ ...owned("w1", "Fix the date rollover", "rook", false), last_outcome: "done" }], questions: {} });
+    });
+    expect(shown()[0]).toHaveAttribute("aria-label", "Rook's thread, Done");
+    // An indicator opens that worker's thread.
+    fireEvent.click(shown()[0]!);
+    expect(screen.getByRole("complementary", { name: "Rook with Juno" })).toBeTruthy();
+  });
+
+  it("an open question of a worker's chat shows Needs you", async () => {
+    const asking = fixture({ questions: { w1: ["q5"] } });
+    await show(app, asking);
+    expect(screen.getByRole("button", { name: "Rook's thread, Needs you" })).toBeTruthy();
+  });
+
+  it("the_channel_name_opens_the_details", async () => {
+    await show();
+    const name = within(screen.getByRole("region", { name: "# release" })).getByRole("button", { name: "# release: channel details" });
+    expect(name).toHaveTextContent("# release");
+    fireEvent.click(name);
+    expect(name).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("complementary", { name: "Channel details" })).toBeTruthy();
+  });
+
+  it("the_floating_chief_opens_its_profile", async () => {
+    await show();
+    const chief = within(screen.getByRole("region", { name: "# release" })).getByRole("button", { name: "Juno, chief of staff, Calm" });
+    expect(chief.querySelector("svg.themis-cloud")).toHaveAttribute("width", "40");
+    fireEvent.click(chief);
+    expect(screen.getByRole("region", { name: "Juno, profile" })).toBeTruthy();
+  });
+
+  it("approvals_are_not_in_the_channel_log", async () => {
+    const waiting = fixture();
+    waiting.approvals = [{ thread_id: "w1", approval_id: "a1", tool: "write_file", summary: "Write src/date.rs", risk: "write" } as AppState["approvals"][number]];
+    await show(app, waiting);
+    expect(within(screen.getByRole("region", { name: "# release" })).queryByRole("region", { name: "Approval needed" })).toBeNull();
+  });
+
+  it("a_worker_thread_opens_read_only", async () => {
+    await show();
+    fireEvent.click(screen.getByRole("button", { name: /^Rook's thread/ }));
     const thread = screen.getByRole("complementary", { name: "Rook with Juno" });
     // His work chat is a link; there is no box to write in.
     expect(within(thread).getByRole("button", { name: /^Open Fix the date rollover/ })).toBeTruthy();
@@ -175,16 +239,16 @@ describe("Team screens", () => {
     expect(screen.queryByRole("complementary", { name: "Rook with Juno" })).toBeNull();
   });
 
-  it("a worker's chip shows its thread as the server keeps it", async () => {
+  it("a worker's thread shows as the server keeps it", async () => {
     await show();
-    fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Rook's thread/ }));
     const thread = screen.getByRole("complementary", { name: "Rook with Juno" });
     expect(await within(thread).findByText("Fix the parser from the server.")).toBeTruthy();
   });
 
   it("a worker's thread reads again when the server says the channel changed", async () => {
     await show();
-    fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Rook's thread/ }));
     await screen.findByText("Fix the parser from the server.");
     const before = vi.mocked(visions.getTeamLog).mock.calls.length;
     await act(async () => { for (const listener of changeListeners) listener({ channel_id: "c1" }); });
@@ -206,7 +270,7 @@ describe("Team screens", () => {
 
   it("the_chief_profile_edits_soul_and_routines", async () => {
     await show();
-    fireEvent.click(within(screen.getByRole("banner")).getByRole("button", { name: /^Juno, chief of staff/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Juno, chief of staff/ }));
     const profile = screen.getByRole("region", { name: "Juno, profile" });
     expect(profile).toHaveTextContent("Chief of staff, # release");
     expect(within(profile).getByRole("button", { name: "Pause Juno" })).toBeTruthy();
@@ -286,13 +350,11 @@ describe("Team screens", () => {
     expect(within(card).getByRole("listitem")).toHaveTextContent("TessUI tester");
   });
 
-  it("# administration shows Atlas with no chips and no mode shield", async () => {
+  it("# administration shows Atlas and no mode shield", async () => {
     await show(app, fixture({ open: { ...initialState.visions.open, channelId: "h1" } }));
     const channel = screen.getByRole("region", { name: "# administration" });
-    const header = within(channel).getByRole("banner");
-    expect(within(header).queryByRole("group", { name: "Team" })).toBeNull();
-    // A new channel: the chief stands large in the middle with its name and job, and no badge.
-    expect(within(header).queryByRole("button", { name: /^Atlas, admin/ })).toBeNull();
+    // A new channel: the chief stands large in the middle with its name and job, and does not float.
+    expect(within(channel).getAllByRole("button", { name: /^Atlas, admin/ })).toHaveLength(1);
     const welcome = within(channel).getByRole("img", { name: "Atlas, Calm" }).closest(".themis-chief-welcome") as HTMLElement;
     expect(welcome).toHaveTextContent("AtlasAdmin");
     expect(within(welcome).getByRole("button", { name: /^Atlas, admin/ })).toBeTruthy();
@@ -425,7 +487,8 @@ describe("Team screens", () => {
     };
     await show(app, fixture({ lines: { c1: [] } }));
     scan();
-    fireEvent.click(within(screen.getByRole("group", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
+    await act(async () => { (live.value as { dispatch: (action: AppAction) => void }).dispatch({ type: "visions/panel", panel: { kind: "worker", visionId: "rook" } }); });
+    expect(screen.getByRole("complementary", { name: "Rook with Juno" })).toBeTruthy();
     scan();
     // The channel is new: the chief's name in the middle opens its profile.
     fireEvent.click(screen.getByRole("button", { name: /^Juno, chief of staff/ }));

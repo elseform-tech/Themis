@@ -90,7 +90,10 @@
       "entry": {
         "type": "vision",
         "vision_id": "v1",
-        "text": "On it."
+        "text": "On it.",
+        "tasked": [
+          "v2"
+        ]
       }
     },
     {

@@ -51,12 +51,27 @@ export interface Status { label: string; dot: string }
 
 export const statusOf = (expression: Expression): Status => ({ label: EXPRESSION_LABEL[expression], dot: EXPRESSION_DOT[expression] });
 
-/** A worker's status dot on its chip and in the chief's Team list: Idle when nothing applies. */
+/** The worker's work chats in this channel. */
+function workChats(state: AppState, channel: ChannelInfo, worker: VisionInfo) {
+  return (state.visions.chats[channel.id] ?? []).filter(chat => chat.owner.vision_id === worker.id && chat.owner.kind === "work");
+}
+
+/** Whether one of the worker's chats here waits on the person: an approval (it waits in the
+ *  worker's thread) or an open question it passed on (answered in the channel). */
+export function workerWaits(state: AppState, channel: ChannelInfo, worker: VisionInfo): boolean {
+  const ids = new Set(workChats(state, channel, worker).map(chat => chat.id));
+  return state.approvals.some(request => ids.has(request.thread_id)) || [...ids].some(id => (state.visions.questions[id] ?? []).length > 0);
+}
+
+/** A worker's state, as its thread indicator and its Team row show it: Needs you while one of
+ *  its chats waits on the person, Working while one runs, Done once one finished and none runs,
+ *  Idle when nothing applies (paused and stuck outrank all). */
 export function workerStatus(state: AppState, channel: ChannelInfo, worker: VisionInfo): Status {
+  const going = (chat: { id: string; running: boolean }) => state.running[chat.id] ?? chat.running;
   const expression = expressionFor({
     running: runsHere(state, channel, worker, true),
-    waitingOnPerson: worker.needs > 0,
-    finished: false,
+    waitingOnPerson: worker.needs > 0 || workerWaits(state, channel, worker),
+    finished: workChats(state, channel, worker).some(chat => !going(chat) && (chat.last_outcome ?? "done") === "done"),
     failed: worker.sorry,
     blocked: false,
     paused: worker.paused || (channel.paused_workers ?? []).includes(worker.id),

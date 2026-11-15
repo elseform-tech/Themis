@@ -143,10 +143,9 @@ describe("Visions view", () => {
     const bar = screen.getByRole("complementary", { name: "Visions navigation" });
     expect(within(bar).queryByText("Atlas")).toBeNull();
     const room = screen.getByRole("region", { name: "# administration" });
-    // Atlas wears its crown in the header and beside its messages.
-    // A conversation: Atlas is the badge at the top right, with its crown.
+    // A conversation: Atlas floats at the top with its crown; its messages carry no cloud.
     expect(within(room).getByRole("button", { name: "Atlas, admin, Calm" }).querySelector("svg")).toHaveAttribute("data-accessory", "crown");
-    expect(within(room).getByText("Atlas", { selector: ".themis-channel-who" }).closest("li")!.querySelector("[data-accessory='crown']")).toBeTruthy();
+    expect(room.querySelector(".themis-channel-lines [data-accessory]")).toBeNull();
     expect(within(room).getByRole("group", { name: "Proposal" })).toHaveTextContent("A channel for releases.");
     expect(within(room).getByLabelText("Message Atlas")).not.toBeDisabled();
   });
@@ -208,6 +207,8 @@ describe("Visions view", () => {
     expect(within(card).queryByLabelText("Answer in your own words")).toBeNull();
   });
 
+  // w1 is Rook's, and Rook is this channel's chief: a chief's own chat's approval stays in the
+  // channel (a worker's waits in its thread instead).
   it("an_approval_from_an_owned_chat_shows_allow_and_deny", async () => {
     const view = await openRelease();
     const box = within(view).getByRole("region", { name: "Approval needed" });
@@ -224,11 +225,10 @@ describe("Visions view", () => {
     expect(within(view).getAllByRole("region", { name: "Approval needed" })).toHaveLength(1);
   });
 
-  it("message_avatars_do_not_animate", async () => {
+  it("messages_carry_no_avatars", async () => {
     const view = await openRelease();
-    const avatars = view.querySelectorAll(".themis-channel-entry .themis-cloud");
-    expect(avatars.length).toBeGreaterThan(0);
-    for (const avatar of avatars) expect(avatar).not.toHaveClass("is-live");
+    expect(view.querySelectorAll(".themis-channel-entry").length).toBeGreaterThan(0);
+    expect(view.querySelector(".themis-channel-entry .themis-cloud")).toBeNull();
   });
 
   it("a_running_vision_shows_it_is_thinking", () => {
@@ -288,7 +288,7 @@ describe("Visions view", () => {
   it("new vision saves its name, cloud and role", async () => {
     vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v3", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
     const view = await openRelease();
-    fireEvent.click(within(view).getByRole("button", { name: "#release" }));
+    fireEvent.click(within(view).getByRole("button", { name: "# release: channel details" }));
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });
     fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
@@ -305,7 +305,7 @@ describe("Visions view", () => {
   it("new vision saves the accessory the person chose", async () => {
     vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v4", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
     const view = await openRelease();
-    fireEvent.click(within(view).getByRole("button", { name: "#release" }));
+    fireEvent.click(within(view).getByRole("button", { name: "# release: channel details" }));
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });
     fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
@@ -478,7 +478,7 @@ describe("Visions view", () => {
     expect(screen.queryByRole("region", { name: "# release" })).toBeNull();
     fireEvent.click(within(profile).getByRole("button", { name: "# release" }));
     view = screen.getByRole("region", { name: "# release" });
-    fireEvent.click(within(view).getByRole("button", { name: "#release" }));
+    fireEvent.click(within(view).getByRole("button", { name: "# release: channel details" }));
     expect(screen.queryByRole("region", { name: "Rook, profile" })).toBeNull();
     const details = screen.getByRole("complementary", { name: "Channel details" });
     expect(within(details).getByRole("textbox", { name: "Topic" })).toHaveValue("Ship 0.9");

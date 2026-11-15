@@ -1,15 +1,16 @@
-// One line of a channel's log: the person's message, a Vision's message, a chat it started, a
-// question it answered or passed on, or a notice. Avatars never move.
+// One line of a channel's log (board ChannelPlain): the person's message as a bubble on the right
+// with its time, the chief's as a bubble on the left with one indicator per worker it tasked there,
+// a chat it started, a question it answered or passed on, or a notice. No avatars or names: the
+// side says who.
 import { Fragment, useState, type ReactNode } from "react";
-import { answerChannelRequest, type ChannelEntry as Entry, type ChannelLine, type VisionInfo } from "../../lib/visions";
+import { answerChannelRequest, type ChannelEntry as Entry, type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { ResponseBody } from "../../components/ResponseBody";
 import { describeError, toast, useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
-import { CharacterAvatar } from "./CharacterAvatar";
-import { lookOf } from "./cast";
 import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnCard } from "./QuestionCards";
 import { isTeamNoteEntry, scheduleWords, TEAM_NOTE_TYPES, teamNote, type TeamNoteEntry } from "./team";
+import { ThreadIndicators } from "./ThreadIndicator";
 
 type AppState = ReturnType<typeof useApp>["state"];
 
@@ -123,25 +124,17 @@ function TeamNote({ line }: { line: ChannelLine }) {
   return <li className="themis-team-note"><div className="themis-team-note-line" role="note">{body}<time className="themis-channel-time">{clock(line.at_ms)}</time></div></li>;
 }
 
-function Avatar({ vision }: { vision: VisionInfo | undefined }) {
-  if (!vision) return <span className="themis-channel-avatar themis-channel-person" aria-hidden="true">?</span>;
-  return <span className="themis-channel-avatar"><CharacterAvatar look={lookOf(vision)} size={30} /></span>;
-}
-
 /** The loaded line of the proposal or setup `proposalId` of type `type`, if any. */
 function proposalLine<T extends "proposal" | "proposal_applied">(state: AppState, channelId: string, type: T, proposalId: string): Extract<Entry, { type: T }> | undefined {
   const line = (state.visions.lines[channelId] ?? []).find(each => each.entry.type === type && (each.entry as { proposal_id: string }).proposal_id === proposalId);
   return line?.entry as Extract<Entry, { type: T }> | undefined;
 }
 
+/** A card or chat link from a Vision (a proposal, a question, a chat it started). */
 function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: string; onReply: (text: string) => void }): ReactNode {
   const { state, dispatch } = useApp();
   const { entry } = line;
-  const names = state.visions.list.map(vision => vision.name);
-  if (entry.type === "person") return <p className="themis-channel-text">{withMentions(entry.text, names)}</p>;
-  // A Vision writes Markdown like any chat reply, and it shows the same way.
-  if (entry.type === "vision") return <div className="themis-channel-text themis-channel-markdown"><ResponseBody text={entry.text} /></div>;
-  if (entry.type === "notice" || isTeamNoteEntry(entry)) return null;
+  if (entry.type === "person" || entry.type === "vision" || entry.type === "notice" || isTeamNoteEntry(entry)) return null;
   if (entry.type === "proposal" || entry.type === "proposal_applied") {
     const open = (id: string) => dispatch({ type: "visions/open", channelId: id });
     return entry.type === "proposal"
@@ -149,7 +142,7 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
       : <ProposalCard applied={entry} onOpenChannel={open} />;
   }
   const chat = channelChat(state, channelId, entry.thread_id);
-  // A question passed on under the chief still names whose chat asks.
+  // A question passed on still names whose chat asks.
   const asker = entry.type === "passed_on" ? chat?.owner.vision_id ?? entry.vision_id : entry.vision_id;
   const vision = visionById(state, asker)?.name ?? "A Vision";
   const title = entry.type === "chat_started" ? entry.title : chat?.title ?? "a chat";
@@ -158,22 +151,28 @@ function Body({ line, channelId, onReply }: { line: ChannelLine; channelId: stri
   return <PassedOnCard entry={entry} vision={vision} title={title} />;
 }
 
-export function ChannelEntryView({ line, channelId, fresh, onReply }: { line: ChannelLine; channelId: string; fresh: boolean; onReply: (text: string) => void }) {
+export function ChannelEntryView({ line, channel, fresh, onReply }: { line: ChannelLine; channel: ChannelInfo; fresh: boolean; onReply: (text: string) => void }) {
   const { state } = useApp();
   const { entry } = line;
+  const channelId = channel.id;
   if (TEAM_NOTE_TYPES.has(entry.type)) return <TeamNote line={line} />;
   if (entry.type === "notice") return <Notice line={line} channelId={channelId} />;
   // A setup shows on its proposal's card while that is loaded.
   if (entry.type === "proposal_applied" && proposalLine(state, channelId, "proposal", entry.proposal_id)) return null;
-  const vision = entry.type === "person" ? undefined : visionById(state, entry.vision_id);
-  const who = entry.type === "person" ? "You" : vision?.name ?? "A Vision";
-  return (
-    <li className={`themis-channel-entry${fresh && entry.type !== "person" ? " is-fresh" : ""}`}>
-      {entry.type === "person" ? <span className="themis-channel-avatar themis-channel-person" aria-hidden="true">Y</span> : <Avatar vision={vision} />}
-      <div className="themis-channel-body">
-        <div className="themis-channel-who">{who}<time className="themis-channel-time">{clock(line.at_ms)}</time></div>
-        <Body line={line} channelId={channelId} onReply={onReply} />
-      </div>
-    </li>
-  );
+  const names = state.visions.list.map(vision => vision.name);
+  if (entry.type === "person") {
+    return <li className="themis-channel-entry is-mine">
+      <p className="themis-bubble themis-bubble-me">{withMentions(entry.text, names)}</p>
+      <time className="themis-channel-time">{clock(line.at_ms)}</time>
+    </li>;
+  }
+  const className = `themis-channel-entry is-theirs${fresh ? " is-fresh" : ""}`;
+  // A Vision writes Markdown like any chat reply, and it shows the same way.
+  if (entry.type === "vision") {
+    return <li className={className}>
+      <div className="themis-bubble themis-bubble-chief themis-channel-markdown"><ResponseBody text={entry.text} /></div>
+      <ThreadIndicators channel={channel} tasked={entry.tasked} />
+    </li>;
+  }
+  return <li className={className}><div className="themis-channel-body"><Body line={line} channelId={channelId} onReply={onReply} /></div></li>;
 }

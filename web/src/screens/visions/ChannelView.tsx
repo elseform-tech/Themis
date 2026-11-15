@@ -1,7 +1,7 @@
-// A channel (boards TeamChannel, AdminChannel): its header, its log with only the person and the
-// chief (the newest lines, earlier ones on request; workers' posts and chats stay in their threads
-// with the chief), the approvals its chats wait on (only the person's Allow or Deny answers them),
-// the chief's thinking row and the composer.
+// A channel (boards ChannelPlain, AdminChannel): its name and floating chief on top, its log with
+// only the person and the chief (the newest lines, earlier ones on request; workers' posts and
+// chats stay in their threads with the chief), the approvals the chief's own chats wait on (a
+// worker's wait in its thread), the chief's thinking row and the composer.
 import { useLayoutEffect, useRef, useState } from "react";
 import { ApprovalBox } from "../../components/approval/ApprovalBox";
 import { approveAction } from "../../lib/tauri";
@@ -11,14 +11,14 @@ import { describeError, toast, useApp } from "../../state/store";
 import { AskFirstBox } from "../AskFirstBox";
 import { ChannelComposer } from "./ChannelComposer";
 import { ChannelEntryView, visionById } from "./ChannelEntry";
-import { ChannelHeader, ChiefWelcome } from "./ChannelHeader";
+import { ChannelTop, ChiefWelcome } from "./ChannelTop";
 import { channelChat } from "./ChatLink";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { reducedMotion, useArrivals, useShownAMoment, useWakes } from "./thinking";
 
 /** An approval one of the channel's chats waits on, with whose chat asks. */
-function ChannelApproval({ request, channelId }: { request: ApprovalRequest; channelId: string }) {
+export function ChannelApproval({ request, channelId }: { request: ApprovalRequest; channelId: string }) {
   const { state, dispatch } = useApp();
   const chat = channelChat(state, channelId, request.thread_id);
   const vision = visionById(state, chat?.owner.vision_id)?.name ?? "A Vision";
@@ -58,15 +58,23 @@ function Thinking({ visions }: { visions: VisionInfo[] }) {
 const PERSON_ACTS: ReadonlySet<string> = new Set(["paused", "resumed", "stopped", "handed_back"]);
 
 /** The channel shows only the person and the chief. The server posts what the person must see
- *  (a passed-on question, budget, team-paused and request-cap notices) under the chief, so any
- *  other line carrying a worker's id belongs to that worker's thread with the chief and stays
- *  out; the one exception is a notice of the person's own action on a worker (pause, resume,
- *  stop, hand back), which keeps the worker's id and stays. Lines with no Vision stay. */
+ *  (budget, team-paused and request-cap notices) under the chief, so any other line carrying a
+ *  worker's id belongs to that worker's thread with the chief and stays out. The exceptions: a
+ *  question passed on to the person (a worker's chat passes its permission questions straight
+ *  on), and a notice of the person's own action on a worker (pause, resume, stop, hand back).
+ *  Lines with no Vision stay. */
 function fromTheChief(channel: ChannelInfo, line: ChannelLine): boolean {
   const { entry } = line;
   const id = "vision_id" in entry ? entry.vision_id : undefined;
   if (!channel.chief || !id || id === channel.chief || !channel.members.includes(id)) return true;
-  return entry.type === "notice" && PERSON_ACTS.has(entry.kind);
+  return entry.type === "passed_on" || (entry.type === "notice" && PERSON_ACTS.has(entry.kind));
+}
+
+/** The chats here whose approvals wait in the channel: all but the workers' (theirs wait in the
+ *  worker's thread). */
+function channelApprovalChats(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): Set<string> {
+  const worker = (id: string) => id !== channel.chief && channel.members.includes(id);
+  return new Set((state.visions.chats[channel.id] ?? []).filter(chat => !worker(chat.owner.vision_id)).map(chat => chat.id));
 }
 
 /** Keeps the log at its newest line while the person is there; reading back stays put. `tail`
@@ -131,7 +139,7 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const [loading, setLoading] = useState(false);
   const listed = state.visions.lines[channel.id];
   const read = listed?.filter(line => fromTheChief(channel, line));
-  const chats = new Set((state.visions.chats[channel.id] ?? []).map(chat => chat.id));
+  const chats = channelApprovalChats(state, channel);
   const approvals = state.approvals.filter(request => chats.has(request.thread_id));
   const chief = visionById(state, channel.chief);
   const { reduced, thinking: all, woke, shownUpTo, shown } = useChannelMotion(state, channel, read);
@@ -149,12 +157,12 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   }
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>
-      <ChannelHeader channel={channel} fresh={fresh} />
+      <ChannelTop channel={channel} fresh={fresh} />
       <div className="themis-channel-log" ref={log} onScroll={onScroll}>
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
         {fresh && <ChiefWelcome channel={channel} />}
         <ol className="themis-channel-lines">
-          {shown.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={!reduced && shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
+          {shown.map(line => <ChannelEntryView key={line.seq} line={line} channel={channel} fresh={!reduced && shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
           {approvals.map(request => <ChannelApproval key={request.approval_id} request={request} channelId={channel.id} />)}
           <Thinking visions={thinking} />
         </ol>
