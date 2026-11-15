@@ -222,8 +222,6 @@ export function getChannelSpend(channelId: string): Promise<{ spent_usd: number 
 export function listRoutines(channelId: string): Promise<Routine[]> { return invoke("list_routines", { channelId }); }
 export function setRoutineEnabled(routineId: string, enabled: boolean): Promise<void> { return invoke("set_routine_enabled", { routineId, enabled }); }
 export function deleteRoutine(routineId: string): Promise<void> { return invoke("delete_routine", { routineId }); }
-/** The person accepts or declines a request from another channel their chief left open. */
-export function answerChannelRequest(requestId: string, accept: boolean): Promise<void> { return invoke("answer_channel_request", { requestId, accept }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
 export function getChannelPage(channelId: string, beforeSeq: number | null = null, maxBytes: number | null = null): Promise<ChannelPage> { return invoke("get_channel_page", { channelId, beforeSeq, maxBytes }); }
 /** The post's seq and the Visions whose run will answer it (started, or queued behind one going). */

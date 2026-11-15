@@ -43,7 +43,6 @@ vi.mock("../../lib/visions", async importOriginal => ({
   postChannelMessage: vi.fn(async () => ({ seq: 9, woken: ["juno"] })),
   getTeamLog: vi.fn(async () => ({ entries: [{ seq: 1, at_ms: 0, entry: { kind: "task", from_chief: "juno", text: "Fix the parser from the server." } }], next_before: null })),
   getChannelSpend: vi.fn(async () => ({ spent_usd: 1.2 })),
-  answerChannelRequest: vi.fn(async () => undefined),
   listRoutines: vi.fn(async () => []),
 }));
 
@@ -440,17 +439,15 @@ describe("Team screens", () => {
     expect(screen.getByRole("region", { name: "# api" })).toBeTruthy();
   });
 
-  it("a request waiting on the person can be taken on or declined from its line", async () => {
-    const waiting = [{ type: "request_received", vision_id: "tess", request_id: "q9", channel_id: "c2", ask: "review the changelog" }] as unknown as ChannelEntry[];
-    await show(app, fixture({ lines: { c1: waiting.map((entry, index) => ({ seq: 30 + index, at_ms: 0, entry })) } }));
+  it("a_received_request_is_a_quoted_line_with_nothing_to_answer", async () => {
+    const received = [{ type: "request_received", vision_id: "tess", request_id: "q9", channel_id: "c2", ask: "review the changelog" }] as unknown as ChannelEntry[];
+    await show(app, fixture({ lines: { c1: received.map((entry, index) => ({ seq: 30 + index, at_ms: 0, entry })) } }));
     const note = screen.getByRole("note");
-    await act(async () => { fireEvent.click(within(note).getByRole("button", { name: "Take it on" })); });
-    expect(visions.answerChannelRequest).toHaveBeenCalledWith("q9", true);
-    // Once it is answered, the buttons go.
-    cleanup();
-    const answered = [...waiting, { type: "request_answered", vision_id: "", request_id: "q9", channel_id: "c2", accepted: true, note: "" }] as unknown as ChannelEntry[];
-    await show(app, fixture({ lines: { c1: answered.map((entry, index) => ({ seq: 30 + index, at_ms: 0, entry })) } }));
+    expect(note).toHaveTextContent(/^# apiasks: “review the changelog”/);
+    // The chief takes it on by itself: the only button opens the other channel.
+    expect(within(note).getAllByRole("button").map(button => button.textContent)).toEqual(["# api"]);
     expect(screen.queryByRole("button", { name: "Take it on" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Decline" })).toBeNull();
   });
 
   it("a malformed request or routine line is skipped, the rest of the channel stays", async () => {

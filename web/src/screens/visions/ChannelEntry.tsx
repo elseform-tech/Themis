@@ -2,10 +2,10 @@
 // with its time, the chief's as a bubble on the left with one indicator per worker it tasked there,
 // a chat it started, a question it answered or passed on, or a notice. No avatars or names: the
 // side says who.
-import { Fragment, useState, type ReactNode } from "react";
-import { answerChannelRequest, type ChannelEntry as Entry, type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
+import { Fragment, type ReactNode } from "react";
+import { type ChannelEntry as Entry, type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { ResponseBody } from "../../components/ResponseBody";
-import { describeError, toast, useApp } from "../../state/store";
+import { useApp } from "../../state/store";
 import { ChatChip, ChatLink, channelChat } from "./ChatLink";
 import { ProposalCard } from "./ProposalCard";
 import { AnsweredCard, PassedOnLine } from "./QuestionCards";
@@ -85,31 +85,11 @@ function Notice({ line, channelId }: { line: ChannelLine; channelId: string }) {
 const ARROW = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7h11v11M18 7 6 19" /></svg>;
 const CLOCK = <svg className="themis-team-note-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5h4" /></svg>;
 
-/** A request between channels or a new routine, as one quiet line (board TeamChannel). The other
- *  channel's pill opens it. A line missing what it shows is skipped. */
-/** "Take it on" and "Decline" on a request this channel received, while nobody answered it. */
-function RequestAnswer({ requestId }: { requestId: string }) {
-  const { state, dispatch } = useApp();
-  const [busy, setBusy] = useState(false);
-  const answered = Object.values(state.visions.lines).some(lines => lines.some(line => line.entry.type === "request_answered" && line.entry.request_id === requestId));
-  if (answered) return null;
-  const answer = (accept: boolean) => {
-    setBusy(true);
-    answerChannelRequest(requestId, accept)
-      .catch(reason => toast(dispatch, `Could not answer the request: ${describeError(reason)}`, "danger"))
-      .finally(() => setBusy(false));
-  };
-  return <span className="themis-team-note-actions">
-    <button type="button" className="themis-mention" disabled={busy} onClick={() => answer(true)}>Take it on</button>
-    <button type="button" className="themis-mention" disabled={busy} onClick={() => answer(false)}>Decline</button>
-  </span>;
-}
-
 /** A request line's words around the other channel's pill. */
 function requestWords(entry: Exclude<TeamNoteEntry, { type: "routine_set" }>, pill: ReactNode): ReactNode {
   switch (entry.type) {
     case "request_sent": return <><span>Asked</span>{pill}<span>“{entry.ask}”</span></>;
-    case "request_received": return <>{pill}<span>asks: “{entry.ask}”</span><RequestAnswer requestId={entry.request_id} /></>;
+    case "request_received": return <>{pill}<span>asks: “{entry.ask}”</span></>;
     case "worker_asked": return <>{pill}<span>asks for a worker: {entry.role}. {entry.why}</span></>;
     case "request_answered": return <><span>Request with</span>{pill}<span>{entry.accepted ? "taken on" : "declined"}{entry.note ? `: ${entry.note}` : "."}</span></>;
   }
@@ -122,6 +102,8 @@ function ChannelPill({ channelId }: { channelId: string }) {
   return <button type="button" className="themis-mention" onClick={() => dispatch({ type: "visions/open", channelId })}># {name}</button>;
 }
 
+/** A request between channels or a new routine, as one quiet line (board TeamChannel). The other
+ *  channel's pill opens it. A line missing what it shows is skipped. */
 function TeamNote({ line }: { line: ChannelLine }) {
   const entry = teamNote(line.entry);
   if (!entry) return null;
