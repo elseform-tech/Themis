@@ -6,7 +6,7 @@ import type { Question } from "../../lib/types";
 import { listQuestions, type ChannelEntry } from "../../lib/visions";
 import { describeError, toast, useApp } from "../../state/store";
 
-/** The kinds of decision a Vision weighs, by autonomy row id. */
+/** The kinds of decision a Vision weighs, by the server's decision id. */
 const DECISIONS: Record<string, string> = {
   wording: "Wording", tests: "Tests", undoable: "An undoable step", retry: "A retry", scope: "Scope",
   delete: "Deleting", dependency: "A dependency", external: "Leaves this computer", spend: "Spending",

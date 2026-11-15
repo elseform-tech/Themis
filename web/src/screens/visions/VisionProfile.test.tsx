@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useReducer, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appReducer, initialState, type AppAction, type AppState } from "../../state/reducer";
@@ -24,7 +24,7 @@ vi.mock("../../lib/tauri", async importOriginal => ({
 }));
 vi.mock("../../lib/visions", async importOriginal => ({
   ...await importOriginal<typeof import("../../lib/visions")>(),
-  getVisionsSettings: vi.fn(async () => ({ settings: { enabled: true, autonomy: "most", custom: {}, daily_budget_usd: 2, max_wakes: 8 }, revision: "s1", can_run: true })),
+  getVisionsSettings: vi.fn(async () => ({ settings: { enabled: true, level: "auto_review", daily_budget_usd: 2, max_wakes: 8 }, revision: "s1", can_run: true })),
   saveVision: vi.fn(async (draft: object) => ({ ...draft, revision: "r2" })),
   pauseVision: vi.fn(async () => ({})),
   deleteVision: vi.fn(async () => undefined),
@@ -36,8 +36,8 @@ const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): Visi
   id, name, role: "Builder", color: "teal", soul: "Careful and brief.", paused: false, revision: "r1",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
-const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", full_access: false, members: ["rook"], chief: "rook", revision: "c1r" };
-const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", full_access: false, members: ["admin"], chief: "admin", revision: "h1r" };
+const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", members: ["rook"], chief: "rook", revision: "c1r" };
+const hq: ChannelInfo = { id: "h1", name: "administration", topic: "", project_root: "/p", members: ["admin"], chief: "admin", revision: "h1r" };
 
 function state(): AppState {
   return {
@@ -76,17 +76,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("A chief's profile", () => {
-  it("saves the model and the soul against the profile's revision, and the autonomy on the channel", async () => {
+  it("saves the model and the soul against the profile's revision, and the level on the channel", async () => {
     await show(() => <VisionProfile visionId="rook" />, opened("c1"));
     expect(screen.getByRole("combobox", { name: "Model" })).toHaveDisplayValue("Chat model");
     await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Model" }), { target: { value: "glm-5" } }); });
     expect(visions.saveVision).toHaveBeenLastCalledWith(expect.objectContaining({ model: "glm-5" }), "r1");
-    // Autonomy and budget are the team's (its channel's): Settings › Visions' until the channel sets its own.
-    const autonomy = await screen.findByRole("combobox", { name: "Autonomy" });
-    expect(autonomy).toHaveDisplayValue("Most decisions");
+    // The level and budget are the team's (its channel's): Settings › Visions' until the channel sets its own.
+    expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
+    const level = await screen.findByRole("radiogroup", { name: "Level" });
+    await waitFor(() => expect(within(level).getByRole("radio", { name: "Auto review" })).toHaveAttribute("aria-checked", "true"));
     expect(screen.getByText("$2 a day")).toBeInTheDocument();
-    await act(async () => { fireEvent.change(autonomy, { target: { value: "small" } }); });
-    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ id: "c1", autonomy: "small" }), "c1r");
+    await act(async () => { fireEvent.click(within(level).getByRole("radio", { name: "Full access" })); });
+    expect(visions.saveChannel).toHaveBeenLastCalledWith(expect.objectContaining({ id: "c1", level: "full_access" }), "c1r");
     const soul = screen.getByRole("textbox", { name: "Soul" });
     fireEvent.change(soul, { target: { value: "Bold." } });
     await act(async () => { fireEvent.blur(soul); });
@@ -121,7 +122,7 @@ describe("A chief's profile", () => {
   it("shows Atlas only what applies to it: its soul, its model and Pause", async () => {
     await show(() => <VisionProfile visionId="admin" />, opened(null));
     expect(screen.getByText("Admin, # administration")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "Autonomy" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Level" })).toBeNull();
     expect(screen.queryByRole("list", { name: "Team" })).toBeNull();
     expect(screen.getByRole("textbox", { name: "Soul" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();

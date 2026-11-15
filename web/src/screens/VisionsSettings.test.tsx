@@ -22,7 +22,7 @@ vi.mock("../lib/visions", async importOriginal => ({
   pauseVision: vi.fn(async () => ({})),
 }));
 
-const base: VisionsSettings = { enabled: true, autonomy: "small", custom: {}, daily_budget_usd: 2, max_wakes: 8,
+const base: VisionsSettings = { enabled: true, level: "auto_review", daily_budget_usd: 2, max_wakes: 8,
   requests_per_day: 10, routines_per_chief: 10, quiet_hours: null };
 /** The file as the server holds it: each write must name its current revision (r1, r2, …). */
 let file: { settings: VisionsSettings; revision: number };
@@ -39,17 +39,15 @@ async function open(settings: Partial<VisionsSettings>, canRun = true) {
   serve(settings, canRun);
   await act(async () => { render(<VisionsSettingsSection />); });
 }
-/** Drags the slider over `stops` (1–5) and lets go. */
-async function slide(...stops: number[]) {
-  const slider = screen.getByRole("slider", { name: "Autonomy" });
-  await act(async () => {
-    for (const stop of stops) fireEvent.change(slider, { target: { value: String(stop) } });
-    fireEvent.pointerUp(slider);
-  });
+/** Picks a level on Settings' switch. */
+async function pick(level: "Auto review" | "Full access") {
+  const group = screen.getByRole("radiogroup", { name: "Level for new channels" });
+  await act(async () => { fireEvent.click(within(group).getByRole("radio", { name: level })); });
 }
-/** The answer a row shows, by the row's label. */
-function row(label: string): HTMLElement {
-  return screen.getByText(label).closest(".themis-visions-decision") as HTMLElement;
+/** Which level the switch shows. */
+function shownLevel(): string | null {
+  const group = screen.getByRole("radiogroup", { name: "Level for new channels" });
+  return within(group).getAllByRole("radio").find(radio => radio.getAttribute("aria-checked") === "true")?.textContent ?? null;
 }
 
 beforeEach(() => {
@@ -78,31 +76,40 @@ describe("Settings › Visions", () => {
     expect(visions.updateVisionsSettings).toHaveBeenLastCalledWith({ quiet_hours: { start: "22:00", end: "06:30" } }, "r3");
   });
 
-  it("presets_are_read_only_and_custom_is_editable", async () => {
-    await open({ autonomy: "small" });
-    expect(screen.getByRole("slider", { name: "Autonomy" })).toHaveAttribute("aria-valuetext", "Routine decisions");
-    expect(screen.queryAllByRole("radiogroup")).toHaveLength(0);
-    expect(row("Wording, names and formatting")).toHaveTextContent("Decides");
-    expect(row("Choices it can undo, inside the channel’s goal")).toHaveTextContent("Asks you");
-    expect(row("A new dependency or a security setting")).toHaveTextContent("Asks you");
-    cleanup();
-
-    await open({ autonomy: "custom", custom: { wording: true } });
-    expect(screen.getByRole("slider", { name: "Autonomy" })).toHaveAttribute("aria-valuetext", "Custom");
-    expect(screen.getAllByRole("radiogroup")).toHaveLength(7);
-    const wording = screen.getByRole("radiogroup", { name: "Wording, names and formatting" });
-    expect(within(wording).getByRole("radio", { name: "Decides" })).toHaveAttribute("aria-checked", "true");
-    const deleting = screen.getByRole("radiogroup", { name: "Deleting or replacing work" });
-    expect(within(deleting).getByRole("radio", { name: "Asks you" })).toHaveAttribute("aria-checked", "true");
-    await act(async () => { fireEvent.click(within(deleting).getByRole("radio", { name: "Decides" })); });
-    expect(visions.updateVisionsSettings).toHaveBeenCalledWith({ custom: { wording: true, delete: true } }, "r1");
+  it("level_switch_has_two_options_and_saves_level", async () => {
+    await open({ level: "auto_review" });
+    const group = screen.getByRole("radiogroup", { name: "Level for new channels" });
+    expect(within(group).getAllByRole("radio").map(radio => radio.textContent)).toEqual(["Auto review", "Full access"]);
+    expect(shownLevel()).toBe("Auto review");
+    // Choosing the level it already has writes nothing.
+    await pick("Auto review");
+    expect(visions.updateVisionsSettings).not.toHaveBeenCalled();
+    await pick("Full access");
+    expect(visions.updateVisionsSettings).toHaveBeenCalledWith({ level: "full_access" }, "r1");
+    expect(shownLevel()).toBe("Full access");
+    // Full access on is drawn as the risky one.
+    expect(within(group).getByRole("radio", { name: "Full access" })).toHaveClass("is-danger");
   });
 
-  it("names the levels in plain professional words and shows no hint text", async () => {
+  it("locked_rows_always_ask_you_at_either_level", async () => {
+    for (const level of ["auto_review", "full_access"] as const) {
+      await open({ level });
+      const rows = [...document.querySelectorAll(".themis-visions-decision")].map(row => row.textContent);
+      expect(rows).toEqual([
+        "Anything that leaves this computerAlways asks you",
+        "Deleting or replacing workAlways asks you",
+        "Spending past the budgetAlways asks you",
+      ]);
+      // Nothing to edit there: the only choice is the level.
+      expect(screen.getAllByRole("radiogroup")).toHaveLength(1);
+      cleanup();
+    }
+  });
+
+  it("shows no autonomy ladder and no hint text", async () => {
     await open({});
-    const stops = [...document.querySelectorAll(".themis-visions-stops span")].map(stop => stop.textContent);
-    expect(stops).toEqual(["Always ask", "Routine decisions", "Most decisions", "Nearly all decisions", "Custom"]);
-    expect(document.querySelector(".themis-visions-meta")).toBeNull();
+    expect(screen.queryByRole("slider")).toBeNull();
+    expect(screen.queryByText(/Autonomy|Routine decisions|Custom/)).toBeNull();
     expect(screen.queryByText(/shown for reference|Approvals stay yours|What a Vision decides/)).toBeNull();
   });
 
@@ -113,26 +120,14 @@ describe("Settings › Visions", () => {
     await open({}, false);
     expect(screen.getByRole("status").textContent).toBe("Visions can't run on this computer: it has no sandbox that can confine them.");
     // A write keeps it shown.
-    await slide(4);
+    await pick("Full access");
     expect(screen.getByRole("status")).toBeTruthy();
   });
 
-  it("locked_rows_stay_locked_in_custom", async () => {
-    await open({ autonomy: "custom", custom: { external: true, spend: true } });
-    for (const label of ["Anything that leaves this computer", "Spending past the budget"]) {
-      expect(screen.queryByRole("radiogroup", { name: label })).toBeNull();
-      expect(row(label)).toHaveTextContent("Always asks you");
-    }
-    cleanup();
-    await open({ autonomy: "nearly_all" });
-    expect(row("Anything that leaves this computer")).toHaveTextContent("Always asks you");
-    expect(row("Spending past the budget")).toHaveTextContent("Always asks you");
-  });
-
   it("each_field_saves_alone_with_the_page_revision", async () => {
-    await open({ autonomy: "small" });
-    await slide(3);
-    expect(visions.updateVisionsSettings).toHaveBeenCalledWith({ autonomy: "most" }, "r1");
+    await open({ level: "auto_review" });
+    await pick("Full access");
+    expect(visions.updateVisionsSettings).toHaveBeenCalledWith({ level: "full_access" }, "r1");
     const budget = screen.getByRole("spinbutton", { name: "Daily budget, all Visions" });
     fireEvent.change(budget, { target: { value: "5" } });
     await act(async () => { fireEvent.blur(budget); });
@@ -141,46 +136,27 @@ describe("Settings › Visions", () => {
     expect(visions.updateVisionsSettings).toHaveBeenCalledTimes(2);
   });
 
-  it("saves a drag across several stops once, where it is let go", async () => {
-    await open({ autonomy: "small" });
-    await slide(3, 4);
-    expect(visions.updateVisionsSettings).toHaveBeenCalledTimes(1);
-    expect(visions.updateVisionsSettings).toHaveBeenCalledWith({ autonomy: "nearly_all" }, "r1");
-    expect(screen.getByRole("slider", { name: "Autonomy" })).toHaveAttribute("aria-valuetext", "Nearly all decisions");
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("runs quick writes one at a time, each on the latest revision and rows", async () => {
-    await open({ autonomy: "custom", custom: {} });
+  it("runs quick writes one at a time, each on the latest revision and level", async () => {
+    await open({ level: "auto_review" });
+    const group = screen.getByRole("radiogroup", { name: "Level for new channels" });
     await act(async () => {
-      fireEvent.click(within(screen.getByRole("radiogroup", { name: "Deleting or replacing work" })).getByRole("radio", { name: "Decides" }));
-      fireEvent.click(within(screen.getByRole("radiogroup", { name: "Changing the goal or the scope" })).getByRole("radio", { name: "Decides" }));
+      fireEvent.click(within(group).getByRole("radio", { name: "Full access" }));
+      fireEvent.click(within(group).getByRole("radio", { name: "Auto review" }));
     });
     expect(vi.mocked(visions.updateVisionsSettings).mock.calls).toEqual([
-      [{ custom: { delete: true } }, "r1"],
-      [{ custom: { delete: true, scope: true } }, "r2"],
+      [{ level: "full_access" }, "r1"],
+      [{ level: "auto_review" }, "r2"],
     ]);
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("starts Custom from the level it came from, so nothing changes until a row is edited", async () => {
-    await open({ autonomy: "most", custom: {} });
-    await slide(5);
-    expect(visions.updateVisionsSettings).toHaveBeenCalledWith({
-      autonomy: "custom",
-      custom: { wording: true, tests: true, undoable: true, retry: true, scope: false, delete: false, dependency: false },
-    }, "r1");
-    const retry = screen.getByRole("radiogroup", { name: "Retrying or re-planning after a failure" });
-    expect(within(retry).getByRole("radio", { name: "Decides" })).toHaveAttribute("aria-checked", "true");
-  });
-
   it("shows a refused write and reads the file again", async () => {
-    await open({ autonomy: "small" });
+    await open({ level: "auto_review" });
     // Someone edits runtime.jsonc after the page loaded.
-    file = { settings: { ...file.settings, autonomy: "ask" }, revision: 2 };
-    await slide(3);
+    file = { settings: { ...file.settings, level: "full_access" }, revision: 2 };
+    await pick("Full access");
     expect(screen.getByRole("alert")).toHaveTextContent("changed since this page loaded");
-    expect(screen.getByRole("slider", { name: "Autonomy" })).toHaveAttribute("aria-valuetext", "Always ask");
+    expect(shownLevel()).toBe("Full access");
   });
 
   it("keeps the budget within $0.10 to $100, saying so plainly", async () => {

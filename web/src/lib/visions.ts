@@ -9,7 +9,10 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
   return tauriInvoke<T>("backend_command", { command, args });
 }
 
-export type Autonomy = "ask" | "small" | "most" | "nearly_all" | "custom";
+/** How far a team goes on its own (Rust `Level`): Auto review runs its chats in Auto, Full access
+ *  in YOLO. Either way, what leaves this computer, deleting or replacing work and spending past the
+ *  budget always ask the person. */
+export type Level = "auto_review" | "full_access";
 
 /** The built-in admin Vision's id: Atlas, drawn with a crown, the only member of each `# administration`. */
 export const ADMIN_VISION_ID = "admin";
@@ -54,15 +57,11 @@ export interface ChannelInfo {
   name: string;
   topic: string;
   project_root: string;
-  /** Full access: the team's chats run in YOLO. Off, the autonomy decides: Always ask runs them in
-   *  Custom, every other level in Auto (the server derives the mode). */
-  full_access: boolean;
   members: string[];
   /** The member the person talks to; the others are its workers. */
   chief: string;
-  /** The team's autonomy and rows; Settings › Visions' when absent. */
-  autonomy?: Autonomy;
-  custom?: Record<string, boolean>;
+  /** The team's level; Settings › Visions' when absent or null. Only the person sets it. */
+  level?: Level | null;
   /** The team's daily budget in dollars (none: Settings › Visions'); Settings' total caps it. */
   daily_budget_usd?: number | null;
   /** Workers its chief paused here; only the chief's team calls change it. */
@@ -107,7 +106,7 @@ export type NoticeKind =
 export interface Proposal {
   summary: string;
   channels: Array<{ name: string; topic: string; members: string[] }>;
-  visions: Array<{ name: string; role: string; color: string; model?: string; autonomy?: Autonomy; daily_budget_usd?: number }>;
+  visions: Array<{ name: string; role: string; color: string; model?: string; daily_budget_usd?: number }>;
   changes: ProposalChange[];
   /** A whole team for a new channel. */
   team?: ProposalTeam;
@@ -120,7 +119,6 @@ export interface ProposalTeam {
   channel: { name: string; topic?: string };
   chief: ProposalMember;
   workers: ProposalMember[];
-  autonomy?: Autonomy;
   daily_budget_usd?: number;
 }
 export interface ProposalChange {
@@ -130,7 +128,6 @@ export interface ProposalChange {
   role?: string;
   topic?: string;
   paused?: boolean;
-  autonomy?: Autonomy;
   daily_budget_usd?: number;
   add_members?: string[];
   remove_members?: string[];
@@ -178,8 +175,8 @@ export interface ChannelPage {
 /** Settings › Visions (`visions` in your runtime.jsonc). */
 export interface VisionsSettings {
   enabled: boolean;
-  autonomy: Autonomy;
-  custom: Record<string, boolean>;
+  /** The level of new channels and of channels with none of their own. */
+  level: Level;
   daily_budget_usd: number;
   max_wakes: number;
   /** Requests a channel may send other channels a day (1–100). */
@@ -222,8 +219,6 @@ export function getChannelSpend(channelId: string): Promise<{ spent_usd: number 
 export function listRoutines(channelId: string): Promise<Routine[]> { return invoke("list_routines", { channelId }); }
 export function setRoutineEnabled(routineId: string, enabled: boolean): Promise<void> { return invoke("set_routine_enabled", { routineId, enabled }); }
 export function deleteRoutine(routineId: string): Promise<void> { return invoke("delete_routine", { routineId }); }
-/** The person accepts or declines a request from another channel their chief left open. */
-export function answerChannelRequest(requestId: string, accept: boolean): Promise<void> { return invoke("answer_channel_request", { requestId, accept }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
 export function getChannelPage(channelId: string, beforeSeq: number | null = null, maxBytes: number | null = null): Promise<ChannelPage> { return invoke("get_channel_page", { channelId, beforeSeq, maxBytes }); }
 /** The post's seq and the Visions whose run will answer it (started, or queued behind one going). */

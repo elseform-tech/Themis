@@ -1,7 +1,7 @@
 // The channel's composer (boards ChannelPlain, AdminChannel), in the chat composer's frame (its
 // focus edge is the focus indicator): "Message <chief>" and Send. A post wakes only the chief, so
-// there is nothing to mention. There is no mode shield: the channel's autonomy and Full access, in
-// its details, set its chats' approvals.
+// there is nothing to mention. There is no mode shield: the channel's level, in its details, sets
+// its chats' approvals.
 import { useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "../../components";
 import { postChannelMessage, type ChannelInfo } from "../../lib/visions";

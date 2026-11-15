@@ -8,7 +8,7 @@ type AppState = ReturnType<typeof useApp>["state"];
 
 /** `# administration`: the project's built-in channel, or an empty one until it exists. */
 function emptyHq(root: string): ChannelInfo {
-  return { id: "", name: ADMINISTRATION, topic: "", project_root: root, full_access: false, members: [], chief: "", revision: "" };
+  return { id: "", name: ADMINISTRATION, topic: "", project_root: root, members: [], chief: "", revision: "" };
 }
 
 export interface ProjectChannels {
@@ -35,8 +35,8 @@ export function projectChannels(state: AppState): ProjectChannels {
 /** Saves a change to a channel against its revision and puts the saved channel in the list; the
  *  chief leaves with its membership (the first member left leads). Throws the server's refusal. */
 export async function saveChannelChange(state: AppState, dispatch: (action: VisionsAction) => void, channel: ChannelInfo, change: Partial<ChannelInfo>): Promise<void> {
-  const { id, name, topic, project_root, full_access, members, chief, autonomy, custom, daily_budget_usd, revision } = channel;
-  const next = { id, name, topic, project_root, full_access, members, chief, autonomy, custom, daily_budget_usd, ...change };
+  const { id, name, topic, project_root, members, chief, level, daily_budget_usd, revision } = channel;
+  const next = { id, name, topic, project_root, members, chief, level, daily_budget_usd, ...change };
   if (!next.members.includes(next.chief)) next.chief = next.members[0] ?? "";
   const saved = await saveChannel(next, revision);
   const listed = state.visions.channels[project_root] ?? [];

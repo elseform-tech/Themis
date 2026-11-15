@@ -1,18 +1,18 @@
 // A chief of staff's profile (board ChiefProfile), opened from its channel's header in the
 // channel's place: "← # channel", the chief in 3D with its name, job and state, and Pause; its
-// soul, saved in place; its model; the channel's autonomy and budget; its team; its routines.
+// soul, saved in place; its model; the channel's level and budget; its team; its routines.
 // Atlas, the built-in admin, shows its soul and model only. Workers have no profile.
 import { useEffect, useState } from "react";
 import { listGoModels, listModelProviders } from "../../lib/tauri";
 import type { GoModel, ModelProvider } from "../../lib/types";
-import { ADMIN_VISION_ID, pauseVision, saveVision, type Autonomy, type ChannelInfo, type VisionInfo, type VisionProfile as Profile, type VisionsSettings } from "../../lib/visions";
+import { ADMIN_VISION_ID, pauseVision, saveVision, type ChannelInfo, type VisionInfo, type VisionProfile as Profile, type VisionsSettings } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { ModelOptions } from "../ModelsSettings";
-import { AUTONOMY_STOPS, LEVELS } from "./autonomy";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { projectChannels, saveChannelChange } from "./channels";
 import { EXPRESSION_LABEL } from "./Expression";
+import { LevelSwitch } from "./LevelSwitch";
 import { Routines, type RoutineControls } from "./Routines";
 import { PauseIcon, PlayIcon } from "./SidePanel";
 import { ChiefScene } from "./three/ChiefScene";
@@ -67,22 +67,16 @@ function SoulField({ soul, save }: { soul: string; save: Save }) {
     onChange={event => setDraft(event.target.value)} onBlur={commit} />;
 }
 
-/** The channel's autonomy (saved on the channel) and today's budget. `spentToday` is unknown
+/** The channel's level (saved on the channel) and today's budget. `spentToday` is unknown
  *  until the server reports a channel's spend. */
 function ChannelLimits({ channel, settings, spentToday, onError }: { channel: ChannelInfo; settings: VisionsSettings | null; spentToday?: number; onError: (reason: unknown) => void }) {
   const { state, dispatch } = useApp();
-  const level = channel.autonomy ?? settings?.autonomy;
+  const level = channel.level ?? settings?.level;
   const limit = channel.daily_budget_usd ?? settings?.daily_budget_usd;
-  const choices = AUTONOMY_STOPS.filter(stop => stop !== "custom" || level === "custom");
   return <div className="themis-profile-pair">
     <section className="themis-profile-block">
-      <h2 className="themis-visions-label">Autonomy</h2>
-      <label className="themis-profile-field">
-        <select aria-label="Autonomy" value={level ?? ""} onChange={event => void saveChannelChange(state, dispatch, channel, { autonomy: event.target.value as Autonomy }).catch(onError)}>
-          {level === undefined && <option value="" />}
-          {choices.map(stop => <option key={stop} value={stop}>{LEVELS[stop]}</option>)}
-        </select>
-      </label>
+      <h2 className="themis-visions-label">Level</h2>
+      <LevelSwitch label="Level" level={level} onChange={next => { if (next !== level) void saveChannelChange(state, dispatch, channel, { level: next }).catch(onError); }} />
     </section>
     {limit !== undefined && <section className="themis-profile-block">
       <h2 className="themis-visions-label">Budget</h2>

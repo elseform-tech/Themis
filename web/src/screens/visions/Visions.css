@@ -238,4 +238,3 @@
 .themis-team-card-done { display: inline-flex; margin-left: auto; align-items: center; gap: 5px; color: var(--themis-success); font-size: 12px; font-weight: 600; }
 
 /* A request this channel received waits for the person: its two answers sit on the line. */
-.themis-team-note-actions { display: inline-flex; gap: 6px; margin-left: 4px; }

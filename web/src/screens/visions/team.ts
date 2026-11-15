@@ -144,7 +144,7 @@ export function teamNote(entry: unknown): TeamNoteEntry | null {
 /** A team proposal or a hire, as Task 6 will send it inside a proposal. */
 export interface ProposedMember { name: string; role?: string; color?: string; accessory?: string; model?: string }
 export interface TeamProposal {
-  team?: { channel: { name: string; topic?: string }; chief: ProposedMember; workers: ProposedMember[]; autonomy?: ChannelInfo["autonomy"]; daily_budget_usd?: number };
+  team?: { channel: { name: string; topic?: string }; chief: ProposedMember; workers: ProposedMember[]; daily_budget_usd?: number };
   hire?: { channel: string; worker: ProposedMember };
 }
 
