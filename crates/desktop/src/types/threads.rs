@@ -60,7 +60,6 @@ pub struct ThreadInfo {
 pub struct ThreadVision {
     pub id: String,
     pub name: String,
-    pub shape: String,
     pub color: String,
 }
 

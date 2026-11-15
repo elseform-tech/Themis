@@ -33,7 +33,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
 }));
 
 const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): VisionInfo => ({
-  id, name, role: "Builder", shape: "flat", color: "teal", soul: "Careful and brief.", paused: false, revision: "r1",
+  id, name, role: "Builder", color: "teal", soul: "Careful and brief.", paused: false, revision: "r1",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const release: ChannelInfo = { id: "c1", name: "release", topic: "Ship 0.9", project_root: "/p", full_access: false, members: ["rook"], chief: "rook", revision: "c1r" };

@@ -27,7 +27,6 @@ fn setup(model: Option<&str>) -> Setup {
                 id: String::new(),
                 name: "Wren".into(),
                 role: String::new(),
-                shape: "cloud".into(),
                 color: "teal".into(),
                 model: model.map(str::to_owned),
                 accessory: "none".into(),

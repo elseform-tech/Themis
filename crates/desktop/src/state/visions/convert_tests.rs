@@ -131,7 +131,6 @@ fn vision(name: &str) -> Vision {
         id: String::new(),
         name: name.into(),
         role: String::new(),
-        shape: "cloud".into(),
         color: "blue".into(),
         accessory: "none".into(),
         model: None,

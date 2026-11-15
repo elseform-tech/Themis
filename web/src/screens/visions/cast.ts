@@ -1,12 +1,12 @@
-// The Visions cast (canvas boards Cloud3D and TeamChannel). A Vision's look is `{shape, color,
-// accessory}`. Every Vision has the same body, the rail icon's outline, with eyes only; the colour
+// The Visions cast (canvas boards Cloud3D and TeamChannel). A Vision's look is `{color, accessory}`.
+// Every Vision has the same body, the rail icon's outline, with eyes only; the colour
 // (a hi/mid/lo ramp for shaded pictures, a flat tint for small avatars) and the accessory tell them
 // apart. The seven board characters are presets; every combination renders. All geometry is the
 // board's, on its 48-unit square.
 import { ADMIN_VISION_ID } from "../../lib/visions";
 
-/** What a Vision wears and is shaped like, as saved in its profile. */
-export interface Look { shape: string; color: string; accessory: string }
+/** What colour a Vision is and what it wears, as saved in its profile. */
+export interface Look { color: string; accessory: string }
 
 /** The one body outline (the rail icon's shape on the 48 box), for every Vision. */
 export const OUTLINE = "M13 39h22a8 8 0 0 0 .8-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13 39Z";
@@ -16,19 +16,6 @@ export const EYES = { l: 19.5, r: 28.5, y: 29 };
 export const HIGHLIGHT = { x: 20.5, y: 17.4 };
 /** Small avatars' eyes: path and stroke width. */
 export const FLAT_EYES: [string, number] = [`M${EYES.l} ${EYES.y}h.01M${EYES.r} ${EYES.y}h.01`, 4.4];
-
-export interface Shape {
-  label: string;
-  /** Body path: the one outline. */
-  body: string;
-  /** Eye centres and height for the shaded face. */
-  eyes: { l: number; r: number; y: number };
-}
-
-/** The shape ids a profile may hold; each draws the one outline. `broad` is Atlas's. */
-const SHAPE_LABELS: Record<string, string> = { tall: "Tall cloud", broad: "Broad cloud", flat: "Flat cloud", "two-bump": "Two-bump cloud", leaning: "Leaning cloud", wide: "Wide cloud", fluffy: "Fluffy cloud" };
-
-export const SHAPES: Record<string, Shape> = Object.fromEntries(Object.entries(SHAPE_LABELS).map(([id, label]) => [id, { label, body: OUTLINE, eyes: EYES }]));
 
 export interface Color {
   label: string;
@@ -76,25 +63,25 @@ export const ACCESSORIES: Record<string, Accessory> = {
   magnifier: accessory("Magnifier", { line: "M42.3 36.3L47 42", lineColor: "#7C5A3A", lineWidth: 3, solid: ring(38, 32, 5.5, 5.5), fill: "rgba(207,235,255,.55)", stroke: "#475569", inner: "M35 30.4q.9-1.6 2.6-2", ink: "#FFFFFF", innerWidth: 1.2 }),
 };
 
-/** The seven characters on the board: each a shape, colour and accessory of its own. */
+/** The seven characters on the board: each a colour and accessory of its own. */
 export const PRESETS: Array<{ name: string; role: string; look: Look }> = [
-  { name: "Juno", role: "Chief of staff", look: { shape: "tall", color: "blue", accessory: "clipboard" } },
-  { name: "Atlas", role: "Admin", look: { shape: "broad", color: "slate", accessory: "crown" } },
-  { name: "Rook", role: "Builder", look: { shape: "flat", color: "teal", accessory: "hard_hat" } },
-  { name: "Wren", role: "Reviewer", look: { shape: "two-bump", color: "violet", accessory: "glasses" } },
-  { name: "Pip", role: "Scout", look: { shape: "leaning", color: "amber", accessory: "goggles" } },
-  { name: "Sol", role: "Watcher", look: { shape: "wide", color: "rose", accessory: "headphones" } },
-  { name: "Tess", role: "UI tester", look: { shape: "fluffy", color: "coral", accessory: "magnifier" } },
+  { name: "Juno", role: "Chief of staff", look: { color: "blue", accessory: "clipboard" } },
+  { name: "Atlas", role: "Admin", look: { color: "slate", accessory: "crown" } },
+  { name: "Rook", role: "Builder", look: { color: "teal", accessory: "hard_hat" } },
+  { name: "Wren", role: "Reviewer", look: { color: "violet", accessory: "glasses" } },
+  { name: "Pip", role: "Scout", look: { color: "amber", accessory: "goggles" } },
+  { name: "Sol", role: "Writer", look: { color: "rose", accessory: "headphones" } },
+  { name: "Tess", role: "UI tester", look: { color: "coral", accessory: "magnifier" } },
 ];
 
-/** The shape, colour and accessory to draw: an unknown id falls back to the first shape, blue and none. */
-export function resolveLook(look: Look): { shape: Shape; color: Color; accessory: Accessory; accessoryId: string } {
+/** The colour and accessory to draw: an unknown id falls back to blue and none. */
+export function resolveLook(look: Look): { color: Color; accessory: Accessory; accessoryId: string } {
   const accessoryId = look.accessory in ACCESSORIES ? look.accessory : "none";
-  return { shape: SHAPES[look.shape] ?? SHAPES.tall!, color: COLORS[look.color] ?? COLORS.blue!, accessory: ACCESSORIES[accessoryId]!, accessoryId };
+  return { color: COLORS[look.color] ?? COLORS.blue!, accessory: ACCESSORIES[accessoryId]!, accessoryId };
 }
 
 /** A Vision's look from its profile. Atlas, the built-in admin, always wears the crown until its
  *  profile says otherwise; any other Vision without an accessory wears none. */
-export function lookOf(vision: { id?: string; shape: string; color: string; accessory?: string }): Look {
-  return { shape: vision.shape, color: vision.color, accessory: vision.accessory ?? (vision.id === ADMIN_VISION_ID ? "crown" : "none") };
+export function lookOf(vision: { id?: string; color: string; accessory?: string }): Look {
+  return { color: vision.color, accessory: vision.accessory ?? (vision.id === ADMIN_VISION_ID ? "crown" : "none") };
 }

@@ -7,7 +7,7 @@ import { selectionToSave } from "./store";
 import type { OwnedChat } from "../lib/visions";
 
 const VISION: VisionInfo = {
-  id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false,
+  id: "v1", name: "Wren", role: "", color: "teal", soul: "", paused: false,
   revision: "r1", over_budget: false, vision_chats: [], needs: 0, sorry: false,
 };
 

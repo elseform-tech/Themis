@@ -31,7 +31,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
 const base = { provider: "go" as const, model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
 const plain: ThreadInfo = { ...base, id: "plain", title: "Plain chat", last_activity_seq: 1 };
 const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): VisionInfo => ({
-  id, name, role: "", shape: "flat", color: "teal", soul: "", paused: false, revision: "r",
+  id, name, role: "", color: "teal", soul: "", paused: false, revision: "r",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const owned = (id: string, title: string, visionId: string, running: boolean): OwnedChat => ({
@@ -337,18 +337,18 @@ describe("Visions view", () => {
     expect(await screen.findByRole("region", { name: "# watch-ci" })).toBeTruthy();
   });
 
-  it("new vision saves its name, cloud and role", async () => {
+  it("new vision saves its name, colour and role, with no shape to pick", async () => {
     vi.mocked(visionsBridge.saveVision).mockImplementation(async draft => ({ ...draft, id: "v3", role: draft.role ?? "", soul: "", paused: false, revision: "r" }));
     const view = await openRelease();
     fireEvent.click(within(view).getByRole("button", { name: "# release: channel details" }));
     fireEvent.click(screen.getByRole("button", { name: "New Vision" }));
     const sheet = screen.getByRole("dialog", { name: "New Vision" });
     fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Echo" } });
-    fireEvent.click(within(sheet).getByRole("button", { name: "Wide cloud" }));
+    expect(within(sheet).queryByRole("group", { name: "Shape" })).toBeNull();
     fireEvent.click(within(sheet).getByRole("button", { name: "Rose" }));
     fireEvent.change(within(sheet).getByLabelText("Role"), { target: { value: "Scribe" } });
     fireEvent.click(within(sheet).getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", shape: "wide", color: "rose", accessory: "none" }, null));
+    await waitFor(() => expect(visionsBridge.saveVision).toHaveBeenCalledWith({ name: "Echo", role: "Scribe", color: "rose", accessory: "none" }, null));
     // It can join the channel from there.
     const details = screen.getByRole("complementary", { name: "Channel details" });
     expect(await within(details).findByRole("option", { name: "Echo" })).toBeTruthy();

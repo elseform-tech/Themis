@@ -170,7 +170,6 @@ fn every_proposal_field() -> Proposal {
         visions: vec![NewVision {
             name: "Rook".into(),
             role: "Ships releases".into(),
-            shape: "wide".into(),
             color: "rose".into(),
             model: Some("go/test-model".into()),
             autonomy: Some(Autonomy::Ask),
@@ -203,7 +202,6 @@ fn every_proposal_field() -> Proposal {
             chief: NewMember {
                 name: "Juno".into(),
                 role: String::new(),
-                shape: "cloud".into(),
                 color: "teal".into(),
                 accessory: "glasses".into(),
                 soul: "Calm and direct.".into(),
@@ -212,7 +210,6 @@ fn every_proposal_field() -> Proposal {
             workers: vec![NewMember {
                 name: "Tess".into(),
                 role: "Tests".into(),
-                shape: "broad".into(),
                 color: "coral".into(),
                 accessory: "magnifier".into(),
                 soul: String::new(),
@@ -226,7 +223,6 @@ fn every_proposal_field() -> Proposal {
             worker: NewMember {
                 name: "Ada".into(),
                 role: "Writes".into(),
-                shape: "wide".into(),
                 color: "rose".into(),
                 accessory: "none".into(),
                 soul: String::new(),
@@ -290,7 +286,6 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             id: "v1".into(),
             name: "Wren".into(),
             role: "Release captain".into(),
-            shape: "cloud".into(),
             color: "teal".into(),
             model: Some("go/test-model".into()),
             accessory: "glasses".into(),

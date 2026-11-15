@@ -14,7 +14,6 @@ fn vision(name: &str) -> Vision {
         id: String::new(),
         name: name.into(),
         role: "Keeps the docs tidy".into(),
-        shape: "cloud".into(),
         color: "blue".into(),
         model: None,
         accessory: "none".into(),
@@ -264,6 +263,29 @@ fn a_store_file_edited_on_disk_is_not_overwritten() {
     state
         .vision_save(reloaded[0].clone(), Some(&reloaded[0].revision))
         .unwrap();
+}
+
+/// A Vision has no shape: a store file that still holds one loads, and the next save drops it.
+#[test]
+fn an_old_shape_in_the_store_file_loads_and_is_not_saved_again() {
+    let dir = tempfile::tempdir().unwrap();
+    state_in(dir.path())
+        .vision_save(vision("Wren"), None)
+        .unwrap();
+    let path = dir.path().join(VISIONS_DIR).join(VISIONS_FILE);
+    let mut old: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    old[0]["shape"] = "cloud".into();
+    std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+
+    let state = state_in(dir.path());
+    let listed = state.visions_list();
+    assert_eq!(listed.len(), 1);
+    state
+        .vision_save(listed[0].clone(), Some(&listed[0].revision))
+        .unwrap();
+    let saved = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+    assert!(!saved.contains("shape"), "{saved}");
 }
 
 /// A channel's chats ask before changes only when its team decides nothing on its own (Always

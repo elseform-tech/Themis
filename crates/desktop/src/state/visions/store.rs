@@ -252,8 +252,6 @@ pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
         .ok_or("A Vision needs a name of at most 60 characters")?;
     spec.role = bounded(&spec.role, MAX_ROLE_CHARS, true)
         .ok_or("A Vision's role is at most 200 characters")?;
-    spec.shape = bounded(&spec.shape, MAX_LOOK_CHARS, false)
-        .ok_or("A Vision needs a shape of at most 40 characters")?;
     spec.color = bounded(&spec.color, MAX_LOOK_CHARS, false)
         .ok_or("A Vision needs a colour of at most 40 characters")?;
     spec.model = match spec.model.as_deref().map(str::trim) {

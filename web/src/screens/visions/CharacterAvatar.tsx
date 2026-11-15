@@ -3,15 +3,15 @@
 // only drives the quiet motion when `live` (Visions.css); message avatars are never live, and
 // reduced motion stops every avatar.
 import type { Mood } from "../../state/visions";
-import { FLAT_EYES, resolveLook, type Look } from "./cast";
+import { FLAT_EYES, OUTLINE, resolveLook, type Look } from "./cast";
 import "./Visions.css";
 
 export function CharacterAvatar({ look, size = 18, mood = "calm", live = false, accessory: worn = true }: { look: Look; size?: number; mood?: Mood; live?: boolean; accessory?: boolean }) {
-  const { shape, color, accessory, accessoryId } = resolveLook(look);
+  const { color, accessory, accessoryId } = resolveLook(look);
   const [eyes, eyeWidth] = FLAT_EYES;
   return (
     <svg className={`themis-cloud themis-cloud--${mood}${live ? " is-live" : ""}`} width={size} height={size} viewBox="0 0 48 48" aria-hidden="true" focusable="false" data-accessory={worn ? accessoryId : "none"}>
-      <path d={shape.body} fill={color.flat} />
+      <path d={OUTLINE} fill={color.flat} />
       <path className="themis-cloud-eyes" d={eyes} strokeWidth={eyeWidth} />
       {worn && (
         <>

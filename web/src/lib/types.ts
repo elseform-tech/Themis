@@ -67,7 +67,6 @@ export interface ThreadInfo {
 export interface ThreadVision {
   id: string;
   name: string;
-  shape: string;
   color: string;
 }
 

@@ -9,7 +9,7 @@ import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 
 type AppState = ReturnType<typeof useApp>["state"];
-type Look = Pick<ThreadVision, "name" | "shape" | "color"> & { id?: string; accessory?: string };
+type Look = Pick<ThreadVision, "name" | "color"> & { id?: string; accessory?: string };
 
 /** How a Vision looks now: its listed profile, else what the chat was marked with. */
 export function visionLook(state: AppState, id: string, marked?: Look): Look | undefined {

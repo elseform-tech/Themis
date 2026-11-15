@@ -95,12 +95,10 @@ async fn the_admin_proposes_and_creates_only_after_the_person_replies() {
     assert_eq!(card["vision_id"], ADMIN);
     assert_eq!(card["proposal_id"], id.as_str());
     assert_eq!(card["proposal"]["summary"], releases()["summary"]);
-    // The server gives the new Vision its look, so the card can draw it.
+    // The server gives the new Vision its colour, so the card can draw it (a Vision has no shape).
     let rook = &card["proposal"]["visions"][0];
     assert_eq!(rook["name"], "Rook");
-    assert!(rook["shape"]
-        .as_str()
-        .is_some_and(|shape| !shape.is_empty()));
+    assert!(rook.get("shape").is_none(), "{rook}");
     assert!(rook["color"]
         .as_str()
         .is_some_and(|color| !color.is_empty()));
@@ -199,7 +197,7 @@ async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
     let revision = named(&saved, "Wren").unwrap()["revision"].clone();
     fx.call_ok(
         "save_vision",
-        json!({"vision": {"id": wren, "name": "Wren", "shape": "cloud", "color": "teal",
+        json!({"vision": {"id": wren, "name": "Wren", "color": "teal",
             }, "revision": revision}),
     );
     fx.state
@@ -308,7 +306,7 @@ async fn the_admin_cannot_drive_chats() {
         ("list_channel_threads", json!({"channelId": hq})),
         (
             "save_vision",
-            json!({"vision": {"name": "X", "shape": "tall", "color": "blue"}}),
+            json!({"vision": {"name": "X", "color": "blue"}}),
         ),
         ("delete_vision", json!({"visionId": wren})),
         ("plugin_action", json!({"action": "list"})),

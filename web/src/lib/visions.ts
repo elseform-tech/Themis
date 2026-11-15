@@ -28,7 +28,6 @@ export interface VisionProfile {
   id: string;
   name: string;
   role: string;
-  shape: string;
   color: string;
   /** What it wears (an id from `cast.ts`); the server supplies it, absent means none. */
   accessory?: string;
@@ -108,7 +107,7 @@ export type NoticeKind =
 export interface Proposal {
   summary: string;
   channels: Array<{ name: string; topic: string; members: string[] }>;
-  visions: Array<{ name: string; role: string; shape: string; color: string; model?: string; autonomy?: Autonomy; daily_budget_usd?: number }>;
+  visions: Array<{ name: string; role: string; color: string; model?: string; autonomy?: Autonomy; daily_budget_usd?: number }>;
   changes: ProposalChange[];
   /** A whole team for a new channel. */
   team?: ProposalTeam;
@@ -116,7 +115,7 @@ export interface Proposal {
   hire?: { channel: string; worker: ProposalMember };
 }
 /** A chief or worker in a proposal; its look is filled by the server when absent. */
-export interface ProposalMember { name: string; role?: string; shape?: string; color?: string; accessory?: string; soul?: string; model?: string }
+export interface ProposalMember { name: string; role?: string; color?: string; accessory?: string; soul?: string; model?: string }
 export interface ProposalTeam {
   channel: { name: string; topic?: string };
   chief: ProposalMember;

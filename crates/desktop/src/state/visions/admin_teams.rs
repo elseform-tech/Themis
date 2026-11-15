@@ -29,16 +29,14 @@ pub struct TeamChannel {
     pub topic: String,
 }
 
-/// A chief or a worker to make. Its look is chosen by the server when the proposal names none;
-/// only a chief has a soul, and every worker has a role.
+/// A chief or a worker to make. Its colour is chosen by the server when the proposal names none;
+/// only a chief has a soul, and every worker has a role. Unknown fields are ignored, not refused,
+/// so proposals logged before a field was dropped still read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct NewMember {
     pub name: String,
     #[serde(default)]
     pub role: String,
-    #[serde(default)]
-    pub shape: String,
     #[serde(default)]
     pub color: String,
     #[serde(default)]
@@ -95,7 +93,6 @@ pub(super) fn member_profile(new: &NewMember) -> Vision {
         id: String::new(),
         name: new.name.trim().to_owned(),
         role: new.role.trim().to_owned(),
-        shape: new.shape.clone(),
         color: new.color.clone(),
         model: new.model.clone().filter(|model| !model.trim().is_empty()),
         accessory: if new.accessory.trim().is_empty() {
@@ -192,7 +189,7 @@ pub(super) fn check_hire(
     check_member(&hire.worker, false, context, names)
 }
 
-/// Gives each new member without a look one, in turn after `existing` Visions.
+/// Gives each new member without a colour one, in turn after `existing` Visions.
 pub(super) fn fill_member_looks(proposal: &mut Proposal, existing: usize) {
     let mut members: Vec<&mut NewMember> = Vec::new();
     if let Some(team) = proposal.team.as_mut() {
@@ -203,9 +200,6 @@ pub(super) fn fill_member_looks(proposal: &mut Proposal, existing: usize) {
         members.push(&mut hire.worker);
     }
     for (at, member) in members.into_iter().enumerate() {
-        if member.shape.trim().is_empty() {
-            member.shape = SHAPES[(existing + at) % SHAPES.len()].to_owned();
-        }
         if member.color.trim().is_empty() {
             member.color = COLORS[(existing + at) % COLORS.len()].to_owned();
         }

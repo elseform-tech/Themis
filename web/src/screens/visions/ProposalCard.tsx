@@ -87,7 +87,7 @@ function SetUp({ items, onOpenChannel }: { items: SetUpItem[]; onOpenChannel: (c
 
 function Member({ member }: { member: ProposedMember }) {
   return <li className="themis-team-card-member">
-    <CharacterAvatar look={lookOf({ shape: member.shape ?? "", color: member.color ?? "", accessory: member.accessory })} size={22} />
+    <CharacterAvatar look={lookOf({ color: member.color ?? "", accessory: member.accessory })} size={22} />
     <b>{member.name}</b>{member.role && <span>{member.role}</span>}
   </li>;
 }
