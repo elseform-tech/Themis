@@ -133,8 +133,8 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    /// A team's work chat finished run `run_id`: the questions it left open in earlier runs
-    /// without waiting on them are dropped (it moved on, so their cards go), and its channel is
+    /// A team's work chat finished run `run_id`: the permission questions it left open in
+    /// earlier runs are dropped (their steps are over, so their cards go), and its channel is
     /// told. Any other chat keeps its questions.
     pub(crate) fn visions_drop_stale_questions(
         &self,

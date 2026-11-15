@@ -367,14 +367,15 @@ impl AppState {
         self.save_questions(thread_id, &questions);
     }
 
-    /// Drops `thread_id`'s open questions that did not hold their run and were asked in a run
-    /// other than `run_id` (the chat ran again and moved on without them); returns how many.
+    /// Drops `thread_id`'s open permission questions (Auto's block boxes, each about one step of
+    /// its run) asked in a run other than `run_id`, which is over; returns how many. Ordinary
+    /// questions stay: the chat may still be waiting on them.
     pub(super) fn drop_stale_questions(&self, thread_id: &str, run_id: &str) -> usize {
         let _guard = self.question_guard();
         let mut questions = self.questions_for(thread_id);
         let before = questions.len();
         questions.retain(|question| {
-            question.answer.is_some() || question.blocking || question.run_id == run_id
+            question.answer.is_some() || !question.permission || question.run_id == run_id
         });
         let dropped = before - questions.len();
         if dropped > 0 {

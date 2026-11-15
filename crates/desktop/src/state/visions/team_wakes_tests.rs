@@ -393,17 +393,18 @@ fn the_reviewer_reads_the_persons_channel_words() {
     assert!(reviewer.person_words().contains("Write the omelette recipe"));
 }
 
-/// When a team's work chat finishes a run, the questions it left open in earlier runs without
-/// waiting on them are dropped: it moved on, so their cards go. A question from the run that just
-/// ended, one that held its run, or one in a chat no Vision owns stays.
+/// When a team's work chat finishes a run, the permission questions (Auto's block boxes) it left
+/// open in earlier runs are dropped: each was about one step of a run that is over, so their
+/// cards go. Its ordinary questions, one from the run that just ended, and a chat no Vision
+/// owns keep theirs.
 #[test]
 fn a_finished_chat_drops_the_questions_it_moved_on_from() {
     let s = setup(true);
     own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-    let ask = |thread: &str, run: &str, text: &str, blocking: bool| {
+    let ask = |thread: &str, run: &str, text: &str, permission: bool| {
         let asked = NewQuestion {
             question: text.into(),
-            blocking,
+            permission,
             ..NewQuestion::default()
         };
         s.state
@@ -411,10 +412,10 @@ fn a_finished_chat_drops_the_questions_it_moved_on_from() {
             .unwrap()
             .id
     };
-    ask("ada-work", "r1", "Touch omelette.md?", false);
-    let held = ask("ada-work", "r1", "Which license?", true);
-    let fresh = ask("ada-work", "r2", "Which heading?", false);
-    ask("plain", "r1", "Mine?", false);
+    ask("ada-work", "r1", "Auto mode blocked an action: touch omelette.md", true);
+    let ordinary = ask("ada-work", "r1", "Which license?", false);
+    let fresh = ask("ada-work", "r2", "Auto mode blocked an action: rm build", true);
+    ask("plain", "r1", "Auto mode blocked an action: mine", true);
     s.state.visions_drop_stale_questions(&sink(), "ada-work", "r2");
     let open: Vec<String> = s
         .state
@@ -422,7 +423,7 @@ fn a_finished_chat_drops_the_questions_it_moved_on_from() {
         .into_iter()
         .map(|question| question.id)
         .collect();
-    assert_eq!(open, [held, fresh]);
+    assert_eq!(open, [ordinary, fresh]);
     s.state.visions_drop_stale_questions(&sink(), "plain", "r2");
     assert_eq!(s.state.open_questions("plain").len(), 1);
 }
