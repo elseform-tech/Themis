@@ -319,3 +319,25 @@ fn only_a_tasked_worker_that_did_nothing_is_silent() {
     let (s, woken) = adas_turn_ends(WakeReason::Tasked(1), Some("get_team_log"));
     assert!(woken.contains(&s.wren), "{woken:?}");
 }
+
+/// A team's work chat runs in its channel's mode as it stands when each run starts (Settings',
+/// the project's or the channel's change applies from the chat's next run); a chat the person
+/// holds, or one no Vision owns, keeps its own.
+#[test]
+fn a_work_chats_run_takes_its_channels_mode_when_it_starts() {
+    use themis_core::configuration::ApprovalMode;
+    let s = setup(true);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+    let save = |change: &dyn Fn(Channel) -> Channel| {
+        let channel = s.state.channel_get(&s.channel).unwrap();
+        let revision = channel.revision.clone();
+        s.state.channel_save(change(channel), Some(&revision)).unwrap();
+    };
+    save(&|channel| Channel { autonomy: Some(themis_core::visions::Autonomy::Ask), ..channel });
+    assert_eq!(s.state.visions_work_mode("ada-work"), Some(ApprovalMode::Custom));
+    save(&|channel| Channel { full_access: true, ..channel });
+    assert_eq!(s.state.visions_work_mode("ada-work"), Some(ApprovalMode::Yolo));
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::TakenOver);
+    assert_eq!(s.state.visions_work_mode("ada-work"), None);
+    assert_eq!(s.state.visions_work_mode("not-owned"), None);
+}

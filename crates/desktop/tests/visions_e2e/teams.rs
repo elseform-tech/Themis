@@ -343,45 +343,21 @@ async fn a_worker_that_does_nothing_brings_its_chief_back() {
     fx.shut_down().await;
 }
 
-/// A channel's autonomy and Full access set its chats' approval mode, a running chat's too: the
-/// person's change applies to the chat's next step, not only to new chats.
+/// A channel's autonomy and Full access set its work chats' approval mode: Always ask asks
+/// before changes (Custom), Full access is YOLO. (A run takes the channel's mode as it stands
+/// when the run starts; the unit tests cover a later change.)
 #[tokio::test(flavor = "multi_thread")]
 async fn autonomy_and_full_access_set_the_chats_approval_mode() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
-    fx.no_wakes();
-    let (channel, _juno, rook) = release_team(&fx);
-    let chat = fx.thread().await;
-    fx.own(&chat, &rook, &channel, OwnedKind::Work);
-    let mode = |fx: &Fixture| {
-        fx.call_ok("get_thread", json!({"threadId": chat}))["approval_mode"]
-            .as_str()
-            .unwrap()
-            .to_owned()
-    };
-    let save = |fx: &Fixture, change: Value| {
-        let current = fx
-            .call_ok("list_channels", json!({"projectRoot": fx.project}))
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|each| each["id"] == channel.as_str())
-            .unwrap()
-            .clone();
-        let mut next = current.clone();
-        for (key, value) in change.as_object().unwrap() {
-            next[key] = value.clone();
-        }
-        fx.call_ok(
-            "save_channel",
-            json!({"channel": next, "revision": current["revision"]}),
-        );
-    };
-    save(&fx, json!({"autonomy": "ask"}));
-    assert_eq!(mode(&fx), "custom");
-    save(&fx, json!({"autonomy": "most"}));
-    assert_eq!(mode(&fx), "auto");
-    save(&fx, json!({"full_access": true}));
-    assert_eq!(mode(&fx), "yolo");
+    let provider = quick_provider().await;
+    fx.use_provider(&provider).await;
+    for (mode, expected) in [("custom", "custom"), ("yolo", "yolo")] {
+        let (vision, channel) = fx.vision_and_channel_in("Wren", &format!("work-{mode}"), mode);
+        let (_chat, agent) = fx.vision_run(&vision, &channel).await;
+        let work = fx.vision_starts_chat(&agent);
+        let info = fx.call_ok("get_thread", json!({"threadId": work}));
+        assert_eq!(info["approval_mode"], expected, "{mode}: {info}");
+    }
     fx.shut_down().await;
 }

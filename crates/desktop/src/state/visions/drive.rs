@@ -73,18 +73,21 @@ impl AppState {
             .unwrap_or(ApprovalMode::Custom)
     }
 
-    /// Puts the channel's work chats on its approval mode, after the person changed its
-    /// autonomy or Full access: a running chat's next step follows it.
-    pub(crate) async fn visions_apply_channel_mode(&self, channel: &Channel) {
-        let mode = self.visions_channel_mode(channel);
-        let chats: Vec<String> = self
-            .owners_where(|owner| owner.channel_id == channel.id && owner.kind == OwnedKind::Work)
-            .into_iter()
-            .map(|owner| owner.thread_id)
-            .collect();
-        for thread_id in chats {
-            let _ = self.set_thread_approval_mode(thread_id, mode).await;
-        }
+    /// The mode a run in `thread_id` starts in: [`Self::visions_work_mode`], else `own`.
+    pub(crate) fn visions_run_mode(&self, thread_id: &str, own: ApprovalMode) -> ApprovalMode {
+        self.visions_work_mode(thread_id).unwrap_or(own)
+    }
+
+    /// The approval mode a run in `thread_id` takes when it starts: its channel's mode now
+    /// (see [`super::channel_approval_mode`]) for a team's work chat nobody holds, so a change
+    /// in Settings, the project or the channel applies from the chat's next run; `None` keeps
+    /// the chat's own mode (not a Vision's chat, or the person stopped or took it over).
+    pub(crate) fn visions_work_mode(&self, thread_id: &str) -> Option<ApprovalMode> {
+        let owner = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work && owner.hold == Hold::None)?;
+        let channel = self.channel_get(&owner.channel_id)?;
+        Some(self.visions_channel_mode(&channel))
     }
 
     async fn visions_adopt(

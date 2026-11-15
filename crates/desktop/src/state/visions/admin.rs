@@ -8,8 +8,9 @@
 //! set up and the person wrote in `# administration` after it. Whether that reply means yes is the model's
 //! judgement; the server checks everything else, each field again when it is set up: a proposal
 //! never raises autonomy above Settings › Visions, never raises a budget, never deletes, never
-//! touches the admin or `# administration`, and its channels start in Custom. Logged as metadata only
-//! (`proposal_posted`, `proposal_refused`, `proposal_applied`: ids, counts and outcome).
+//! touches the admin or `# administration`, and its channels start with Full access off (their
+//! chats' mode follows the autonomy it names). Logged as metadata only (`proposal_posted`,
+//! `proposal_refused`, `proposal_applied`: ids, counts and outcome).
 
 use std::collections::HashSet;
 use std::path::Path;
