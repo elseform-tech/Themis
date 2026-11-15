@@ -70,7 +70,7 @@ export function useChannelSpend(channelId: string | undefined): number | undefin
   return read?.spent_usd ?? undefined;
 }
 
-/** Settings › Visions, for a channel's autonomy and budget when it sets none of its own. */
+/** Settings › Visions, for a channel's level and budget when it sets none of its own. */
 export function useVisionsSettings(): VisionsSettings | null {
   const [settings, setSettings] = useState<VisionsSettings | null>(null);
   useEffect(() => { void getVisionsSettings().then(view => setSettings(view.settings)).catch(() => setSettings(null)); }, []);

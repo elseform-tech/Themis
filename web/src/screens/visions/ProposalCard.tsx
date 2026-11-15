@@ -4,7 +4,6 @@
 // card of its own: the channel, the chief and workers with their roles, then "Created" once set up.
 import type { ChannelEntry, Proposal, ProposalChange, SetUpItem } from "../../lib/visions";
 import { useApp } from "../../state/store";
-import { LEVELS } from "./autonomy";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import type { ProposedMember, TeamProposal } from "./team";
@@ -14,12 +13,11 @@ type Applied = Extract<ChannelEntry, { type: "proposal_applied" }>;
 
 const list = (names: string[]) => names.join(", ");
 
-/** What a new Vision is set up with, besides its job: its model, level and budget when named. */
+/** What a new Vision is set up with, besides its job: its model and budget when named. */
 function newVisionWords(vision: Proposal["visions"][number]): string {
   return [
     vision.role,
     vision.model ? `runs on ${vision.model}` : "",
-    vision.autonomy ? LEVELS[vision.autonomy] : "",
     vision.daily_budget_usd !== undefined ? `$${vision.daily_budget_usd} a day` : "",
   ].filter(Boolean).join(" · ");
 }
@@ -31,7 +29,6 @@ function changeWords(change: ProposalChange): [string, string] {
     if (change.name) parts.push(`Renamed to ${change.name}`);
     if (change.role) parts.push(`New job: ${change.role}`);
     if (change.paused !== undefined) parts.push(change.paused ? "Paused" : "Resumed");
-    if (change.autonomy) parts.push("Decides less on its own");
     if (change.daily_budget_usd !== undefined) parts.push(`$${change.daily_budget_usd} a day`);
     return [change.vision, parts.join(" · ")];
   }
@@ -113,9 +110,8 @@ function TeamCard({ proposal, applied, onOpenChannel }: { proposal: Proposal & T
       <div className="themis-team-card" role="group" aria-label={`New channel # ${name}`}>
         <h3><ChannelPill name={name} channelId={made?.id} onOpenChannel={onOpenChannel} />New channel{applied && <Created />}</h3>
         <ul>{[{ ...team.chief, role: "Chief of staff" }, ...team.workers].map(member => <Member key={member.name} member={member} />)}</ul>
-        {(team.autonomy || team.daily_budget_usd !== undefined) && <div className="themis-team-card-facts">
-          {team.autonomy && <span>Autonomy <b>{LEVELS[team.autonomy]}</b></span>}
-          {team.daily_budget_usd !== undefined && <span>Budget <b>${team.daily_budget_usd} a day</b></span>}
+        {team.daily_budget_usd !== undefined && <div className="themis-team-card-facts">
+          <span>Budget <b>${team.daily_budget_usd} a day</b></span>
         </div>}
       </div>
     </>;

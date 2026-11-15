@@ -1,4 +1,4 @@
-// New Vision: a name, a look (colour and accessory) and a role. Model, autonomy, budget and soul
+// New Vision: a name, a look (colour and accessory) and a role. Model, budget and soul
 // start from Settings and are changed in its profile.
 import { useState, type FormEvent } from "react";
 import { Button, Dialog, Input } from "../../components";

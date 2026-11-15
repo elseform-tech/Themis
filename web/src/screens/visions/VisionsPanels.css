@@ -1,23 +1,15 @@
 /* Settings › Visions (canvas VisionsSettings) and the panel beside a channel: a Vision's profile
    and a channel's details (canvas VisionProfile, VisionChannel). Colours are app tokens. */
 
-/* Settings › Visions: the autonomy card. */
-.themis-settings-card.themis-visions-autonomy { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; }
-.themis-settings-card.themis-visions-autonomy > * { padding-block: 0; }
-.themis-settings-card.themis-visions-autonomy > * + * { border-top: 0; }
-.themis-visions-autonomy-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; font-size: .875rem; }
-.themis-visions-autonomy-head label { font-weight: 600; }
-.themis-visions-autonomy input[type="range"] { width: 100%; margin: 0; accent-color: var(--themis-accent); }
-.themis-visions-stops { display: flex; justify-content: space-between; margin-top: -2px; color: var(--themis-text-2); font-size: .6875rem; }
-.themis-visions-stops .is-current { color: var(--themis-accent); font-weight: 600; }
-.themis-visions-decision { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 31px; border-top: 1px solid var(--themis-border-subtle); font-size: .8125rem; }
-.themis-visions-decides { color: var(--themis-accent); font-weight: 600; }
-.themis-visions-asks { color: var(--themis-text-2); }
+/* Settings › Visions, channel details and the chief's profile: the level as a segmented switch
+   (board TwoLevels), Full access in the danger colour while on; then the rows that always ask. */
+.themis-visions-level { display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--themis-well); }
+.themis-visions-level button { flex: 1; height: 34px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: var(--themis-text-2); font: inherit; font-weight: 500; cursor: pointer; }
+.themis-visions-level button[aria-checked="true"] { background: var(--themis-card); color: var(--themis-text); font-weight: 600; box-shadow: var(--themis-card-lift); }
+.themis-visions-level button.is-danger[aria-checked="true"] { color: var(--themis-danger); }
+.themis-visions-level button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-visions-level-group .themis-visions-level { margin-bottom: 4px; }
 .themis-visions-locked { display: inline-flex; align-items: center; gap: 6px; color: var(--themis-text-2); }
-.themis-visions-choice { display: inline-flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--themis-well); }
-.themis-visions-choice button { padding: 3px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text-2); font: inherit; cursor: pointer; }
-.themis-visions-choice button[aria-checked="true"] { background: var(--themis-card); color: var(--themis-text); font-weight: 600; box-shadow: var(--themis-card-lift); }
-.themis-visions-choice button:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
 .themis-visions-dollars { display: inline-flex; align-items: center; gap: 6px; color: var(--themis-text-2); }
 
 /* The panel beside a channel. */
@@ -33,17 +25,6 @@
 .themis-visions-label { display: flex; align-items: center; justify-content: space-between; margin: 0; color: var(--themis-text-2); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .themis-visions-field { height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--themis-well); box-shadow: var(--themis-well-shadow); color: var(--themis-text); font: inherit; }
 .themis-visions-field:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
-/* A channel's autonomy (board ChannelAutonomy): the level on a field opening the five levels, each
-   with the mode it sets; Full access as a switch row under it. */
-.themis-autonomy { position: relative; display: flex; flex-direction: column; }
-.themis-autonomy-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
-.themis-autonomy-field svg { flex: none; color: var(--themis-text-2); }
-.themis-autonomy-menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5; display: flex; flex-direction: column; margin: 0; padding: 4px; list-style: none; border-radius: 12px; background: var(--themis-raised); box-shadow: 0 10px 30px color-mix(in srgb, var(--themis-shadow) 30%, transparent), inset 0 0 0 1px var(--themis-border-subtle); outline: 0; }
-.themis-autonomy-menu li { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 32px; padding: 0 10px; border-radius: 8px; cursor: pointer; }
-.themis-autonomy-menu li.is-active { background: var(--themis-nav-hover-bg); }
-.themis-autonomy-menu li[aria-selected="true"] { background: var(--themis-pill); color: var(--themis-accent); font-weight: 600; }
-.themis-autonomy-mode { color: var(--themis-text-2); font-size: 11px; font-weight: 400; }
-.themis-visions-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; cursor: pointer; }
 .themis-visions-members { display: flex; flex-direction: column; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
 .themis-visions-members li { display: flex; align-items: center; gap: 4px; }
 .themis-visions-member { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; height: 32px; padding: 0 4px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }

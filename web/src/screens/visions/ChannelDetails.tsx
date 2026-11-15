@@ -1,35 +1,27 @@
-// A channel's details (boards VisionChannel, ChannelAutonomy): its topic, its autonomy (which sets
-// the approval mode its chats run in) and Full access (YOLO), both the person's to set and never a
-// Vision's, its daily budget (empty: Settings'), its members (Visions only) and Delete. A
-// member opens the chief's profile, or a worker's thread with the chief; each can be removed from
-// the channel or deleted. The Members block's + makes a new Vision by hand (the sidebar has no
-// Visions list). `# administration` is built in: Atlas is its only member, and neither can be deleted.
+// A channel's details (boards VisionChannel, TwoLevels): its topic, its level (Auto review runs its
+// chats in Auto, Full access in YOLO; the person's to set and never a Vision's), its daily budget
+// (empty: Settings'), its members (Visions only) and Delete. A member opens the chief's profile, or
+// a worker's thread with the chief; each can be removed from the channel or deleted. The Members
+// block's + makes a new Vision by hand (the sidebar has no Visions list). `# administration` is
+// built in: Atlas is its only member, and neither can be deleted.
 import { useState } from "react";
-import { Switch } from "../../components";
-import { ADMIN_VISION_ID, deleteChannel, deleteVision, type Autonomy, type ChannelInfo, type VisionInfo, ADMINISTRATION } from "../../lib/visions";
+import { ADMIN_VISION_ID, deleteChannel, deleteVision, type ChannelInfo, type VisionInfo, ADMINISTRATION } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
-import { presetRows } from "./autonomy";
-import { AutonomyField } from "./AutonomyField";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { saveChannelChange } from "./channels";
+import { LevelSwitch } from "./LevelSwitch";
 import { NewVisionSheet } from "./NewVisionSheet";
 import { CloseIcon, DeleteButton, PanelBlock, PanelButton, PlusIcon, SidePanel } from "./SidePanel";
 import { useVisionsSettings } from "./teamData";
 
-/** Autonomy (the channel's, else Settings') and Full access. Custom starts from the rows the
- *  level in force hands over. */
-function AutonomyBlock({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
+/** The level: the channel's, else Settings'. Choosing the one in force saves nothing. */
+function LevelBlock({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
   const settings = useVisionsSettings();
-  const level = channel.autonomy ?? settings?.autonomy;
-  const choose = (next: Autonomy) => save(next === "custom" ? { autonomy: next, custom: channel.custom ?? presetRows(level ?? "ask") } : { autonomy: next });
-  return <PanelBlock title="Autonomy">
-    <AutonomyField level={level} onChange={choose} />
-    <label className="themis-visions-field themis-visions-switch-row">
-      <span>Full access</span>
-      <Switch role="switch" aria-label="Full access" checked={channel.full_access} onChange={event => save({ full_access: event.target.checked })} />
-    </label>
+  const level = channel.level ?? settings?.level;
+  return <PanelBlock title="Level">
+    <LevelSwitch label="Level" level={level} onChange={next => { if (next !== level) save({ level: next }); }} />
   </PanelBlock>;
 }
 
@@ -131,7 +123,7 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
         <input type="text" className="themis-visions-field" aria-label="Topic" maxLength={500} value={topic ?? channel.topic}
           onChange={event => setTopic(event.target.value)} onBlur={saveTopic} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </PanelBlock>
-      {!hq && <AutonomyBlock channel={channel} save={change => void save(change)} />}
+      {!hq && <LevelBlock channel={channel} save={change => void save(change)} />}
       <BudgetBlock channel={channel} save={change => void save(change)} onError={setError} />
       <Members channel={channel} save={change => void save(change)} />
     </SidePanel>

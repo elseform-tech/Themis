@@ -12,7 +12,7 @@ const proposal: Proposed = {
   proposal: {
     summary: "A channel for shipping releases, with Rook to run it.",
     channels: [{ name: "releases", topic: "Ship releases", members: ["Rook"] }],
-    visions: [{ name: "Rook", role: "Ships releases", color: "rose", model: "glm-5", autonomy: "ask", daily_budget_usd: 0.25 }],
+    visions: [{ name: "Rook", role: "Ships releases", color: "rose", model: "glm-5", daily_budget_usd: 0.25 }],
     changes: [{ vision: "Wren", role: "Writes the notes" }, { channel: "docs", add_members: ["Rook"] }],
   },
 };
@@ -35,7 +35,7 @@ describe("ProposalCard", () => {
     const items = within(card).getAllByRole("listitem").map(item => item.textContent);
     expect(items).toEqual([
       "New channel # releasesShip releases · with Rook",
-      "New Vision RookShips releases · runs on glm-5 · Always ask · $0.25 a day",
+      "New Vision RookShips releases · runs on glm-5 · $0.25 a day",
       "WrenNew job: Writes the notes",
       "# docsAdds Rook",
     ]);
