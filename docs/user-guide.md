@@ -406,7 +406,7 @@ chat, **Do it the safer way**, **Allow once** or **Skip it**, each saying what h
 If the reviewer can't decide, the step is blocked the same way. Running outside the sandbox and
 reading or writing secret files (`.env`, keys) are never left to the reviewer: they always come
 to you as a question. Choose the reviewer's model with
-`approval.auto_model` in your `runtime.jsonc` (otherwise your first memory model). Custom is
+`approval.auto_model` in your `runtime.jsonc`; otherwise the memory models review in order, then the chat's own model, each tried when the one before fails. Custom is
 initially selected and uses ordered approval rules from advanced file configuration.
 Its default policy allows reads and asks before other tools. A matching deny
 rule rejects the action; a matching allow rule proceeds. Projects can add

@@ -43,6 +43,13 @@ pub(super) struct DesktopReviewer {
     pub(super) chat_model: String,
 }
 
+/// How long one reviewer may take: its share of the time `left` among the `remaining`
+/// reviewers, at least 10 seconds, never more than is left.
+pub(super) fn attempt_limit(left: Duration, remaining: usize) -> Duration {
+    let share = left / u32::try_from(remaining.max(1)).unwrap_or(u32::MAX);
+    share.max(Duration::from_secs(10)).min(left)
+}
+
 /// Who reviews in Auto, in the order tried: the person's `approval.auto_model` alone when set;
 /// otherwise the memory models in order, then the chat's own model. The next is tried when one
 /// fails (a rate limit, an error, an answer it can't read) within the review's time limit.
@@ -199,14 +206,16 @@ impl DesktopReviewer {
         let started = std::time::Instant::now();
         let mut verdict = AutoVerdict::Unavailable;
         let mut tried = 0;
-        for model in reviewer_models(&self.config, &self.chat_model) {
+        let models = reviewer_models(&self.config, &self.chat_model);
+        for (at, model) in models.iter().enumerate() {
             let Some(left) = REVIEW_TIMEOUT.checked_sub(started.elapsed()) else {
                 break;
             };
+            let left = attempt_limit(left, models.len() - at);
             tried += 1;
             let request = self
                 .state
-                .review_model_request(&self.config, &model, (&system, &user));
+                .review_model_request(&self.config, model, (&system, &user));
             if let Ok(Ok(text)) = tokio::time::timeout(left, request).await {
                 verdict = parse_verdict(&text);
             }
@@ -533,6 +542,17 @@ mod tests {
         assert_eq!(reviewer_models(&config, ""), ["m1", "m2", "beam-free"]);
         config.approval.auto_model = Some("auto-model".into());
         assert_eq!(reviewer_models(&config, "chat"), ["auto-model"]);
+    }
+
+    /// One hanging reviewer cannot take the whole review's time: each attempt gets its share
+    /// of what is left (at least 10 seconds, never more than is left).
+    #[test]
+    fn a_slow_reviewer_leaves_time_for_the_next() {
+        let s = Duration::from_secs;
+        assert_eq!(attempt_limit(s(45), 4), Duration::from_millis(11_250));
+        assert_eq!(attempt_limit(s(45), 1), s(45));
+        assert_eq!(attempt_limit(s(30), 6), s(10));
+        assert_eq!(attempt_limit(s(4), 3), s(4));
     }
 
     /// A message a Vision sent in its work chat (saved with its id) is not the requester's
