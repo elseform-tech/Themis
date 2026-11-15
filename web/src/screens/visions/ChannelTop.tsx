@@ -63,7 +63,6 @@ export function ChannelTop({ channel, fresh }: { channel: ChannelInfo; fresh: bo
   const { state } = useApp();
   const { chief } = teamOf(state, channel);
   return <>
-    <div className="themis-channel-fade" aria-hidden="true" />
     <ChannelName channel={channel} />
     {chief && !fresh && <FloatingChief channel={channel} chief={chief} />}
   </>;
