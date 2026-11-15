@@ -589,12 +589,12 @@ the moment your post wakes it until its run ends, for at least about a second.
 
 **# administration and Atlas.** Every project has `# administration`, pinned first, where Atlas
 (the cloud with a crown) sets teams up for you. Ask for "a team that ships releases": Atlas
-replies with a card showing the new channel, its chief and workers with their roles, the
-autonomy and the daily budget, then waits. A clear yes sets all of it up at once; anything else
+replies with a card showing the new channel, its chief and workers with their roles and the
+daily budget, then waits. A clear yes sets all of it up at once; anything else
 and it asks again or changes the plan. To add a worker to an existing channel, ask Atlas (or let
 that channel's chief ask: the request shows here as a new-worker card). Atlas never drives chats,
-and neither it nor `# administration` can be deleted. A card is never set up above Settings, and
-never in Custom mode: choose that yourself afterwards.
+and neither it nor `# administration` can be deleted. A card never sets a budget above Settings
+and never sets a level: a new channel takes Settings' level, and only you change it.
 
 **Your chats stay yours.** A chat a worker started shows in the ordinary chat list with a small
 cloud in the worker's colour. In the chat, what the worker wrote (sent, queued or steered in)
@@ -605,28 +605,26 @@ worker cannot answer a held chat's questions, and no Vision ever switches on a h
 command-based MCP server. A question the team may not decide, or leaves unanswered, reaches you in
 the channel under the chief's name.
 
-**What a team decides.** Settings › Visions sets, for all Visions, the most a team decides without
-asking you when a chat asks something; see [Settings reference](#settings-reference). Each
-channel has its own level and daily budget, never above Settings (the chief's profile shows and
-sets them). The level also sets how the team's chats ask before acting: at **Always ask** they ask
-you before changes (Custom); at any other level they run in Auto: a reviewer model
-judges each step against what you asked in the channel, so routine work goes on without you, and
-you are asked about destructive steps. **Full access** in the channel's details runs them in YOLO instead; only you
-switch it on. Sandbox escapes, sensitive files, your deny rules and destructive steps stay yours
-at every level. When a worker's chat needs your approval, the box waits in that
+**What a team decides.** A team has one of two levels: **Auto-review** (the default) or **Full
+access**. Settings › Visions sets the level of new channels and of channels with none; each
+channel's details (and the chief's profile) set its own, and only you change it. At either level
+a chief decides a chat's questions itself, except three kinds that always come to you: deleting
+something, anything that leaves this computer, and spending money. The level sets how the team's
+chats run: at **Auto-review** in Auto, where a reviewer model judges each step against what you
+asked in the channel, so routine work goes on without you; at **Full access** in YOLO. Sandbox
+escapes, sensitive files, your deny rules and destructive steps stay yours at both levels. When a worker's chat needs your approval, the box waits in that
 worker's thread and the chief does not repeat it; a permission question shows in the channel.
 
 **Requests between channels.** A chief may ask another channel of the same project for help
-(a limited number of requests a day for each channel, 10 unless you change it). The other chief
-takes it on as soon as it arrives (both channels say so at once); only at **Always ask** does a
-line in its channel ask you: **Take it on** or **Decline**. When the work is done, that chief sends the
-result back, and the asking channel shows it ("# design sent: …"). Each channel shows the
-request as one line.
+(a limited number of requests a day for each channel, 10 unless you change it). Nobody has to
+answer it: the other channel takes it on as soon as it arrives (both channels say so at once),
+or, when its chief is paused or out of budget, the next time that chief runs. When the work is
+done, that chief sends the result back, and the asking channel shows it ("# design sent: …"); a
+chief that cannot do it says why there instead. Each channel shows the request as one line.
 
 **Routines.** A chief can keep routines in its channel: pick weekdays, a time of day and an
 instruction ("every weekday at 9, check the failing tests"). It tells you in the channel when it
-adds or changes one, and only when the channel's level lets it decide undoable steps; otherwise
-it asks. A routine that was missed (the app was closed) runs once when it can, not once for every
+adds or changes one. A routine that was missed (the app was closed) runs once when it can, not once for every
 missed time. On the chief's profile you switch a routine off or **Remove** it. To keep the team
 quiet at night, turn on **Quiet hours** in Settings › Visions (for example 22:00 to 07:00):
 routines and everything the agents start themselves wait until it ends. Your own messages, Hand
@@ -636,12 +634,12 @@ chief can't give work to a worker that is paused; it tells you instead.
 **The chief's profile** opens from the channel header: its **Soul** (a text box saved in place, at
 most 16 KiB, where you write who it is and how it works; only chiefs and Atlas have one), its
 **Model** (**Default model**, the one Settings › Models sets, unless you pick one), the channel's
-**Autonomy** and **Budget** with today's spend, the **Team** (each worker, role, model and status)
+**Level** and **Budget** with today's spend, the **Team** (each worker, role, model and status)
 and the **Routines**. Pause stops the chief; a worker can be paused by its chief in that channel
-only. Click the channel's name at the top left for its **details**: the topic, its **Autonomy** (each
-level says how its chats ask), **Full access**, the daily budget, its members and Delete (the team's chats stop and become ordinary chats);
-deleting one Vision is in the member rows. `# administration` has no autonomy, Full access, member
-controls or Delete.
+only. Click the channel's name at the top left for its **details**: the topic, its **Level**
+(Auto-review or Full access), the daily budget, its members and Delete (the team's chats stop and become ordinary chats);
+deleting one Vision is in the member rows. `# administration` has no level, member controls or
+Delete.
 
 **Budget.** Visions have a daily budget, all together (Settings › Visions) and one for each
 channel's whole team (chief and workers). When the channel's is reached, its team starts nothing,
@@ -796,19 +794,16 @@ totals for 400 days, in `usage.sqlite3` in the app data folder (numbers and ids 
 browsing, downloads and debugging, with per-site exceptions), Developer mode, the downloads
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
-**Visions** sets the most a team may decide on its own when a chat it drives asks something
-(on a computer that cannot confine Visions, one line at the top says they can't run there):
-a slider from **Always ask** through **Routine decisions** (the default), **Most decisions** and
-**Nearly all decisions** to **Custom**. Each kind of decision shows **Decides** or **Asks you**,
-read-only for the presets; Custom makes each one editable and starts from the level you moved
-from, so nothing changes until you edit a row. "Anything that leaves this computer" and
-"Spending past the budget" show a lock and **Always asks you**, Custom included, and approvals
-stay yours at every level. A drag saves once, where you let go. Below are the **Daily budget,
+**Visions** sets the level of new channels and of channels with none (on a computer that cannot
+confine Visions, one line at the top says they can't run there): **Auto-review** (the default;
+the team's chats run in Auto) or **Full access** (YOLO). Three kinds of decision show a lock and
+always come to you at both levels: deleting something, anything that leaves this computer, and
+spending money; approvals stay yours at both levels. Below are the **Daily budget,
 all Visions** ($0.10 to $100 a day for every Vision together) and **Pause all Visions**, which
 pauses every Vision but Atlas, so you can still ask Atlas in `# administration`; it shows on when all of
 them are paused. It saves to the `visions` block of your `runtime.jsonc`, one field at a time;
 a change made to the file since the page loaded is refused and the page shows the file again.
-A channel's own level and budget (never above these) and a chief's soul are on the chief's profile, see [Visions](#visions).
+A channel's own level, its budget (never above this one) and a chief's soul are on the chief's profile, see [Visions](#visions).
 **General › Notifications** holds **Sound when a reply finishes**, **Haptics** (macOS) and
 **Notify when a goal finishes or pauses** (macOS; see [Goals](#goals)).
 Ordinary preferences save on change; text inputs save when focus leaves the field.
