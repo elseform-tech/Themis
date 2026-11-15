@@ -984,7 +984,7 @@ Other callers have neither method. A chief's `ask_for_worker` is shown in `# adm
 **A team's runs and wakes.** An agent never polls. It wakes, meaning a turn starts in its hidden Vision chat for the channel (created on its first wake, titled `{name} · #{channel}`, on the Vision's model, kept out of the plain chat list; its work chats show in the channel, marked with its cloud), when:
 
 - the person writes in the channel (wakes the chief only);
-- the chief gave a worker a task, redirected it, or the worker's chat finished, failed, asked a question or needs an approval (workers and, for approvals and questions the chief may answer or must pass on, the chief; an approval wakes the chief once per approval as `approval_waiting`, which it tells the person and can never answer);
+- the chief gave a worker a task, redirected it, or the worker's chat finished, failed or asked a question (workers and, for questions the chief may answer or must pass on, the chief). A worker's chat waiting on an approval box wakes no one: the box waits in that worker's thread, where the person answers it. A worker's chat's permission question (an Auto block or a destructive step's box) wakes no one either: the server passes it straight to the person as a `passed_on` entry under the chief. Only a chat the chief itself drives still wakes it once per approval as `approval_waiting`;
 - a worker reports or pushes back (wakes the chief);
 - another channel's request arrives (wakes the receiving chief; that wake is paid by the receiving channel even when it declines);
 - a routine fires (wakes its chief);

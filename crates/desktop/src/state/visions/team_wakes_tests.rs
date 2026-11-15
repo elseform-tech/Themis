@@ -141,14 +141,43 @@ fn a_paused_worker_that_becomes_chief_is_not_paused() {
     assert!(saved.paused_workers.is_empty(), "{:?}", saved.paused_workers);
 }
 
-/// While the chief is paused, a worker's approval still wakes someone: the worker itself.
+/// A worker's approval box waits in the worker's thread: it wakes no one, so it spends none of
+/// the team's wakes.
 #[test]
-fn a_paused_chief_does_not_swallow_an_approval() {
+fn a_worker_approval_wakes_no_one() {
     let s = setup(true);
     own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-    s.state.visions_pause(&s.wren, true).unwrap();
     s.state.visions_approval_waiting(&sink(), "ada-work", "ap-1");
-    assert_eq!(started(&s.state), vec![s.ada.clone()]);
+    assert!(started(&s.state).is_empty(), "{:?}", started(&s.state));
+    // Not while the chief is paused either.
+    s.state.visions_pause(&s.wren, true).unwrap();
+    s.state.visions_approval_waiting(&sink(), "ada-work", "ap-2");
+    assert!(started(&s.state).is_empty(), "{:?}", started(&s.state));
+}
+
+/// A permission question in a worker's chat goes straight to the person (passed on under the
+/// chief), and wakes no one.
+#[test]
+fn a_worker_permission_question_wakes_no_one() {
+    let s = setup(true);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+    s.state.set_scheduler_sink(sink());
+    let asked = NewQuestion {
+        question: "Run this outside the sandbox?".into(),
+        permission: true,
+        ..NewQuestion::default()
+    };
+    let question = s
+        .state
+        .ask_question(sink().as_ref(), "ada-work", "run", asked)
+        .unwrap()
+        .id;
+    s.state
+        .visions_question_asked("ada-work", std::slice::from_ref(&question));
+    assert!(started(&s.state).is_empty(), "{:?}", started(&s.state));
+    let passed = passed_on(&s.state, &s.channel);
+    assert_eq!(passed.len(), 1, "{passed:?}");
+    assert_eq!(passed[0]["question_id"], question.as_str());
 }
 
 /// Once a question went to the person, the worker may no longer answer it.

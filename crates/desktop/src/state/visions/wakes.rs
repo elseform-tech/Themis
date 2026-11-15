@@ -394,6 +394,13 @@ impl AppState {
             .unwrap_or_else(|| owner.vision_id.clone())
     }
 
+    /// Whether `owner`'s chat belongs to a worker of its channel (not to the chief).
+    fn is_worker(&self, owner: &Owner) -> bool {
+        self.channel_get(&owner.channel_id).is_some_and(|channel| {
+            channel.chief != owner.vision_id && channel.members.contains(&owner.vision_id)
+        })
+    }
+
     fn works_or_leads(&self, channel_id: &str, vision_id: &str) -> bool {
         self.channel_get(channel_id)
             .is_some_and(|channel| channel.members.iter().any(|member| member == vision_id))
@@ -660,9 +667,14 @@ impl AppState {
         else {
             return;
         };
+        let workers = self.is_worker(&owner);
         for id in question_ids {
             if self.visions_permission_question(thread_id, std::iter::once(id.as_str())) {
-                if self.visions_cache().wakes.first_approval_notice(id) {
+                // A worker's permission question goes straight to the person, under the chief,
+                // and wakes no one: only the person may answer it.
+                if workers {
+                    self.visions_pass_on_stranded(&owner, id);
+                } else if self.visions_cache().wakes.first_approval_notice(id) {
                     self.visions_wake_later(
                         &owner.channel_id,
                         &self.chief_of(&owner),
@@ -697,10 +709,12 @@ impl AppState {
         else {
             return;
         };
-        if !self
-            .visions_cache()
-            .wakes
-            .first_approval_notice(approval_id)
+        // A worker's approval box waits in the worker's thread, where the person answers it.
+        if self.is_worker(&owner)
+            || !self
+                .visions_cache()
+                .wakes
+                .first_approval_notice(approval_id)
         {
             return;
         }
@@ -1071,16 +1085,6 @@ mod tests {
         };
         s.state.visions_after_run(&sink(), "ada-work", &done);
         assert_eq!(started(&s.state), vec![s.ada.clone()]);
-    }
-
-    /// An approval in a worker's chat goes to the chief, who speaks for the team.
-    #[test]
-    fn a_workers_approval_shows_in_the_channel_under_the_chief() {
-        let s = setup(true);
-        own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-        s.state
-            .visions_approval_waiting(&sink(), "ada-work", "ap-1");
-        assert_eq!(started(&s.state), vec![s.wren.clone()]);
     }
 
     /// The person hands a worker's chat back: the worker picks it up and the chief is told.

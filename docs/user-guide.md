@@ -609,7 +609,8 @@ the channel under the chief's name.
 asking you when a chat asks something; see [Settings reference](#settings-reference). Each
 channel has its own level and daily budget, never above Settings (the chief's profile shows and
 sets them). Approvals for actions stay yours: a team's chats use the channel's **Approval
-mode**, which only you set.
+mode**, which only you set. When a worker's chat needs your approval, the box waits in that
+worker's thread and the chief does not repeat it; a permission question shows in the channel.
 
 **Requests between channels.** A chief may ask another channel of the same project for help
 (a limited number of requests a day for each channel, 10 unless you change it). The other chief
