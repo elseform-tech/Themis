@@ -342,35 +342,6 @@ fn a_work_chats_run_takes_its_channels_mode_when_it_starts() {
     assert_eq!(s.state.visions_work_mode("not-owned"), None);
 }
 
-/// A team's work chat in Auto writes in the project without asking (the sandbox keeps writes in
-/// the project); it runs commands without asking only when the sandbox blocks the network, so
-/// nothing leaves the computer unreviewed. Its rules come after the person's own. A plain chat,
-/// or a team chat at Always ask (Custom), keeps the policy as written.
-#[test]
-fn a_team_chat_writes_and_runs_without_asking() {
-    use themis_core::configuration::{ApprovalMode, PolicyAction, RuntimeConfig};
-    use themis_core::sandbox::NetworkPolicy;
-    let s = setup(true);
-    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-    let mut config = RuntimeConfig::default();
-    let mine = config.approval.rules.len();
-    let added = |config: &RuntimeConfig| -> Vec<(String, Option<String>, PolicyAction)> {
-        s.state.visions_run_policy("ada-work", ApprovalMode::Auto, config).rules[mine..]
-            .iter()
-            .map(|rule| (rule.tool.clone(), rule.risk.clone(), rule.action))
-            .collect()
-    };
-    let rule = |risk: &str| ("*".to_owned(), Some(risk.to_owned()), PolicyAction::Allow);
-    // The network is open by default: commands stay with the reviewer.
-    assert_eq!(added(&config), [rule("write")]);
-    config.sandbox.network = NetworkPolicy::Block;
-    assert_eq!(added(&config), [rule("write"), rule("execute")]);
-    let plain = s.state.visions_run_policy("plain", ApprovalMode::Auto, &config);
-    assert_eq!(plain.rules.len(), mine);
-    let custom = s.state.visions_run_policy("ada-work", ApprovalMode::Custom, &config);
-    assert_eq!(custom.rules.len(), mine);
-}
-
 /// The reviewer of a team's work chat reads what the person asked in the channel (a Vision's
 /// own messages in the chat are not the person's words).
 #[test]
@@ -426,4 +397,24 @@ fn a_finished_chat_drops_the_questions_it_moved_on_from() {
     assert_eq!(open, [ordinary, fresh]);
     s.state.visions_drop_stale_questions(&sink(), "plain", "r2");
     assert_eq!(s.state.open_questions("plain").len(), 1);
+}
+
+/// The mode a team chat's run takes is also kept as the chat's own, so what the app shows and
+/// what a later take-over runs in match the channel; a chat the person holds keeps its own.
+#[test]
+fn a_team_chats_run_keeps_its_mode_on_the_chat() {
+    use themis_core::configuration::ApprovalMode;
+    let s = setup(true);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+    let channel = s.state.channel_get(&s.channel).unwrap();
+    let revision = channel.revision.clone();
+    let full = Channel { full_access: true, ..channel };
+    s.state.channel_save(full, Some(&revision)).unwrap();
+    let mut stored = ApprovalMode::Custom;
+    assert_eq!(s.state.visions_run_mode("ada-work", &mut stored), ApprovalMode::Yolo);
+    assert_eq!(stored, ApprovalMode::Yolo);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::TakenOver);
+    let mut held = ApprovalMode::Custom;
+    assert_eq!(s.state.visions_run_mode("ada-work", &mut held), ApprovalMode::Custom);
+    assert_eq!(held, ApprovalMode::Custom);
 }

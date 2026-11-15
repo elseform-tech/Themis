@@ -38,17 +38,6 @@ impl AppState {
     }
 
     /// Resolves the provider, builds tools, and spawns the run task.
-    /// The approval policy this run's tools are checked against (a team chat's adds its own
-    /// allow rules: see `visions_run_policy`).
-    fn run_policy(
-        &self,
-        thread_id: &str,
-        snapshot: &RunSnapshot,
-        config: &themis_core::configuration::RuntimeConfig,
-    ) -> themis_core::configuration::ApprovalPolicy {
-        self.visions_run_policy(thread_id, snapshot.approval_mode, config)
-    }
-
     /// Auto mode's reviewer for this run: a reviewer model decides where Custom would ask the
     /// person (none outside Auto).
     fn auto_reviewer(
@@ -228,7 +217,7 @@ impl AppState {
         let reviewer = self.auto_reviewer(sink, (thread_id, run_id), &snapshot, &run_configuration);
         let approvals = themis_core::configuration::configured_hook_with_reviewer(
             snapshot.approval_mode,
-            self.run_policy(thread_id, &snapshot, &run_configuration),
+            run_configuration.approval.clone(),
             hook,
             grants,
             Some(&snapshot.work_root),

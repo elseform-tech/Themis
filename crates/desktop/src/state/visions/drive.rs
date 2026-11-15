@@ -9,9 +9,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
-use themis_core::configuration::{
-    ApprovalMode, ApprovalPolicy, ApprovalRule, PolicyAction, RuntimeConfig,
-};
+use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Decision;
 
 use super::{Channel, ChannelEntry, Hold, OwnedKind, Owner};
@@ -75,42 +73,6 @@ impl AppState {
             .unwrap_or(ApprovalMode::Custom)
     }
 
-    /// The approval policy a run in `thread_id` uses: for a team's work chat in Auto, the
-    /// person's rules, then an allow rule for writes (the sandbox keeps them in the project) and,
-    /// only while the sandbox blocks the network, for commands, so project work goes on without
-    /// asking and nothing leaves the computer unreviewed (with the network open, commands stay
-    /// with the reviewer). Destructive steps still ask the person first, and sandbox escapes,
-    /// sensitive files and deny rules keep their own gates; any other chat keeps the policy.
-    pub(crate) fn visions_run_policy(
-        &self,
-        thread_id: &str,
-        mode: ApprovalMode,
-        config: &RuntimeConfig,
-    ) -> ApprovalPolicy {
-        let mut policy = config.approval.clone();
-        let team = mode == ApprovalMode::Auto
-            && self
-                .owner_of(thread_id)
-                .is_some_and(|owner| owner.kind == OwnedKind::Work && owner.hold == Hold::None);
-        if team {
-            let offline = config.sandbox.network == themis_core::sandbox::NetworkPolicy::Block;
-            let risks: &[&str] = if offline {
-                &["write", "execute"]
-            } else {
-                &["write"]
-            };
-            for risk in risks {
-                policy.rules.push(ApprovalRule {
-                    tool: "*".into(),
-                    action: PolicyAction::Allow,
-                    risk: Some((*risk).to_owned()),
-                    command: None,
-                });
-            }
-        }
-        policy
-    }
-
     /// The person's latest messages in the channel of `thread_id`, a team's work chat, oldest
     /// first (none for any other chat), for Auto's reviewer: what the person asked for.
     pub(crate) fn visions_person_words(&self, thread_id: &str) -> Vec<String> {
@@ -161,9 +123,13 @@ impl AppState {
         }
     }
 
-    /// The mode a run in `thread_id` starts in: [`Self::visions_work_mode`], else `own`.
-    pub(crate) fn visions_run_mode(&self, thread_id: &str, own: ApprovalMode) -> ApprovalMode {
-        self.visions_work_mode(thread_id).unwrap_or(own)
+    /// The mode a run in `thread_id` starts in: [`Self::visions_work_mode`], which then also
+    /// becomes the chat's own (`own`, so what is shown and a later take-over match), else `own`.
+    pub(crate) fn visions_run_mode(&self, thread_id: &str, own: &mut ApprovalMode) -> ApprovalMode {
+        if let Some(mode) = self.visions_work_mode(thread_id) {
+            *own = mode;
+        }
+        *own
     }
 
     /// The approval mode a run in `thread_id` takes when it starts: its channel's mode now
