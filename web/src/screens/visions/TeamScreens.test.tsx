@@ -406,7 +406,8 @@ describe("Team screens", () => {
     const lines = notes.map((entry, index) => ({ seq: 10 + index, at_ms: Date.UTC(2026, 10, 14, 9, 5), entry }));
     await show(app, fixture({ lines: { c1: lines } }));
     const notesShown = screen.getAllByRole("note");
-    expect(notesShown[0]).toHaveTextContent(/^Asked# apito fix the export date format\./);
+    // The request is quoted, so a question reads as well as an instruction.
+    expect(notesShown[0]).toHaveTextContent(/^Asked# api: “fix the export date format”/);
     expect(notesShown[1]).toHaveTextContent(/^Added a routine: Weekdays 09:00, Tell me what happened overnight/);
     expect(notesShown[2]).toHaveTextContent(/^Request with# apitaken on: Friday/);
     fireEvent.click(within(notesShown[0]!).getByRole("button", { name: "# api" }));
