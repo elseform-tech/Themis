@@ -133,6 +133,34 @@ impl AppState {
             .unwrap_or_default()
     }
 
+    /// A team's work chat finished run `run_id`: the questions it left open in earlier runs
+    /// without waiting on them are dropped (it moved on, so their cards go), and its channel is
+    /// told. Any other chat keeps its questions.
+    pub(crate) fn visions_drop_stale_questions(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+        run_id: &str,
+    ) {
+        let Some(owner) = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+        else {
+            return;
+        };
+        let dropped = self.drop_stale_questions(thread_id, run_id);
+        if dropped > 0 {
+            sink.emit_visions_changed(&crate::types::VisionsChange {
+                channel_id: Some(owner.channel_id.clone()),
+                vision_id: Some(owner.vision_id.clone()),
+            });
+            self.visions_note(
+                "questions_dropped",
+                json!({"thread_id": thread_id, "count": dropped}),
+            );
+        }
+    }
+
     /// The mode a run in `thread_id` starts in: [`Self::visions_work_mode`], else `own`.
     pub(crate) fn visions_run_mode(&self, thread_id: &str, own: ApprovalMode) -> ApprovalMode {
         self.visions_work_mode(thread_id).unwrap_or(own)

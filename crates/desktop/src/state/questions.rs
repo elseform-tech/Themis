@@ -367,6 +367,22 @@ impl AppState {
         self.save_questions(thread_id, &questions);
     }
 
+    /// Drops `thread_id`'s open questions that did not hold their run and were asked in a run
+    /// other than `run_id` (the chat ran again and moved on without them); returns how many.
+    pub(super) fn drop_stale_questions(&self, thread_id: &str, run_id: &str) -> usize {
+        let _guard = self.question_guard();
+        let mut questions = self.questions_for(thread_id);
+        let before = questions.len();
+        questions.retain(|question| {
+            question.answer.is_some() || question.blocking || question.run_id == run_id
+        });
+        let dropped = before - questions.len();
+        if dropped > 0 {
+            self.save_questions(thread_id, &questions);
+        }
+        dropped
+    }
+
     /// The chat's unanswered questions, oldest first.
     pub(super) fn open_questions(&self, thread_id: &str) -> Vec<Question> {
         self.questions_for(thread_id)
