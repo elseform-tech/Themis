@@ -551,7 +551,7 @@ impl AppState {
                 history,
                 documents,
                 approval_timeout_seconds: settings.approval_timeout_seconds.clamp(30, 600),
-                approval_mode: self.visions_run_mode(&thread_id, &mut record.approval_mode),
+                approval_mode: self.visions_run_mode(&thread_id, record.approval_mode),
                 runtime_configuration: runtime_configuration.clone(),
                 yolo_sandbox,
                 work_root: record.project_root.clone(),

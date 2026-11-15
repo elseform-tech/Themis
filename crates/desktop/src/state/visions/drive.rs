@@ -123,13 +123,22 @@ impl AppState {
         }
     }
 
-    /// The mode a run in `thread_id` starts in: [`Self::visions_work_mode`], which then also
-    /// becomes the chat's own (`own`, so what is shown and a later take-over match), else `own`.
-    pub(crate) fn visions_run_mode(&self, thread_id: &str, own: &mut ApprovalMode) -> ApprovalMode {
+    /// The mode a run in `thread_id` starts in, decided now and never written back: a team's
+    /// work chat nobody holds runs in its channel's mode ([`Self::visions_work_mode`]); one the
+    /// person took over or stopped in the stricter of `own` and its channel's mode, so switching
+    /// Full access off always takes YOLO away; any other chat in `own`.
+    pub(crate) fn visions_run_mode(&self, thread_id: &str, own: ApprovalMode) -> ApprovalMode {
         if let Some(mode) = self.visions_work_mode(thread_id) {
-            *own = mode;
+            return mode;
         }
-        *own
+        let channel = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+            .and_then(|owner| self.channel_get(&owner.channel_id));
+        match channel {
+            Some(channel) => stricter(own, self.visions_channel_mode(&channel)),
+            None => own,
+        }
     }
 
     /// The approval mode a run in `thread_id` takes when it starts: its channel's mode now
@@ -397,5 +406,19 @@ impl AppState {
         self.stop_run(thread_id)?;
         self.visions_note("vision_stopped_chat", json!({"thread_id": thread_id}));
         Ok(())
+    }
+}
+
+/// The stricter of two approval modes (Custom asks most, then Auto, then YOLO).
+fn stricter(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
+    let rank = |mode: ApprovalMode| match mode {
+        ApprovalMode::Custom => 0,
+        ApprovalMode::Auto => 1,
+        ApprovalMode::Yolo => 2,
+    };
+    if rank(a) <= rank(b) {
+        a
+    } else {
+        b
     }
 }

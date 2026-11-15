@@ -328,11 +328,7 @@ fn a_work_chats_run_takes_its_channels_mode_when_it_starts() {
     use themis_core::configuration::ApprovalMode;
     let s = setup(true);
     own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-    let save = |change: &dyn Fn(Channel) -> Channel| {
-        let channel = s.state.channel_get(&s.channel).unwrap();
-        let revision = channel.revision.clone();
-        s.state.channel_save(change(channel), Some(&revision)).unwrap();
-    };
+    let save = |change: &dyn Fn(Channel) -> Channel| changed(&s, change);
     save(&|channel| Channel { autonomy: Some(themis_core::visions::Autonomy::Ask), ..channel });
     assert_eq!(s.state.visions_work_mode("ada-work"), Some(ApprovalMode::Custom));
     save(&|channel| Channel { full_access: true, ..channel });
@@ -399,22 +395,25 @@ fn a_finished_chat_drops_the_questions_it_moved_on_from() {
     assert_eq!(s.state.open_questions("plain").len(), 1);
 }
 
-/// The mode a team chat's run takes is also kept as the chat's own, so what the app shows and
-/// what a later take-over runs in match the channel; a chat the person holds keeps its own.
+/// A team chat's run never runs above its channel: a chat the person took over runs in the
+/// stricter of its own mode and the channel's now, so switching Full access off always takes
+/// YOLO away, and a stricter mode the person chose holds. Nothing is written back to the chat.
 #[test]
-fn a_team_chats_run_keeps_its_mode_on_the_chat() {
+fn a_held_team_chat_never_runs_above_its_channel() {
     use themis_core::configuration::ApprovalMode;
     let s = setup(true);
-    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
+    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::TakenOver);
+    let save = |change: &dyn Fn(Channel) -> Channel| changed(&s, change);
+    save(&|channel| Channel { autonomy: Some(themis_core::visions::Autonomy::Ask), ..channel });
+    assert_eq!(s.state.visions_run_mode("ada-work", ApprovalMode::Yolo), ApprovalMode::Custom);
+    save(&|channel| Channel { full_access: true, ..channel });
+    assert_eq!(s.state.visions_run_mode("ada-work", ApprovalMode::Custom), ApprovalMode::Custom);
+    assert_eq!(s.state.visions_run_mode("plain", ApprovalMode::Yolo), ApprovalMode::Yolo);
+}
+
+/// Saves `s`'s channel as `change` makes it.
+fn changed(s: &Setup, change: &dyn Fn(Channel) -> Channel) {
     let channel = s.state.channel_get(&s.channel).unwrap();
     let revision = channel.revision.clone();
-    let full = Channel { full_access: true, ..channel };
-    s.state.channel_save(full, Some(&revision)).unwrap();
-    let mut stored = ApprovalMode::Custom;
-    assert_eq!(s.state.visions_run_mode("ada-work", &mut stored), ApprovalMode::Yolo);
-    assert_eq!(stored, ApprovalMode::Yolo);
-    own(&s.state, "ada-work", &s.ada, &s.channel, Hold::TakenOver);
-    let mut held = ApprovalMode::Custom;
-    assert_eq!(s.state.visions_run_mode("ada-work", &mut held), ApprovalMode::Custom);
-    assert_eq!(held, ApprovalMode::Custom);
+    s.state.channel_save(change(channel), Some(&revision)).unwrap();
 }
