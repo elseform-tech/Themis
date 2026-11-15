@@ -240,7 +240,7 @@ export const ADMINISTRATION = "administration";
 
 /** Every channel entry's fields besides `type`, optional ones included: the wire fixture test
  *  checks them against Rust. `request_result` joins once the Rust side adds it to the fixture. */
-export const ENTRY_FIELDS: { [K in Exclude<ChannelEntry["type"], "request_result">]: Array<Exclude<keyof Extract<ChannelEntry, { type: K }>, "type">> } = {
+export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Extract<ChannelEntry, { type: K }>, "type">> } = {
   person: ["text"],
   vision: ["vision_id", "text", "tasked"],
   chat_started: ["vision_id", "thread_id", "title"],
@@ -254,6 +254,7 @@ export const ENTRY_FIELDS: { [K in Exclude<ChannelEntry["type"], "request_result
   request_answered: ["vision_id", "request_id", "channel_id", "accepted", "note"],
   worker_asked: ["vision_id", "request_id", "channel_id", "role", "why"],
   routine_set: ["vision_id", "routine_id", "schedule", "instruction", "changed"],
+  request_result: ["vision_id", "request_id", "channel_id", "text"],
 };
 
 /** Every value of the unions the app reads, for the same check. */

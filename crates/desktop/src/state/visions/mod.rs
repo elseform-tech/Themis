@@ -372,6 +372,13 @@ pub enum ChannelEntry {
         accepted: bool,
         note: String,
     },
+    /// In the asking channel: what `channel_id`'s chief (`vision_id`) made for the request.
+    RequestResult {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        text: String,
+    },
 }
 
 /// The Visions cache behind its lock, and the index of owned chats (`owned_index`) apart from

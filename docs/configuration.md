@@ -966,7 +966,8 @@ a read. Writes are logged as `visions`/`chat_started`, `vision_sent` and
 | `pause_worker {workerId}`, `resume_worker {workerId}` | the worker belongs to the chief's channel; a pause holds it in that channel only (the Vision is not paused elsewhere) |
 | `list_questions`, `answer_question`, `pass_question` on a worker's chat | as for a Vision's own chat: the chat is owned by a worker of its channel, nothing is held, and the `decision` is within the channel's autonomy (`above_autonomy` otherwise, `external` and `spend` always) |
 | `request_channel {channel, ask}` | `channel` is another channel of the project by name; counts toward `visions.requests_per_day` for the sending channel |
-| `answer_request {requestId, accept, note?}` | a request to the chief's channel; accepting needs the channel's `scope` decision (else the person is asked), declining is always allowed |
+| `answer_request {requestId, accept, note?}` | a request to the chief's channel; accepting is the chief's own unless its channel's level leaves the team no decision (Always ask: the person is asked), declining is always allowed |
+| `send_result {requestId, text}` | a request the chief's channel took on, once: `text` (1 to 2000 characters) is posted in the asking channel as a `request_result` entry (announced) and the asking chief wakes (`request_answered`); a chief only |
 | `ask_for_worker {role, why}` | wakes Atlas with the request; it counts toward `# administration`'s wakes |
 | `list_routines {}`, `save_routine {routine}`, `delete_routine {routineId}` | the routine is the chief's own; adding or changing one needs the channel's `undoable` decision and `visions.routines_per_chief`, and posts a line in the channel |
 

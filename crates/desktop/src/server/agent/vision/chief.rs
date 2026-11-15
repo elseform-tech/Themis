@@ -19,6 +19,7 @@ pub(in crate::server::agent) const CHIEF_CALLS: &[&str] = &[
     "list_team",
     "request_channel",
     "answer_request",
+    "send_result",
     "ask_for_worker",
     "list_routines",
     "save_routine",
@@ -283,7 +284,7 @@ pub(super) async fn dispatch(
             }
             Ok(json!({"seq": seq}))
         }
-        "request_channel" | "answer_request" | "ask_for_worker" => {
+        "request_channel" | "answer_request" | "send_result" | "ask_for_worker" => {
             request(state, sink, scope, method, args)
         }
         "list_routines" | "save_routine" | "delete_routine" => routine(state, scope, method, args),
@@ -337,6 +338,11 @@ fn request(
         return Ok(json!({"requestId": id}));
     }
     let id: String = arg(args, "requestId")?;
+    if method == "send_result" {
+        let text: String = arg(args, "text")?;
+        state.visions_send_result(sink, channel, &scope.vision_id, &id, &text)?;
+        return Ok(json!({"sent": true}));
+    }
     let note: Option<String> = arg(args, "note")?;
     let note = note.unwrap_or_default();
     state.visions_answer_request(

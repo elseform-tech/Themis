@@ -113,3 +113,50 @@ async fn a_chief_asks_another_channel_by_its_name() {
         .success());
     fx.shut_down().await;
 }
+
+/// The whole exchange through each chief's `themis`: asked, taken on by the receiving chief
+/// itself (no person), and its result back in the asking channel; a worker sends no result.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_result_reaches_the_asking_channel() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let (juno, release) = fx.chief_and_channel("Juno", "release");
+    let (ada, design) = fx.chief_and_channel("Ada", "design");
+    let (_, asker) = fx.vision_run(&juno, &release).await;
+    let (_, helper) = fx.vision_run(&ada, &design).await;
+    let asked = fx.agent_call_ok(
+        &asker,
+        "request_channel",
+        json!({"channel": "design", "ask": "a layout for the recipe page"}),
+    );
+    let id = asked["requestId"].as_str().unwrap().to_owned();
+    fx.agent_call_ok(
+        &helper,
+        "answer_request",
+        json!({"requestId": id, "accept": true, "note": "on it"}),
+    );
+    fx.agent_call_ok(
+        &helper,
+        "send_result",
+        json!({"requestId": id, "text": "A centered card in omelette.html"}),
+    );
+    let result: Vec<Value> = fx
+        .entries(&release)
+        .into_iter()
+        .filter(|e| e["type"] == "request_result")
+        .collect();
+    assert_eq!(result.len(), 1, "{result:?}");
+    assert_eq!(result[0]["text"], "A centered card in omelette.html");
+    assert_eq!(result[0]["channel_id"], design.as_str());
+    let (rook, work) = fx.vision_and_channel("Rook", "work");
+    let (_, worker) = fx.vision_run(&rook, &work).await;
+    assert!(!fx
+        .agent_call(
+            &worker,
+            "send_result",
+            json!({"requestId": id, "text": "x"})
+        )
+        .status
+        .success());
+    fx.shut_down().await;
+}

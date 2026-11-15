@@ -160,6 +160,24 @@ fn a_request_wakes_the_other_chief_and_shows_in_both_channels() {
     );
 }
 
+/// At Settings' default level a chief takes another channel's request on itself: the person
+/// is not asked to Take it on.
+#[test]
+fn a_chief_takes_a_request_on_without_the_person() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, tess) = &c.api;
+    let asked = c
+        .state
+        .visions_request(&sink(), release, juno, api, "Fix the export date format")
+        .unwrap();
+    c.state
+        .visions_answer_request(&sink(), api, tess, &asked, true, "on it")
+        .unwrap();
+    let answered = lines(&c.state, release);
+    assert_eq!(of_type(&answered, "request_answered")[0]["accepted"], true);
+}
+
 #[test]
 fn a_chief_declines_within_its_autonomy() {
     let c = company();
@@ -385,4 +403,53 @@ fn a_cap_notice_that_failed_is_tried_again() {
         .filter(|line| line["type"] == "notice" && line["kind"] == "request_cap")
         .count();
     assert_eq!(notices, 1);
+}
+
+/// The receiving chief sends what it made back: the asking channel shows it and its chief
+/// wakes; only once, only from the channel that took the request on.
+#[test]
+fn a_result_reaches_the_asking_channel() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, tess) = &c.api;
+    let asked = c
+        .state
+        .visions_request(&sink(), release, juno, api, "Sketch a layout")
+        .unwrap();
+    let early = c
+        .state
+        .visions_send_result(&sink(), api, tess, &asked, "too soon");
+    assert!(early.is_err(), "not taken on yet");
+    c.state
+        .visions_answer_request(&sink(), api, tess, &asked, true, "on it")
+        .unwrap();
+    assert!(c
+        .state
+        .visions_send_result(&sink(), release, juno, &asked, "wrong side")
+        .is_err());
+    c.state
+        .visions_send_result(
+            &sink(),
+            api,
+            tess,
+            &asked,
+            "A centered card in omelette.html",
+        )
+        .unwrap();
+    let all = lines(&c.state, release);
+    let results = of_type(&all, "request_result");
+    assert_eq!(results.len(), 1, "{all:?}");
+    assert_eq!(results[0]["channel_id"], api.as_str());
+    assert_eq!(results[0]["text"], "A centered card in omelette.html");
+    let woke = wakes(&c.state);
+    assert!(
+        woke.iter()
+            .filter(|(vision, _, reason, _)| vision == juno && reason == "request_answered")
+            .count()
+            >= 2
+    );
+    assert!(c
+        .state
+        .visions_send_result(&sink(), api, tess, &asked, "again")
+        .is_err());
 }

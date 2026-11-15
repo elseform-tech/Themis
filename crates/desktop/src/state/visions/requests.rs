@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use themis_core::visions::Decision;
 
 use super::admin::ADMINISTRATION;
 use super::store::{read_store, write_store};
@@ -40,6 +39,9 @@ struct Request {
     at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     answered: Option<Answered>,
+    /// The receiving chief sent its result back (once).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    result_sent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -189,6 +191,7 @@ impl AppState {
             to_channel: to_id.to_owned(),
             at_ms: now_ms(),
             answered: None,
+            result_sent: false,
         });
         self.requests_save(&requests, &channels)?;
         Ok(id)
@@ -240,8 +243,8 @@ impl AppState {
         }
     }
 
-    /// The receiving chief's answer: declining is always its own; accepting takes on new work
-    /// (the `scope` decision of its channel's level).
+    /// The receiving chief's answer: declining is always its own, and so is accepting, unless
+    /// its channel's level leaves the team no decision (Always ask), when the person takes it on.
     pub(crate) fn visions_answer_request(
         &self,
         sink: &Arc<dyn EventSink>,
@@ -256,12 +259,52 @@ impl AppState {
             let config = self
                 .runtime_configuration(Some(&channel.project_root), None)?
                 .config;
-            let decides = super::vision_decisions(&channel, &config.visions);
-            if !decides.contains(&Decision::Scope) {
+            if super::vision_decisions(&channel, &config.visions).is_empty() {
                 return Err(themis_core::prompts::AGENT_CLI_REQUEST_ABOVE_LEVEL.to_owned());
             }
         }
         self.answer_request(sink, channel_id, chief, request_id, accept, note)
+    }
+
+    /// The receiving chief (`chief`, leading `channel_id`) sends back what it made for a
+    /// request its channel took on: the asking channel shows it and its chief wakes. Once.
+    pub(crate) fn visions_send_result(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        channel_id: &str,
+        chief: &str,
+        request_id: &str,
+        text: &str,
+    ) -> Result<(), String> {
+        let text = text.trim();
+        if text.is_empty() || text.chars().count() > MAX_TEXT_CHARS {
+            return Err(format!(
+                "A result is some text of at most {MAX_TEXT_CHARS} characters"
+            ));
+        }
+        let waiting = |request: &Request| {
+            request.answered.as_ref().is_some_and(|a| a.accepted) && !request.result_sent
+        };
+        let request = self
+            .request_update(channel_id, request_id, waiting, |request| {
+                request.result_sent = true;
+            })
+            .map_err(|_| {
+                "This channel has no request taken on with that id waiting for a result".to_owned()
+            })?;
+        let entry = ChannelEntry::RequestResult {
+            vision_id: chief.to_owned(),
+            request_id: request.id.clone(),
+            channel_id: request.to_channel.clone(),
+            text: text.to_owned(),
+        };
+        let _ = self.channel_post(&request.from_channel, chief, entry);
+        self.visions_note("request_result", json!({"request_id": request.id}));
+        if let Some(asker) = self.channel_get(&request.from_channel).map(|c| c.chief) {
+            let reason = WakeReason::RequestAnswered(request.id.clone());
+            self.visions_wake(sink, &request.from_channel, &asker, reason);
+        }
+        Ok(())
     }
 
     /// The person accepts or declines a request their channel's chief could not or did not.
@@ -281,6 +324,29 @@ impl AppState {
         self.answer_request(sink, &to, "", request_id, accept, "")
     }
 
+    /// Changes one request to `channel_id` that `keep` accepts, under the Visions lock, and
+    /// returns it as changed.
+    fn request_update(
+        &self,
+        channel_id: &str,
+        request_id: &str,
+        keep: impl Fn(&Request) -> bool,
+        change: impl FnOnce(&mut Request),
+    ) -> Result<Request, String> {
+        let channels = self.channel_ids();
+        let _guard = self.visions_cache();
+        let mut requests = self.requests_load()?;
+        let request = requests
+            .iter_mut()
+            .find(|request| request.id == request_id && request.to_channel == channel_id)
+            .filter(|request| keep(request))
+            .ok_or("This request is no longer open")?;
+        change(request);
+        let request = request.clone();
+        self.requests_save(&requests, &channels)?;
+        Ok(request)
+    }
+
     /// Records the answer once, shows it in both channels and wakes the asking chief.
     fn answer_request(
         &self,
@@ -295,23 +361,13 @@ impl AppState {
         if note.chars().count() > MAX_TEXT_CHARS {
             return Err(format!("The note is at most {MAX_TEXT_CHARS} characters"));
         }
-        let request = {
-            let channels = self.channel_ids();
-            let _guard = self.visions_cache();
-            let mut requests = self.requests_load()?;
-            let request = requests
-                .iter_mut()
-                .find(|request| request.id == request_id && request.to_channel == channel_id)
-                .filter(|request| request.answered.is_none())
-                .ok_or("This request is no longer open")?;
+        let open = |request: &Request| request.answered.is_none();
+        let request = self.request_update(channel_id, request_id, open, |request| {
             request.answered = Some(Answered {
                 accepted: accept,
                 at_ms: now_ms(),
             });
-            let request = request.clone();
-            self.requests_save(&requests, &channels)?;
-            request
-        };
+        })?;
         for (here, there) in [
             (&request.to_channel, &request.from_channel),
             (&request.from_channel, &request.to_channel),

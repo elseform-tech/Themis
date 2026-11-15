@@ -319,6 +319,17 @@
         "instruction": "Summarise yesterday",
         "changed": false
       }
+    },
+    {
+      "seq": 14,
+      "at_ms": 14000,
+      "entry": {
+        "type": "request_result",
+        "vision_id": "v2",
+        "request_id": "q1",
+        "channel_id": "c2",
+        "text": "A centered card in omelette.html"
+      }
     }
   ],
   "page": {

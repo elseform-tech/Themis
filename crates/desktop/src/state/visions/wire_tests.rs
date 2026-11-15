@@ -136,6 +136,12 @@ fn every_entry() -> Vec<ChannelEntry> {
             instruction: "Summarise yesterday".into(),
             changed: false,
         },
+        ChannelEntry::RequestResult {
+            vision_id: "v2".into(),
+            request_id: "q1".into(),
+            channel_id: "c2".into(),
+            text: "A centered card in omelette.html".into(),
+        },
     ];
     for (at, entry) in entries.iter().enumerate() {
         let place = match entry {
@@ -152,6 +158,7 @@ fn every_entry() -> Vec<ChannelEntry> {
             ChannelEntry::RequestAnswered { .. } => 10,
             ChannelEntry::WorkerAsked { .. } => 11,
             ChannelEntry::RoutineSet { .. } => 12,
+            ChannelEntry::RequestResult { .. } => 13,
         };
         assert_eq!(place, at);
     }

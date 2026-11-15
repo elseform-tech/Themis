@@ -617,9 +617,10 @@ worker's thread and the chief does not repeat it; a permission question shows in
 
 **Requests between channels.** A chief may ask another channel of the same project for help
 (a limited number of requests a day for each channel, 10 unless you change it). The other chief
-may take it on only when its channel's level lets it decide the scope of its work; otherwise a
-line in the channel asks you: **Take it on** or **Decline**. Declining is always the chief's to
-do. Each channel shows the request as one line.
+takes it on itself, or declines it with a reason; only at **Always ask** does a line in its
+channel ask you: **Take it on** or **Decline**. When the work is done, that chief sends the
+result back, and the asking channel shows it ("# design sent: …"). Each channel shows the
+request as one line.
 
 **Routines.** A chief can keep routines in its channel: pick weekdays, a time of day and an
 instruction ("every weekday at 9, check the failing tests"). It tells you in the channel when it
