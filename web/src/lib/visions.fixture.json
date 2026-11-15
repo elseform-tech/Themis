@@ -26,7 +26,7 @@
     "name": "administration",
     "topic": "Ship 2.0",
     "project_root": "/repo",
-    "approval_mode": "auto",
+    "full_access": true,
     "members": [
       "v1"
     ],
@@ -90,7 +90,10 @@
       "entry": {
         "type": "vision",
         "vision_id": "v1",
-        "text": "On it."
+        "text": "On it.",
+        "tasked": [
+          "v2"
+        ]
       }
     },
     {

@@ -4,7 +4,7 @@ import { initialState, type AppState } from "../../state/reducer";
 import { projectChannels } from "./channels";
 
 const channel = (id: string, name: string, members: string[]): ChannelInfo => ({
-  id, name, topic: "", project_root: "/p", approval_mode: "custom", members, chief: members[0] ?? "", revision: "r",
+  id, name, topic: "", project_root: "/p", full_access: false, members, chief: members[0] ?? "", revision: "r",
 });
 
 describe("projectChannels", () => {

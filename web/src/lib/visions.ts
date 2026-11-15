@@ -55,7 +55,9 @@ export interface ChannelInfo {
   name: string;
   topic: string;
   project_root: string;
-  approval_mode: ApprovalModeName;
+  /** Full access: the team's chats run in YOLO. Off, the autonomy decides: Always ask runs them in
+   *  Custom, every other level in Auto (the server derives the mode). */
+  full_access: boolean;
   members: string[];
   /** The member the person talks to; the others are its workers. */
   chief: string;
@@ -145,7 +147,9 @@ export interface SetUpItem {
 /** One entry in a channel's log (Rust `ChannelEntry`). */
 export type ChannelEntry =
   | { type: "person"; text: string }
-  | { type: "vision"; vision_id: string; text: string }
+  /** `tasked`: the workers the chief tasked in the run that posted this message, each once, in
+   *  first-task order (absent when it tasked no one). */
+  | { type: "vision"; vision_id: string; text: string; tasked?: string[] }
   | { type: "chat_started"; vision_id: string; thread_id: string; title: string }
   | { type: "answered"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string; answer: string; reason: string }
   | { type: "passed_on"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string }
@@ -237,7 +241,7 @@ export const ADMINISTRATION = "administration";
  *  checks them against Rust. */
 export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Extract<ChannelEntry, { type: K }>, "type">> } = {
   person: ["text"],
-  vision: ["vision_id", "text"],
+  vision: ["vision_id", "text", "tasked"],
   chat_started: ["vision_id", "thread_id", "title"],
   answered: ["vision_id", "thread_id", "question_id", "decision", "question", "answer", "reason"],
   passed_on: ["vision_id", "thread_id", "question_id", "decision", "question"],

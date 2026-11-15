@@ -1,5 +1,6 @@
-// New channel: a name, a topic and the Visions that work there. The channel starts in the
-// person's default approval mode (changed later in channel details, by the person only).
+// New channel: a name, a topic and the Visions that work there. The channel starts without Full
+// access, so its autonomy sets its chats' approvals (changed later in channel details, by the
+// person only).
 import { useState, type FormEvent } from "react";
 import { Button, Dialog, Input } from "../../components";
 import { ADMIN_VISION_ID, saveChannel } from "../../lib/visions";
@@ -28,7 +29,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
     if (!root || !name || busy) return;
     setBusy(true); setError("");
     try {
-      const channel = await saveChannel({ name, topic: topic.trim(), project_root: root, approval_mode: state.settings.default_approval_mode ?? "custom", members }, null);
+      const channel = await saveChannel({ name, topic: topic.trim(), project_root: root, full_access: false, members }, null);
       dispatch({ type: "visions/loaded", projectRoot: root, channels: [...(state.visions.channels[root] ?? []).filter(each => each.id !== channel.id), channel] });
       dispatch({ type: "visions/open", channelId: channel.id });
       onClose();

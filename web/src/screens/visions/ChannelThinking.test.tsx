@@ -20,7 +20,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
   listQuestions: vi.fn(async () => []),
 }));
 
-const channel: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", approval_mode: "custom", members: ["rook"], chief: "rook", revision: "r" };
+const channel: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", full_access: false, members: ["rook"], chief: "rook", revision: "r" };
 const rook = (running: boolean): VisionInfo => ({
   id: "rook", name: "Rook", role: "", shape: "flat", color: "teal", soul: "", paused: false, revision: "r",
   over_budget: false, needs: 0, sorry: false, vision_chats: running ? [{ thread_id: "own", channel_id: "c1", running: true }] : [],

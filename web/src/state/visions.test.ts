@@ -32,7 +32,7 @@ function owned(id: string, channelId: string, visionId = "v1", extra: Partial<Th
 }
 
 function channel(id: string, root = "/repo"): ChannelInfo {
-  return { id, name: id, topic: "", project_root: root, approval_mode: "custom", members: ["v1"], chief: "v1", revision: "c1" };
+  return { id, name: id, topic: "", project_root: root, full_access: false, members: ["v1"], chief: "v1", revision: "c1" };
 }
 
 function line(seq: number, entry: ChannelEntry = { type: "person", text: `line ${seq}` }): ChannelLine {
@@ -323,7 +323,8 @@ describe("wire fixture", () => {
     expect([...fixture.holds].sort()).toEqual(Object.keys(HOLDS).sort());
     expect([...fixture.owned_kinds].sort()).toEqual(Object.keys(OWNED_KINDS).sort());
     expect([...fixture.approval_modes].sort()).toEqual(Object.keys(APPROVAL_MODES).sort());
-    expect(fixture.owner.kind in OWNED_KINDS && fixture.owner.hold in HOLDS && fixture.channel.approval_mode in APPROVAL_MODES).toBe(true);
+    expect(fixture.owner.kind in OWNED_KINDS && fixture.owner.hold in HOLDS).toBe(true);
+    expect(typeof fixture.channel.full_access).toBe("boolean");
   });
 
   it("holds each shape with exactly the fields the app's types name", () => {
@@ -332,7 +333,7 @@ describe("wire fixture", () => {
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
     const chatKeys: Array<keyof VisionInfo["vision_chats"][number]> = ["thread_id", "channel_id", "running"];
     expect(keys(fixture.vision.vision_chats[0]!)).toEqual([...chatKeys].sort());
-    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "approval_mode", "members", "chief", "autonomy", "custom", "daily_budget_usd", "revision", "needs"];
+    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "full_access", "members", "chief", "autonomy", "custom", "daily_budget_usd", "revision", "needs"];
     expect(keys(fixture.channel)).toEqual([...channelKeys].sort());
     const ownerKeys: Array<keyof OwnedChat["owner"]> = ["thread_id", "vision_id", "channel_id", "kind", "hold"];
     expect(keys(fixture.owner)).toEqual([...ownerKeys].sort());

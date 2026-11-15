@@ -1,19 +1,37 @@
-// A channel's details (canvas VisionChannel): its topic, the approval mode its Visions' chats run
-// in (the person's to set; a Vision never changes it), its daily budget (empty: Settings'), its members (Visions only) and Delete. A
+// A channel's details (boards VisionChannel, ChannelAutonomy): its topic, its autonomy (which sets
+// the approval mode its chats run in) and Full access (YOLO), both the person's to set and never a
+// Vision's, its daily budget (empty: Settings'), its members (Visions only) and Delete. A
 // member opens the chief's profile, or a worker's thread with the chief; each can be removed from
 // the channel or deleted. The Members block's + makes a new Vision by hand (the sidebar has no
 // Visions list). `# administration` is built in: Atlas is its only member, and neither can be deleted.
 import { useState } from "react";
-import { ADMIN_VISION_ID, deleteChannel, deleteVision, type ApprovalModeName, type ChannelInfo, type VisionInfo, ADMINISTRATION } from "../../lib/visions";
+import { Switch } from "../../components";
+import { ADMIN_VISION_ID, deleteChannel, deleteVision, type Autonomy, type ChannelInfo, type VisionInfo, ADMINISTRATION } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
 import { visionMoods } from "../../state/visions";
+import { presetRows } from "./autonomy";
+import { AutonomyField } from "./AutonomyField";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { lookOf } from "./cast";
 import { saveChannelChange } from "./channels";
 import { NewVisionSheet } from "./NewVisionSheet";
 import { CloseIcon, DeleteButton, PanelBlock, PanelButton, PlusIcon, SidePanel } from "./SidePanel";
+import { useVisionsSettings } from "./teamData";
 
-const MODES: Array<[ApprovalModeName, string]> = [["custom", "Custom"], ["auto", "Auto"], ["yolo", "YOLO"]];
+/** Autonomy (the channel's, else Settings') and Full access. Custom starts from the rows the
+ *  level in force hands over. */
+function AutonomyBlock({ channel, save }: { channel: ChannelInfo; save: (change: Partial<ChannelInfo>) => void }) {
+  const settings = useVisionsSettings();
+  const level = channel.autonomy ?? settings?.autonomy;
+  const choose = (next: Autonomy) => save(next === "custom" ? { autonomy: next, custom: channel.custom ?? presetRows(level ?? "ask") } : { autonomy: next });
+  return <PanelBlock title="Autonomy">
+    <AutonomyField level={level} onChange={choose} />
+    <label className="themis-visions-field themis-visions-switch-row">
+      <span>Full access</span>
+      <Switch role="switch" aria-label="Full access" checked={channel.full_access} onChange={event => save({ full_access: event.target.checked })} />
+    </label>
+  </PanelBlock>;
+}
 
 /** The channel's daily budget: empty goes back to Settings › Visions' budget, whose total still
  *  caps what all channels spend. */
@@ -113,11 +131,7 @@ export function ChannelDetails({ channel }: { channel: ChannelInfo }) {
         <input type="text" className="themis-visions-field" aria-label="Topic" maxLength={500} value={topic ?? channel.topic}
           onChange={event => setTopic(event.target.value)} onBlur={saveTopic} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </PanelBlock>
-      {!hq && <PanelBlock title="Approval mode">
-        <select className="themis-visions-field" aria-label="Approval mode" value={channel.approval_mode} onChange={event => void save({ approval_mode: event.target.value as ApprovalModeName })}>
-          {MODES.map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}
-        </select>
-      </PanelBlock>}
+      {!hq && <AutonomyBlock channel={channel} save={change => void save(change)} />}
       <BudgetBlock channel={channel} save={change => void save(change)} onError={setError} />
       <Members channel={channel} save={change => void save(change)} />
     </SidePanel>
