@@ -4,7 +4,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ADMIN_VISION_ID } from "../../lib/visions";
-import { ACCESSORIES, COLORS, PRESETS, SHAPES, lookOf } from "./cast";
+import { ACCESSORIES, COLORS, PRESETS, SHAPES, lookOf, resolveLook } from "./cast";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { EXPRESSIONS, EXPRESSION_LABEL, expressionFor, type ExpressionState } from "./Expression";
 import { StillPicture } from "./StillPicture";
@@ -35,21 +35,39 @@ describe("the cast", () => {
     }
   });
 
-  it("juno_and_atlas_are_pinned_to_the_chiefmoods_board", () => {
-    // Golden values copied from ChiefMoods.dc.html (renderVals), not derived from cast.ts.
+  it("the_body_is_one_outline", () => {
+    // Golden value copied from the approved Cloud3D board (the rail icon's outline on the 48 box).
+    const outline = "M13 39h22a8 8 0 0 0 .8-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13 39Z";
+    for (const shape of Object.keys(SHAPES)) expect(SHAPES[shape]!.body).toBe(outline);
+    for (const { look } of PRESETS) {
+      expect(resolveLook(look).shape.body).toBe(outline);
+      for (const view of [render(<CharacterAvatar look={look} />), render(<StillPicture look={look} expression="calm" />)]) {
+        const fills = [...view.container.querySelectorAll("path")].filter(path => path.getAttribute("d") === outline);
+        expect(fills.length).toBeGreaterThan(0);
+        expect(view.container.querySelectorAll("circle")).toHaveLength(0);
+        for (const path of view.container.querySelectorAll("path")) expect(path.getAttribute("d") ?? "").not.toMatch(/a\d+(\.\d+)? \d+(\.\d+)? 0 1 1/);
+        view.unmount();
+      }
+    }
+  });
+
+  it("juno_and_atlas_are_pinned_to_the_cloud3d_board", () => {
+    // Golden values copied from Cloud3D.dc.html (renderVals), not derived from cast.ts.
     const board = {
-      juno: { body: "M12 40a8 8 0 0 1 0-16H36a8 8 0 0 1 0 16ZM7 23a8 8 0 1 1 16 0a8 8 0 1 1 -16 0ZM14 16a11 11 0 1 1 22 0a11 11 0 1 1 -22 0ZM28 23a7 7 0 1 1 14 0a7 7 0 1 1 -14 0Z", ramp: ["#D4F0FF", "#5DBDF6", "#1A74BE"], solid: "M36 28h9a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-12a2 2 0 0 1 2-2Z", eyes: { l: 17.5, r: 27, y: 29 } },
-      atlas: { body: "M12 40a8 8 0 0 1 0-16H36a8 8 0 0 1 0 16ZM7 22a9 9 0 1 1 18 0a9 9 0 1 1 -18 0ZM13.5 17a10.5 10.5 0 1 1 21 0a10.5 10.5 0 1 1 -21 0ZM24.5 22a8.5 8.5 0 1 1 17 0a8.5 8.5 0 1 1 -17 0Z", ramp: ["#E6ECF7", "#93A2BE", "#4E5B76"], solid: "M15 9V-3l4.5 5 4.5-7 4.5 7 4.5-5V9Z", eyes: { l: 18.5, r: 29.5, y: 29.5 } },
+      juno: { solid: "M36 30h8a1.8 1.8 0 0 1 1.8 1.8v10.4a1.8 1.8 0 0 1-1.8 1.8h-8a1.8 1.8 0 0 1-1.8-1.8V31.8A1.8 1.8 0 0 1 36 30Z", flat: "#38A9F0" },
+      atlas: { solid: "M17.5 16V8.6l3.2 3.6 3.3-5.6 3.3 5.6 3.2-3.6V16Z", flat: "#7C8AA5" },
     };
     for (const [name, golden] of Object.entries(board)) {
       const preset = PRESETS.find(each => each.name.toLowerCase() === name)!;
-      const shape = SHAPES[preset.look.shape]!;
-      const color = COLORS[preset.look.color]!;
-      expect(shape.body).toBe(golden.body);
-      expect([color.hi, color.mid, color.lo]).toEqual(golden.ramp);
+      expect(COLORS[preset.look.color]!.flat).toBe(golden.flat);
       expect(ACCESSORIES[preset.look.accessory]!.solid).toBe(golden.solid);
-      expect(shape.eyes).toEqual(golden.eyes);
+      expect(SHAPES[preset.look.shape]!.eyes).toEqual({ l: 19.5, r: 28.5, y: 29 });
     }
+  });
+
+  it("the_accessory_can_be_hidden", () => {
+    const { container } = render(<CharacterAvatar look={PRESETS[1]!.look} accessory={false} />);
+    expect([...container.querySelectorAll("path")].map(path => path.getAttribute("d"))).not.toContain(ACCESSORIES.crown!.solid);
   });
 
   it("a_small_avatar_draws_its_body_colour_and_accessory", () => {
@@ -71,7 +89,7 @@ describe("the cast", () => {
     expect(stops).toEqual(["#E6ECF7", "#93A2BE", "#4E5B76"]);
     const drawn = [...container.querySelectorAll("path")].map(path => path.getAttribute("d"));
     expect(drawn).toContain(SHAPES.broad!.body);
-    expect(drawn).toContain("M15 9V-3l4.5 5 4.5-7 4.5 7 4.5-5V9Z");
+    expect(drawn).toContain(ACCESSORIES.crown!.solid);
   });
 
   it("an_unknown_look_falls_back_to_the_first_shape_colour_and_no_accessory", () => {

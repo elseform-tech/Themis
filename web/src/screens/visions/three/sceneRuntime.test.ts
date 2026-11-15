@@ -4,7 +4,7 @@
 // from the options, and the geometry and blink helpers.
 import * as THREE from "three";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PRESETS } from "../cast";
+import { EYES, PRESETS } from "../cast";
 
 const renderer = vi.hoisted(() => ({ instances: [] as Array<Record<string, ReturnType<typeof vi.fn>>> }));
 const failBuild = vi.hoisted(() => ({ on: false }));
@@ -20,8 +20,9 @@ vi.mock("./buildCharacter", async importOriginal => {
   const actual = await importOriginal<typeof import("./buildCharacter")>();
   return { ...actual, buildCharacter: (...args: Parameters<typeof actual.buildCharacter>) => { if (failBuild.on) throw new Error("build failed"); return actual.buildCharacter(...args); } };
 });
-import { frontZ } from "./buildCharacter";
-import { blinking } from "./faces";
+import { EXPRESSIONS } from "../Expression";
+import { buildCharacter, FRONT_Z } from "./buildCharacter";
+import { blinking, drawFace, faceFor } from "./faces";
 import { startScene } from "./sceneRuntime";
 
 const options = { look: PRESETS[0]!.look, expression: "calm" as const, size: 90, onLost: vi.fn() };
@@ -81,13 +82,40 @@ describe("the scene runtime", () => {
 });
 
 describe("scene helpers", () => {
-  it("frontZ_is_the_sphere_height_over_the_body_and_zero_outside_it", () => {
-    const bumps: Array<[number, number, number]> = [[24, 16, 10]];
-    expect(frontZ(bumps, 24, 16)).toBeCloseTo(10, 5);
-    expect(frontZ(bumps, 24 + 6, 16 + 8)).toBeCloseTo(0, 5); // on the rim
-    expect(frontZ(bumps, 24, 32)).toBeCloseTo(8, 5); // the base capsule's front
-    expect(frontZ(bumps, 2, 2)).toBe(0);
-    expect(frontZ(bumps, 24, 22)).toBeCloseTo(8, 5); // sqrt(100 - 36)
+  it("every_expression_has_no_mouth", () => {
+    const drawn: string[] = [];
+    vi.stubGlobal("Path2D", class { constructor(d: string) { drawn.push(d); } });
+    const ctx = document.createElement("canvas").getContext("2d")!;
+    const { l, r, y } = EYES;
+    for (const expression of EXPRESSIONS) {
+      const face = faceFor(expression, l, r, y);
+      expect(Object.keys(face)).not.toContain("mouth");
+      const eyesAndBrows = [face.eyesFill, face.glint, face.eyesLine, face.brows].filter(Boolean);
+      drawn.length = 0;
+      drawFace(ctx, face, y, false);
+      expect(drawn.length).toBeGreaterThan(0);
+      for (const d of drawn) expect(eyesAndBrows).toContain(d);
+    }
+  });
+
+  it("the_scene_builds_one_body_mesh", () => {
+    for (const { look } of PRESETS) {
+      const character = buildCharacter(look, "calm");
+      const meshes: THREE.Mesh[] = [];
+      character.root.traverse(object => { if ((object as THREE.Mesh).isMesh) meshes.push(object as THREE.Mesh); });
+      const bodies = meshes.filter(mesh => mesh.name === "body");
+      expect(bodies).toHaveLength(1);
+      const body = bodies[0]!;
+      expect(body.geometry).toBeInstanceOf(THREE.ExtrudeGeometry);
+      expect(meshes.filter(mesh => mesh.material === body.material)).toHaveLength(1);
+      // The silhouette is the icon's outline (x 3.7 to 43.4, y 13.4 to 39 on the 48 box), not wider.
+      body.geometry.computeBoundingBox();
+      const { min, max } = body.geometry.boundingBox!;
+      expect(min.x).toBeCloseTo(3.7, 0); expect(max.x).toBeCloseTo(43.4, 0);
+      expect(min.y).toBeCloseTo(13.4, 0); expect(max.y).toBeCloseTo(39, 0);
+      expect(max.z).toBeCloseTo(FRONT_Z, 5);
+      character.dispose();
+    }
   });
 
   it("only_calm_and_done_faces_blink_and_only_briefly", () => {
