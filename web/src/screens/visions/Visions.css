@@ -58,6 +58,14 @@
 .themis-channel-row:hover { background: var(--themis-nav-hover-bg); }
 .themis-channel-row.themis-sidebar-row--active { background: var(--themis-card); color: var(--themis-text); font-weight: 600; }
 .themis-channel-row.is-waiting { color: var(--themis-text); font-weight: 600; }
+/* The open channel's team: the chief, then its workers indented, each with its state dot. */
+.themis-team-row { height: 36px; color: var(--themis-text); }
+.themis-team-row.is-worker { height: 30px; padding-left: 26px; }
+.themis-team-row:hover { background: var(--themis-nav-hover-bg); }
+.themis-team-row.themis-sidebar-row--active { background: var(--themis-card); }
+.themis-team-row-name { font-weight: 600; }
+.themis-team-row.is-worker .themis-team-row-name { font-weight: 500; }
+.themis-team-row-role { color: var(--themis-text-2); font-size: 11.5px; font-weight: 400; }
 
 /* A channel and `# administration`. */
 .themis-channel { position: relative; display: flex; flex-direction: column; min-height: 0; padding: 0 40px; }

@@ -121,17 +121,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Team screens", () => {
-  it("the_sidebar_pins_administration_and_shows_chiefs", async () => {
+  it("the_sidebar_pins_administration_then_the_open_channels_team", async () => {
     await show();
     const rows = within(bar()).getAllByRole("button", { name: /^# / });
     expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["# administration", "# release", "# api"]);
-    // Each channel shows its chief's small cloud: Atlas's crown, Juno's clipboard, Sol's headphones.
-    expect(rows.map(row => row.querySelector("svg")?.getAttribute("data-accessory"))).toEqual(["crown", "clipboard", "headphones"]);
-    // `# administration` sits under Channels, first; there is no Visions list.
+    // Channel rows carry no clouds; the team of the open channel sits under Team.
+    expect(rows.every(row => row.querySelector("svg") === null)).toBe(true);
     const heading = within(bar()).getByRole("heading", { name: /Channels/ });
     expect(heading.compareDocumentPosition(rows[0]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(bar()).queryByRole("heading", { name: /Visions/ })).toBeNull();
-    expect(within(bar()).queryByText("Rook")).toBeNull();
+    const team = within(bar()).getByRole("list", { name: "Team" });
+    expect(within(team).getAllByRole("button").map(row => row.getAttribute("aria-label"))).toEqual(["Juno, Chief of staff, Calm", "Rook, Builder, Working", "Wren, Reviewer, Idle"]);
   });
 
   it("the_channel_shows_only_the_person_and_the_chief", async () => {
@@ -280,6 +280,7 @@ describe("Team screens", () => {
     expect(head).toHaveTextContent(/^Rook with Juno$/);
     const clouds = head.querySelectorAll("svg.themis-cloud");
     expect([...clouds].map(cloud => cloud.getAttribute("width"))).toEqual(["22", "16"]);
+    for (const cloud of clouds) expect(cloud).not.toHaveAttribute("data-accessory");
   });
 
   it("a_workers_approval_waits_in_its_thread", async () => {
@@ -521,7 +522,7 @@ describe("Team screens", () => {
     };
     await show(app, fixture({ lines: { c1: [] } }));
     scan();
-    await act(async () => { (live.value as { dispatch: (action: AppAction) => void }).dispatch({ type: "visions/panel", panel: { kind: "worker", visionId: "rook" } }); });
+    fireEvent.click(within(within(bar()).getByRole("list", { name: "Team" })).getByRole("button", { name: /^Rook/ }));
     expect(screen.getByRole("complementary", { name: "Rook with Juno" })).toBeTruthy();
     scan();
     // The channel is new: the chief's name in the middle opens its profile.

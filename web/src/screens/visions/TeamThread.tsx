@@ -47,8 +47,8 @@ export function TeamThread({ channel, workerId, log }: { channel: ChannelInfo; w
   return (
     <aside className="themis-visions-panel themis-team-thread" aria-label={`${worker.name} with ${chief.name}`}>
       <div className="themis-visions-panel-head">
-        <CharacterAvatar look={lookOf(worker)} size={22} />
-        <span className="themis-visions-panel-title themis-team-thread-title">{worker.name} <span className="themis-team-with">with</span> <CharacterAvatar look={lookOf(chief)} size={16} /> <span className="themis-team-with">{chief.name}</span></span>
+        <CharacterAvatar look={lookOf(worker)} size={22} accessory={false} />
+        <span className="themis-visions-panel-title themis-team-thread-title">{worker.name} <span className="themis-team-with">with</span> <CharacterAvatar look={lookOf(chief)} size={16} accessory={false} /> <span className="themis-team-with">{chief.name}</span></span>
         <PanelButton label="Close" onClick={() => dispatch({ type: "visions/panel", panel: null })}><CloseIcon /></PanelButton>
       </div>
       {log && log.length > 0 && <ol className="themis-team-thread-log">{log.map(line => <Line key={line.seq} line={line} worker={worker} chief={chief} />)}</ol>}

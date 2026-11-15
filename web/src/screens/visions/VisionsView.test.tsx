@@ -61,7 +61,7 @@ function fixture(extra: Partial<AppState> = {}): AppState {
     approvals: [approval],
     visions: {
       ...initialState.visions,
-      list: [vision("rook", "Rook", { needs: 1 }), vision("wren", "Wren", { needs: 1, color: "violet" })],
+      list: [vision("rook", "Rook", { needs: 1, role: "Chief of staff" }), vision("wren", "Wren", { needs: 1, color: "violet", role: "Builder" })],
       channels: { "/p": [channel] },
       lines: { c1: entries.map((entry, seq) => ({ seq, at_ms: Date.UTC(2026, 10, 12, 9, seq), entry })) },
       nextBefore: { c1: null },
@@ -125,6 +125,58 @@ describe("Visions view", () => {
     const hq = screen.getByRole("region", { name: "# administration" });
     expect(within(hq).getByLabelText("Message #administration")).toBeDisabled();
     expect(within(hq).queryByRole("button", { name: /^New / })).toBeNull();
+  });
+
+  it("channels_list_without_clouds", async () => {
+    await openRelease();
+    const bar = screen.getByRole("complementary", { name: "Visions navigation" });
+    const rows = within(bar).getAllByRole("button", { name: /^# / });
+    expect(rows.map(row => row.textContent)).toEqual(["#administration", "#release2"]);
+    for (const row of rows) expect(row.querySelector("svg.themis-cloud")).toBeNull();
+  });
+
+  it("the_team_section_lists_the_chief_then_its_workers", async () => {
+    await openRelease();
+    const team = within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("list", { name: "Team" });
+    const rows = within(team).getAllByRole("button");
+    // Rook leads # release; Wren works for it. Each row: its cloud without accessory, name, role, state.
+    expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["Rook, Chief of staff, Needs you", "Wren, Builder, Needs you"]);
+    expect([...rows].map(row => row.querySelector("svg.themis-cloud")?.getAttribute("width"))).toEqual(["22", "18"]);
+    for (const row of rows) expect(row.querySelector("svg.themis-cloud")).not.toHaveAttribute("data-accessory");
+    expect(rows[1]).toHaveClass("is-worker");
+    // # administration has no Team section.
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("button", { name: "# administration" }));
+    expect(screen.queryByRole("list", { name: "Team" })).toBeNull();
+  });
+
+  it("a_worker_row_opens_its_thread", async () => {
+    await openRelease();
+    const team = within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("list", { name: "Team" });
+    const wren = within(team).getByRole("button", { name: /^Wren/ });
+    fireEvent.click(wren);
+    expect(screen.getByRole("complementary", { name: "Wren with Rook" })).toBeTruthy();
+    expect(wren).toHaveAttribute("aria-current", "true");
+    fireEvent.click(wren);
+    expect(screen.queryByRole("complementary", { name: "Wren with Rook" })).toBeNull();
+  });
+
+  it("the_chief_row_opens_its_profile", async () => {
+    await openRelease();
+    const team = within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("list", { name: "Team" });
+    fireEvent.click(within(team).getByRole("button", { name: /^Rook/ }));
+    expect(screen.getByRole("region", { name: "Rook, profile" })).toBeTruthy();
+    expect(within(team).getByRole("button", { name: /^Rook/ })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("a_worker_waiting_on_you_shows_needs_you", async () => {
+    // No count from the server yet and no question: Wren's chat waits on an approval.
+    const start = fixture();
+    mount({ mainView: "visions", approvals: [{ ...approval, thread_id: "w2", approval_id: "a2" }], visions: { ...start.visions, list: [vision("rook", "Rook", { role: "Chief of staff" }), vision("wren", "Wren", { color: "violet", role: "Builder" })], questions: {} } });
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("button", { name: /release/ }));
+    const team = within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("list", { name: "Team" });
+    const wren = within(team).getByRole("button", { name: /^Wren/ });
+    expect(wren).toHaveAttribute("aria-label", "Wren, Builder, Needs you");
+    expect(wren.querySelector(".themis-state-dot")).toHaveStyle({ background: "var(--themis-accent)" });
   });
 
   it("the_admin_lives_in_hq_with_its_proposals", () => {
