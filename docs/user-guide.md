@@ -645,7 +645,7 @@ controls or Delete.
 channel's whole team (chief and workers). When the channel's is reached, its team starts nothing,
 its running chats stop and the chief says so in the channel once a day; raising the cap lets the
 next wake run. A team also stops after a number of runs in a row without a message from you
-(`visions.max_wakes`, 6 unless you change it): the channel says so once, and your next message
+(`visions.max_wakes`, 16 unless you change it): the channel says so once, and your next message
 carries on. When the app cannot tell what has been spent (for example no price list is loaded
 yet) Visions start nothing and the channel says why. The cost is an estimate from the usage
 recorded for the chats a team owns.

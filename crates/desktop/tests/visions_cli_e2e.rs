@@ -383,7 +383,7 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
     let fx = fixture().await;
     let first = fx.call_ok("get_visions_settings", json!({}));
     assert_eq!(first["settings"]["autonomy"], "small");
-    assert_eq!(first["settings"]["max_wakes"], 6);
+    assert_eq!(first["settings"]["max_wakes"], 16);
     let revision = first["revision"].clone();
 
     let updated = fx.call_ok(

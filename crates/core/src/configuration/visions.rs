@@ -79,7 +79,7 @@ impl Default for VisionsConfig {
             autonomy: Autonomy::Small,
             custom: BTreeMap::new(),
             daily_budget_usd: 1.0,
-            max_wakes: 6,
+            max_wakes: 16,
             requests_per_day: 10,
             routines_per_chief: 10,
             quiet_hours: None,

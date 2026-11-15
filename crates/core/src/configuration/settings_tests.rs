@@ -852,7 +852,7 @@ fn visions_defaults_and_validation() {
     assert_eq!(defaults.autonomy, crate::visions::Autonomy::Small);
     assert!(defaults.custom.is_empty());
     assert_eq!(defaults.daily_budget_usd, 1.0);
-    assert_eq!(defaults.max_wakes, 6);
+    assert_eq!(defaults.max_wakes, 16);
     let user = resolve(
         Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":true},"daily_budget_usd":5,"max_wakes":10}}"#),
         None,

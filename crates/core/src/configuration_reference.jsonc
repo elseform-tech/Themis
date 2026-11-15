@@ -160,7 +160,7 @@
     "daily_budget_usd": 1.0,
     // Most wakes on one thing before a Vision hands back to you (1-20). A project file may
     // only lower it.
-    "max_wakes": 6,
+    "max_wakes": 16,
     // Most requests a channel's chief may send other channels in a day (1-100). A project
     // file may only lower it.
     "requests_per_day": 10,
