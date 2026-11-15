@@ -72,7 +72,7 @@ def prepare(args):
     reason = above_caps(args)
     if reason:
         return None, reason, None
-    options = {"timeout": args.timeout, "max_run_cost": args.max_run_cost, "autonomy": args.autonomy,
+    options = {"timeout": args.timeout, "max_run_cost": args.max_run_cost, "level": args.level,
                "keep": args.keep, "commit": commit(), "label": args.label or ""}
     if args.dry:
         from .run import ScriptedProvider
@@ -193,8 +193,8 @@ def add_round_flags(parser):
     parser.add_argument("--max-round-cost", type=float, default=spend_kit.MAX_ROUND_COST)
     parser.add_argument("--max-price", type=float, default=spend_kit.MAX_INPUT_PRICE,
                         help="refuse models dearer than this per million input tokens")
-    parser.add_argument("--autonomy", default="small", choices=("ask", "small", "most", "nearly_all"),
-                        help="visions.autonomy for the run (default: the app's default, small)")
+    parser.add_argument("--level", default="auto_review", choices=("auto_review", "full_access"),
+                        help="visions.level for the run (default: the app's default, auto_review)")
     parser.add_argument("--catalog", help="models.dev catalog file (default: fetched)")
     parser.add_argument("--base-url", help="provider base URL for the preflight (default: OpenCode Go)")
     parser.add_argument("--themis", help="a prebuilt themis CLI (default: build this checkout)")
