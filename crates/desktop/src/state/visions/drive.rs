@@ -300,10 +300,13 @@ impl AppState {
         if question.passed_on {
             return Ok(());
         }
-        self.channel_append(
+        // Announced, so the open channel shows the card where the person answers it.
+        let chief = self.chief_of(owner);
+        self.channel_post(
             &owner.channel_id,
+            &chief,
             ChannelEntry::PassedOn {
-                vision_id: self.chief_of(owner),
+                vision_id: chief.clone(),
                 thread_id: owner.thread_id.clone(),
                 question_id: question.id.clone(),
                 decision: decision.to_owned(),

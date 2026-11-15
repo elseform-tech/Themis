@@ -161,7 +161,8 @@ fn a_worker_approval_wakes_no_one() {
 fn a_worker_permission_question_wakes_no_one() {
     let s = setup(true);
     own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-    s.state.set_scheduler_sink(sink());
+    let announced = Changes::default();
+    s.state.set_scheduler_sink(Arc::new(announced.clone()));
     let asked = NewQuestion {
         question: "Run this outside the sandbox?".into(),
         permission: true,
@@ -178,6 +179,30 @@ fn a_worker_permission_question_wakes_no_one() {
     let passed = passed_on(&s.state, &s.channel);
     assert_eq!(passed.len(), 1, "{passed:?}");
     assert_eq!(passed[0]["question_id"], question.as_str());
+    // The open channel is told, so the card shows where the person can answer it.
+    assert!(announced.channels().contains(&s.channel), "{:?}", announced.channels());
+}
+
+/// A sink that keeps the channels `visions-changed` named.
+#[derive(Clone, Default)]
+struct Changes(Arc<std::sync::Mutex<Vec<Option<String>>>>);
+
+impl Changes {
+    fn channels(&self) -> Vec<String> {
+        self.0.lock().unwrap().iter().flatten().cloned().collect()
+    }
+}
+
+impl EventSink for Changes {
+    fn emit_thread_event(&self, _: &crate::types::ThreadEventEnvelope) {}
+    fn emit_approval_request(&self, _: &crate::types::ApprovalRequest) {}
+    fn emit_approval_expired(&self, _: &crate::types::ApprovalExpired) {}
+    fn emit_review_item(&self, _: &crate::types::ReviewItem) {}
+    fn emit_thread_changed(&self, _: &crate::types::ThreadChange) {}
+    fn emit_settings_changed(&self, _: &crate::types::SettingsChange) {}
+    fn emit_visions_changed(&self, change: &crate::types::VisionsChange) {
+        self.0.lock().unwrap().push(change.channel_id.clone());
+    }
 }
 
 /// Once a question went to the person, the worker may no longer answer it.
