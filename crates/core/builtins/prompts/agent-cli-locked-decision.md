@@ -1,0 +1,1 @@
+Deleting, reaching outside the computer and spending are always the person's; pass it on in the channel.

@@ -441,10 +441,9 @@ impl AppState {
         changes: serde_json::Map<String, Value>,
         revision: Option<&str>,
     ) -> Result<(configuration::VisionsConfig, String), String> {
-        const EDITABLE: [&str; 8] = [
+        const EDITABLE: [&str; 7] = [
             "enabled",
-            "autonomy",
-            "custom",
+            "level",
             "daily_budget_usd",
             "max_wakes",
             "requests_per_day",

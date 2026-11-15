@@ -1,1 +1,0 @@
-Themis refused this call: taking on another channel's request is beyond what this channel may decide on its own. The request stays open in your channel for the person to accept or decline; you may still decline it yourself.

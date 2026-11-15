@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use chrono::{Local, NaiveDate, TimeZone};
 use themis_core::diagnostics::DiagnosticFilter;
-use themis_core::visions::Autonomy;
 
 use super::routines::{Routine, Schedule};
 use super::*;
@@ -49,18 +48,12 @@ fn profile(name: &str) -> Vision {
     }
 }
 
-/// `# release`, led by Juno (Rook works there), at `autonomy`.
-fn team(autonomy: Autonomy) -> Team {
+/// `# release`, led by Juno (Rook works there).
+fn team() -> Team {
     let dir = tempfile::tempdir().unwrap();
     let root: &Path = &dir.path().join("project");
     std::fs::create_dir_all(root).unwrap();
     let state = AppState::new_for_test(dir.path().join("settings.json"));
-    // A team's level is never above Settings › Visions: let Settings allow "most".
-    std::fs::write(
-        dir.path().join("runtime.jsonc"),
-        r#"{"visions": {"autonomy": "most"}}"#,
-    )
-    .unwrap();
     *state.inner.go_catalog.try_write().unwrap() = vec![themis_core::providers::GoModel {
         id: "free".into(),
         price: Some(themis_core::providers::ModelPrice::default()),
@@ -75,11 +68,9 @@ fn team(autonomy: Autonomy) -> Team {
                 name: "release".into(),
                 topic: String::new(),
                 project_root: root.canonicalize().unwrap(),
-                full_access: false,
                 members: vec![juno.clone(), rook.clone()],
                 chief: juno.clone(),
-                autonomy: Some(autonomy),
-                custom: None,
+                level: None,
                 daily_budget_usd: None,
                 paused_workers: Vec::new(),
                 revision: String::new(),
@@ -112,7 +103,7 @@ fn routine(t: &Team, days: &[u8], time: &str, instruction: &str) -> Routine {
     }
 }
 
-/// Settings › Visions' block (with "most" calls allowed, as in `team`) plus `extra`.
+/// Settings › Visions' block, `extra`.
 fn runtime(t: &Team, extra: &str) {
     let path = t
         .state
@@ -120,9 +111,7 @@ fn runtime(t: &Team, extra: &str) {
         .settings
         .path()
         .with_file_name("runtime.jsonc");
-    let mut visions: serde_json::Value = serde_json::from_str(extra).unwrap();
-    visions["visions"]["autonomy"] = serde_json::json!("most");
-    std::fs::write(path, visions.to_string()).unwrap();
+    std::fs::write(path, extra).unwrap();
 }
 
 /// The wakes the log recorded, as (Vision, reason, outcome).
@@ -151,8 +140,8 @@ fn routine_wakes(state: &AppState) -> usize {
 }
 
 #[test]
-fn a_chief_adds_a_routine_within_its_autonomy_and_says_so() {
-    let t = team(Autonomy::Most);
+fn a_chief_adds_a_routine_and_says_so() {
+    let t = team();
     let saved = t
         .state
         .visions_save_routine(
@@ -170,15 +159,6 @@ fn a_chief_adds_a_routine_within_its_autonomy_and_says_so() {
         .filter(|line| matches!(line.entry, ChannelEntry::RoutineSet { .. }))
         .collect();
     assert_eq!(set.len(), 1, "one line in the channel");
-    // At "small" calls, adding work on a schedule is the person's.
-    let small = team(Autonomy::Small);
-    let refused = small.state.visions_save_routine(
-        &small.channel,
-        &small.juno,
-        routine(&small, &[1], "09:00", "x"),
-        at(16, 8, 0),
-    );
-    assert!(refused.is_err());
     // Only the chief adds routines.
     assert!(t
         .state
@@ -193,7 +173,7 @@ fn a_chief_adds_a_routine_within_its_autonomy_and_says_so() {
 
 #[test]
 fn routine_limits_hold() {
-    let t = team(Autonomy::Most);
+    let t = team();
     runtime(&t, r#"{"visions": {"routines_per_chief": 2}}"#);
     let save = |r| {
         t.state
@@ -205,7 +185,7 @@ fn routine_limits_hold() {
         save(routine(&t, &[3], "09:00", "three")).is_err(),
         "at most two"
     );
-    let fresh = team(Autonomy::Most);
+    let fresh = team();
     let save = |r| {
         fresh
             .state
@@ -219,7 +199,7 @@ fn routine_limits_hold() {
 
 #[test]
 fn missed_routines_fire_once_at_the_next_allowed_moment() {
-    let t = team(Autonomy::Most);
+    let t = team();
     t.state.set_scheduler_sink(sink());
     // Every day at 09:00, saved on Monday the 16th at 08:00.
     t.state
@@ -245,7 +225,7 @@ fn missed_routines_fire_once_at_the_next_allowed_moment() {
 
 #[test]
 fn quiet_hours_hold_routines_but_not_the_persons_messages() {
-    let t = team(Autonomy::Most);
+    let t = team();
     t.state.set_scheduler_sink(sink());
     runtime(
         &t,
@@ -297,7 +277,7 @@ fn quiet_hours_hold_routines_but_not_the_persons_messages() {
 
 #[test]
 fn the_person_can_pause_and_remove_any_routine() {
-    let t = team(Autonomy::Most);
+    let t = team();
     t.state.set_scheduler_sink(sink());
     let saved = t
         .state
@@ -321,7 +301,7 @@ fn the_person_can_pause_and_remove_any_routine() {
 /// What waited in quiet hours stays waiting when the queue drains while it is still quiet.
 #[test]
 fn a_queue_drain_in_quiet_hours_starts_nothing() {
-    let t = team(Autonomy::Most);
+    let t = team();
     t.state.set_scheduler_sink(sink());
     runtime(
         &t,
@@ -343,7 +323,7 @@ fn a_queue_drain_in_quiet_hours_starts_nothing() {
 /// Routines belong to the channel: a new chief changes and removes its predecessor's.
 #[test]
 fn a_new_chief_keeps_the_channels_routines() {
-    let t = team(Autonomy::Most);
+    let t = team();
     let saved = t
         .state
         .visions_save_routine(
@@ -373,7 +353,7 @@ fn a_new_chief_keeps_the_channels_routines() {
 /// A deleted channel's routines go with it.
 #[test]
 fn a_deleted_channels_routines_are_dropped() {
-    let t = team(Autonomy::Most);
+    let t = team();
     t.state
         .visions_save_routine(
             &t.channel,
@@ -392,7 +372,7 @@ fn a_deleted_channels_routines_are_dropped() {
 /// wakes, and the channel may wake `visions.max_wakes` times again after it.
 #[test]
 fn a_routine_fires_even_when_the_team_used_its_wakes() {
-    let t = team(Autonomy::Most);
+    let t = team();
     t.state.set_scheduler_sink(sink());
     runtime(&t, r#"{"visions": {"max_wakes": 1}}"#);
     t.state

@@ -147,14 +147,11 @@
     // Let Visions (agents that drive ordinary chats) wake and work. A project file may only
     // set false.
     "enabled": true,
-    // How much a Vision decides without asking you: "ask" (nothing), "small" (wording, tests),
-    // "most" (also undoable steps, retries), "nearly_all" (also scope, deletes, dependencies)
-    // or "custom" (the rows below). External actions and spending are always yours. A project
-    // file may only lower it.
-    "autonomy": "small",
-    // With "custom": true lets the Vision decide it. Rows: wording, tests, undoable, retry,
-    // scope, delete, dependency. A project file may only set rows to false.
-    "custom": {},
+    // The level of new channels and of channels with none: "auto_review" (their chats run in
+    // Auto: a reviewer model judges what Custom would ask) or "full_access" (YOLO). Either way
+    // a chief decides everything itself except deleting, reaching outside your computer and
+    // spending, which are always yours. A project file may only set "auto_review".
+    "level": "auto_review",
     // Estimated dollars all Visions together may spend in a day (0.1-100). A project file may
     // only lower it.
     "daily_budget_usd": 1.0,

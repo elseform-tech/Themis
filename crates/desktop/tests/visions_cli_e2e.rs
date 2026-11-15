@@ -382,7 +382,8 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let first = fx.call_ok("get_visions_settings", json!({}));
-    assert_eq!(first["settings"]["autonomy"], "small");
+    assert_eq!(first["settings"]["level"], "auto_review");
+    assert!(first["settings"].get("autonomy").is_none());
     assert_eq!(first["settings"]["max_wakes"], 16);
     let revision = first["revision"].clone();
 
@@ -391,7 +392,7 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
         json!({"changes": {"max_wakes": 3}, "revision": revision}),
     );
     assert_eq!(updated["settings"]["max_wakes"], 3);
-    assert_eq!(updated["settings"]["autonomy"], "small");
+    assert_eq!(updated["settings"]["level"], "auto_review");
     assert_ne!(updated["revision"], revision);
     let file = runtime_file(&fx.data);
     assert!(file.contains("\"visions\""), "{file}");
@@ -404,7 +405,7 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
 
     let stale = fx.call(
         "update_visions_settings",
-        json!({"changes": {"autonomy": "most"}, "revision": revision}),
+        json!({"changes": {"level": "full_access"}, "revision": revision}),
     );
     assert!(
         failed_with(&stale, "since this page loaded"),
@@ -466,7 +467,7 @@ async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
     let fx = fixture().await;
     let provider = stalled_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "yolo");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
     let requests = || async { provider.received_requests().await.unwrap().len() };
 
@@ -480,7 +481,7 @@ async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
     let info = fx.state.get_thread(&work).await.unwrap();
     assert_eq!(
         info.approval_mode,
-        themis_core::configuration::ApprovalMode::Custom
+        themis_core::configuration::ApprovalMode::Yolo
     );
     assert_eq!(
         info.model, "test-model",
@@ -755,6 +756,25 @@ fn waiting_approvals(fx: &Fixture, thread: &str) -> Vec<Value> {
         .collect()
 }
 
+/// A Vision's work chat whose run waits on an approval box. A team's chats run in Auto or YOLO,
+/// which show none, so the person takes the chat over, switches it to Custom, starts the write
+/// themselves and hands it back while the box waits (the run keeps its mode).
+async fn approval_in_a_handed_back_chat(fx: &Fixture, agent: &str) -> String {
+    let work = fx.vision_starts_chat(agent);
+    hold(&fx.state, &work, Hold::TakenOver);
+    fx.call_ok(
+        "set_thread_approval_mode",
+        json!({"threadId": work, "mode": "custom"}),
+    );
+    fx.call_ok(
+        "send_message",
+        json!({"threadId": work, "text": "write the notes", "reasoningEffort": null}),
+    );
+    wait_until(|| async { !waiting_approvals(fx, &work).is_empty() }).await;
+    hold(&fx.state, &work, Hold::None);
+    work
+}
+
 /// A Vision's steer reaches the run but leaves the approval it waits on to the person; the
 /// person's Allow still answers it. Unread when the person stops the run, the steer goes back
 /// to the queue as the Vision's and is not sent while the person holds the chat.
@@ -764,16 +784,9 @@ async fn a_visions_steer_leaves_pending_approvals_for_the_person() {
     let fx = fixture().await;
     let provider = writing_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
-    let work = fx.vision_starts_chat(&agent);
-
-    json_of(&fx.agent_call(
-        &agent,
-        "send_message",
-        json!({"threadId": work, "text": "write the notes"}),
-    ));
-    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let work = approval_in_a_handed_back_chat(&fx, &agent).await;
     let approval = waiting_approvals(&fx, &work).remove(0);
     let queued = json_of(&fx.agent_call(
         &agent,
@@ -817,15 +830,9 @@ async fn an_approval_in_a_taken_over_chat_counts_for_no_vision_or_channel() {
     let fx = fixture().await;
     let provider = writing_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
-    let work = fx.vision_starts_chat(&agent);
-    json_of(&fx.agent_call(
-        &agent,
-        "send_message",
-        json!({"threadId": work, "text": "write the notes"}),
-    ));
-    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let work = approval_in_a_handed_back_chat(&fx, &agent).await;
     let needs = |fx: &Fixture| {
         // Listing the channels makes `# administration` and Atlas, which sort first.
         let channels = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
@@ -1040,7 +1047,7 @@ async fn a_vision_steers_only_its_own_queued_messages() {
     let fx = fixture().await;
     let provider = stalled_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
     let work = fx.vision_starts_chat(&agent);
     let before = provider.received_requests().await.unwrap().len();
@@ -1611,9 +1618,8 @@ fn assert_logs_hold_none(fx: &Fixture, texts: &[&str]) {
     }
 }
 
-/// A Vision answers only within its autonomy: at Small calls a `scope` answer is refused and
-/// the question stays open for the person; under Custom with every row on, sending work out and
-/// spending are still the person's.
+/// Deleting, sending work out and spending are always the person's: at Auto-review and at Full
+/// access a Vision's answer naming one is refused and the question stays open for the person.
 #[tokio::test(flavor = "multi_thread")]
 async fn answers_outside_the_level_are_refused_and_stay_open() {
     let _turn = ONE_SERVER.lock().await;
@@ -1621,36 +1627,23 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
     let provider = scripted_provider().await;
     fx.use_provider(&provider).await;
     let (vision, channel) = fx.vision_and_channel("Wren", "work");
-    let (_own_chat, small) = fx.vision_run(&vision, &channel).await;
-    let (work, question) = fx.asked_question(&small).await;
-    let above = "Your autonomy level leaves this to the person; pass it on in the channel.";
+    let (_own_chat, auto_review) = fx.vision_run(&vision, &channel).await;
+    let (work, question) = fx.asked_question(&auto_review).await;
+    let locked = themis_core::prompts::AGENT_CLI_LOCKED_DECISION;
     let why = "quokka refused reason 5521";
     let refused = fx.agent_call(
-        &small,
+        &auto_review,
         "answer_question",
-        vision_answer(&work, &question, "scope", why),
+        vision_answer(&work, &question, "delete", why),
     );
-    assert!(failed_with(&refused, above), "{}", text(&refused));
-    let rows = [
-        "wording",
-        "tests",
-        "undoable",
-        "retry",
-        "scope",
-        "delete",
-        "dependency",
-    ];
-    let custom: serde_json::Map<String, Value> = rows
-        .iter()
-        .map(|row| ((*row).to_owned(), json!(true)))
-        .collect();
-    fx.set_visions(json!({"autonomy": "custom", "custom": custom}));
-    let (_own_chat, all_rows) = fx.vision_run(&vision, &channel).await;
-    for decision in ["external", "spend"] {
+    assert!(failed_with(&refused, locked), "{}", text(&refused));
+    fx.set_visions(json!({"level": "full_access"}));
+    let (_own_chat, full_access) = fx.vision_run(&vision, &channel).await;
+    for decision in ["delete", "external", "spend"] {
         let args = vision_answer(&work, &question, decision, why);
-        let refused = fx.agent_call(&all_rows, "answer_question", args);
+        let refused = fx.agent_call(&full_access, "answer_question", args);
         assert!(
-            failed_with(&refused, above),
+            failed_with(&refused, locked),
             "{decision}: {}",
             text(&refused)
         );
@@ -1668,7 +1661,7 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
         .map(|file| std::fs::read_to_string(file.path()).unwrap_or_default())
         .collect::<String>();
     assert!(
-        logged.contains("\"reason\":\"above_autonomy\""),
+        logged.contains("\"reason\":\"locked_decision\""),
         "logged as metadata"
     );
     assert_logs_hold_none(&fx, &[ANSWERED, why]);

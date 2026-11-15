@@ -1,10 +1,10 @@
-//! Teams through the real app server: a channel names its chief, and its autonomy and budget
-//! are the team's.
+//! Teams through the real app server: a channel names its chief, and its level and budget are
+//! the team's.
 
 use super::*;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn list_channels_shows_chief_autonomy_and_budget() {
+async fn list_channels_shows_chief_level_and_budget() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     fx.no_wakes();
@@ -12,9 +12,9 @@ async fn list_channels_shows_chief_autonomy_and_budget() {
     let (rook, _) = fx.vision_and_channel("Rook", "other");
     let saved = fx.call_ok(
         "save_channel",
-        json!({"channel": {"name": "release", "project_root": fx.project, "autonomy": "ask",
-            "members": [juno, rook], "chief": juno, "autonomy": "ask", "daily_budget_usd": 0.4},
-            "revision": null}),
+        json!({"channel": {"name": "release", "project_root": fx.project,
+            "members": [juno, rook], "chief": juno, "level": "full_access",
+            "daily_budget_usd": 0.4}, "revision": null}),
     );
     let listed = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
     let release = listed
@@ -24,7 +24,10 @@ async fn list_channels_shows_chief_autonomy_and_budget() {
         .find(|channel| channel["id"] == saved["id"])
         .unwrap();
     assert_eq!(release["chief"], juno.as_str());
-    assert_eq!(release["autonomy"], "ask");
+    assert_eq!(release["level"], "full_access");
+    for gone in ["autonomy", "custom", "full_access"] {
+        assert!(release.get(gone).is_none(), "{gone}: {release}");
+    }
     assert_eq!(release["daily_budget_usd"], 0.4);
     let administration = listed
         .as_array()
@@ -36,7 +39,7 @@ async fn list_channels_shows_chief_autonomy_and_budget() {
     // A chief who is not a member is refused.
     let refused = fx.call(
         "save_channel",
-        json!({"channel": {"name": "stray", "project_root": fx.project, "autonomy": "ask",
+        json!({"channel": {"name": "stray", "project_root": fx.project,
             "members": [rook], "chief": juno}, "revision": null}),
     );
     assert!(!refused.status.success());
@@ -50,7 +53,7 @@ fn release_team(fx: &Fixture) -> (String, String, String) {
     let (rook, _) = fx.vision_and_channel("Rook", "other");
     let saved = fx.call_ok(
         "save_channel",
-        json!({"channel": {"name": "release", "project_root": fx.project, "autonomy": "ask",
+        json!({"channel": {"name": "release", "project_root": fx.project,
             "members": [juno, rook], "chief": juno}, "revision": null}),
     );
     (saved["id"].as_str().unwrap().to_owned(), juno, rook)
@@ -343,16 +346,16 @@ async fn a_worker_that_does_nothing_brings_its_chief_back() {
     fx.shut_down().await;
 }
 
-/// A channel's autonomy and Full access set its work chats' approval mode: Always ask asks
-/// before changes (Custom), Full access is YOLO. (A run takes the channel's mode as it stands
-/// when the run starts; the unit tests cover a later change.)
+/// A channel's level sets its work chats' approval mode: Auto-review is Auto, Full access is
+/// YOLO. (A run takes the channel's mode as it stands when the run starts; the unit tests cover
+/// a later change.)
 #[tokio::test(flavor = "multi_thread")]
-async fn autonomy_and_full_access_set_the_chats_approval_mode() {
+async fn the_level_sets_the_chats_approval_mode() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let provider = quick_provider().await;
     fx.use_provider(&provider).await;
-    for (mode, expected) in [("custom", "custom"), ("yolo", "yolo")] {
+    for (mode, expected) in [("auto", "auto"), ("yolo", "yolo")] {
         let (vision, channel) = fx.vision_and_channel_in("Wren", &format!("work-{mode}"), mode);
         let (_chat, agent) = fx.vision_run(&vision, &channel).await;
         let work = fx.vision_starts_chat(&agent);

@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use themis_core::visions::Decision;
 
 use super::admin::{
     admin_profile, ADMINISTRATION, ADMINISTRATION_STAYS, ADMIN_STAYS, ADMIN_VISION_ID,
@@ -231,19 +230,6 @@ fn bounded(text: &str, max_chars: usize, empty_ok: bool) -> Option<String> {
     (text.chars().count() <= max_chars && (empty_ok || !text.is_empty())).then(|| text.to_owned())
 }
 
-fn validate_custom(custom: Option<&BTreeMap<String, bool>>) -> Result<(), &'static str> {
-    for (row, allowed) in custom.into_iter().flatten() {
-        match Decision::from_id(row) {
-            None => return Err("Unknown autonomy row"),
-            Some(Decision::External | Decision::Spend) if *allowed => {
-                return Err("Sending work out and spending are always the person's decisions")
-            }
-            Some(_) => {}
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
     if !spec.id.is_empty() && !safe_chat_id(&spec.id) {
         return Err("Unknown Vision");
@@ -312,7 +298,6 @@ pub(super) fn validate_channel(spec: &mut Channel) -> Result<(), &'static str> {
     if !members.is_empty() && !members.contains(&spec.chief) {
         return Err("A channel's chief of staff is one of its members");
     }
-    validate_custom(spec.custom.as_ref())?;
     if spec
         .daily_budget_usd
         .is_some_and(|budget| !budget.is_finite() || budget < 0.0)

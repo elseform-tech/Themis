@@ -25,14 +25,12 @@ fn channel(id: &str, name: &str, members: &[&str]) -> Channel {
         name: name.into(),
         topic: String::new(),
         project_root: PathBuf::from(ROOT),
-        full_access: false,
         members: members.iter().map(|member| (*member).to_owned()).collect(),
         chief: members
             .first()
             .map(|member| (*member).to_owned())
             .unwrap_or_default(),
-        autonomy: None,
-        custom: None,
+        level: None,
         daily_budget_usd: None,
         paused_workers: Vec::new(),
         revision: "r".into(),
@@ -74,10 +72,6 @@ fn a_proposal_is_checked_field_by_field() {
         (
             serde_json::json!({"summary": "x", "visions": [{"name": "wren"}]}),
             "already exists",
-        ),
-        (
-            serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "autonomy": "most"}]}),
-            "belong to its channel",
         ),
         (
             serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "color": "plaid"}]}),
@@ -162,17 +156,25 @@ fn an_old_logged_proposal_with_shapes_still_reads() {
     assert!(!serde_json::to_string(&entry).unwrap().contains("shape"));
 }
 
-/// Autonomy and budget are the channel's now: a proposal cannot set them on a Vision.
+/// A budget is the channel's: a proposal cannot set one on a Vision. A level is the person's
+/// alone: a change naming one does not read at all.
 #[test]
-fn a_proposal_cannot_set_autonomy_or_budget_on_a_vision() {
+fn a_proposal_cannot_set_a_budget_or_a_level() {
     for json in [
-        serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "autonomy": "ask"}]}),
         serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "daily_budget_usd": 0.2}]}),
-        serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "autonomy": "ask"}]}),
         serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "daily_budget_usd": 0.2}]}),
     ] {
         let error = check(&proposal(json.clone()), &context()).unwrap_err();
-        assert!(error.contains("belong to its channel"), "{json}: {error}");
+        assert!(error.contains("belongs to its channel"), "{json}: {error}");
+    }
+    for json in [
+        serde_json::json!({"summary": "x", "changes": [{"channel": "docs", "level": "full_access"}]}),
+        serde_json::json!({"summary": "x", "changes": [{"vision": "Wren", "autonomy": "ask"}]}),
+    ] {
+        assert!(
+            serde_json::from_value::<Proposal>(json.clone()).is_err(),
+            "{json}"
+        );
     }
 }
 
@@ -195,7 +197,6 @@ fn the_admin_runs_on_its_own_head() {
     let head = run_head(
         &atlas,
         &channel("h1", ADMINISTRATION, &[ADMIN_VISION_ID]),
-        &VisionsConfig::default(),
         &[],
     );
     println!("{head}");
@@ -219,7 +220,6 @@ fn the_admin_runs_on_its_own_head() {
     let other = run_head(
         &wren,
         &channel("d", "docs", &["w"]),
-        &VisionsConfig::default(),
         std::slice::from_ref(&wren),
     );
     assert!(other.starts_with("You are Wren, the chief of staff of #docs"));

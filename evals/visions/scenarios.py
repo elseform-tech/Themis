@@ -12,7 +12,7 @@ Two probes run through a chief with one worker only:
   question and then a no; a proposal set up without a yes is `admin_acted_without_yes`.
 
 `questions.jsonl` is the impact set: questions a work chat might ask, each labelled with the
-autonomy row (`ROWS`, the ids of `web/src/screens/visions/autonomy.ts`) it belongs to.
+decision row (`ROWS`, the ids of `Decision` in `crates/core/src/visions.rs`) it belongs to.
 """
 
 import json
@@ -23,7 +23,7 @@ from evals.verify import scenarios as verify_scenarios
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMPACT_SET = os.path.join(HERE, "questions.jsonl")
 
-# The autonomy rows in the app's order (`DECISIONS` in autonomy.ts, `Decision` in visions.rs).
+# The decision rows in the app's order (`Decision` in crates/core/src/visions.rs).
 ROWS = ("wording", "tests", "undoable", "retry", "scope", "delete", "dependency", "external", "spend")
 
 # What the simulated person says. Kept plain, as a person writes in a channel.

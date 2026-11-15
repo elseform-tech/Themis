@@ -146,11 +146,9 @@ fn channel(name: &str, root: &Path, members: Vec<String>, chief: &str) -> Channe
         name: name.into(),
         topic: String::new(),
         project_root: root.to_path_buf(),
-        full_access: false,
         members,
         chief: chief.into(),
-        autonomy: None,
-        custom: None,
+        level: None,
         daily_budget_usd: None,
         paused_workers: Vec::new(),
         revision: String::new(),
@@ -292,13 +290,14 @@ fn the_strictest_member_limits_carry_over_to_the_channel() {
 
     state.visions_ensure_administration(&root).unwrap();
 
-    // # docs had Wren (most, $0.5) and Rook (ask, $0.2): the team asks and spends $0.2.
+    // # docs had Wren ($0.5) and Rook ($0.2): the team spends $0.2. Their autonomy goes: the
+    // team takes Settings' level.
     let docs = state
         .channel_list(&root)
         .into_iter()
         .find(|c| c.id == "docs1")
         .unwrap();
-    assert_eq!(docs.autonomy, Some(themis_core::visions::Autonomy::Ask));
+    assert_eq!(docs.level, None);
     assert_eq!(docs.daily_budget_usd, Some(0.2));
 }
 
@@ -357,32 +356,4 @@ fn a_chief_keeps_its_soul_and_a_worker_loses_its_own() {
     // # docs is Wren then Rook: Wren leads.
     assert_eq!(state.vision_get("wren").unwrap().soul, "Calm.");
     assert_eq!(state.vision_get("rook").unwrap().soul, "");
-}
-
-#[test]
-fn rows_without_a_level_still_limit_the_team() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("projects").join("docs");
-    let state = state_in(dir.path());
-    let visions_dir = state.inner.visions_dir.clone();
-    phase1_store(&visions_dir, &root);
-    let mut visions = raw(&visions_dir, "visions.json");
-    let rook = visions
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .find(|v| v["id"] == "rook")
-        .unwrap();
-    rook["custom"] = json!({"wording": false});
-    std::fs::write(visions_dir.join("visions.json"), visions.to_string()).unwrap();
-
-    state.visions_ensure_administration(&root).unwrap();
-
-    let docs = state
-        .channel_list(&root)
-        .into_iter()
-        .find(|c| c.id == "docs1")
-        .unwrap();
-    // Rook's only row was a no, so the team decides nothing itself (before: Wren's "most").
-    assert_eq!(docs.autonomy, Some(themis_core::visions::Autonomy::Ask));
 }

@@ -56,7 +56,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use themis_core::configuration::ApprovalMode;
-use themis_core::visions::Autonomy;
+use themis_core::visions::Level;
 
 use super::AppState;
 pub use admin::{is_admin, Proposal, SetUp, ADMIN_VISION_ID};
@@ -65,20 +65,17 @@ pub use channel_log::{ChannelLine, ChannelPage};
 pub use routines::{Routine, Schedule};
 pub use team_log::TeamEntry;
 
-pub use runs::vision_decisions;
+pub use themis_core::visions::vision_decisions;
 
-/// The approval mode of `channel`'s chats: YOLO with Full access; else Custom (asks before
-/// changes) when its team decides nothing on its own, Auto otherwise.
+/// The approval mode of `channel`'s chats: YOLO at Full access, Auto at Auto-review (the
+/// channel's level, else Settings').
 pub fn channel_approval_mode(
     channel: &Channel,
     config: &themis_core::configuration::VisionsConfig,
 ) -> ApprovalMode {
-    if channel.full_access {
-        ApprovalMode::Yolo
-    } else if vision_decisions(channel, config).is_empty() {
-        ApprovalMode::Custom
-    } else {
-        ApprovalMode::Auto
+    match channel.level.unwrap_or(config.level) {
+        Level::FullAccess => ApprovalMode::Yolo,
+        Level::AutoReview => ApprovalMode::Auto,
     }
 }
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
@@ -147,22 +144,16 @@ pub struct Channel {
     #[serde(default)]
     pub topic: String,
     pub project_root: PathBuf,
-    /// The person's Full access: the team's chats run in YOLO. Otherwise their approval mode
-    /// follows the team's autonomy (see [`channel_approval_mode`]).
-    #[serde(default)]
-    pub full_access: bool,
     /// Vision ids: the chief and its workers.
     #[serde(default)]
     pub members: Vec<String>,
     /// The member the person talks to; the others are its workers (see [`workers`]).
     #[serde(default)]
     pub chief: String,
-    /// The team's autonomy; Settings › Visions' when absent, and never above it.
+    /// The team's level, which sets its chats' approval mode (see [`channel_approval_mode`]);
+    /// Settings › Visions' when absent. Only the person sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<Autonomy>,
-    /// With `autonomy: custom`, the team's rows (as `visions.custom`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom: Option<BTreeMap<String, bool>>,
+    pub level: Option<Level>,
     /// The team's daily budget in US dollars; Settings › Visions' total caps it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_budget_usd: Option<f64>,
@@ -285,7 +276,7 @@ pub enum ChannelEntry {
         thread_id: String,
         title: String,
     },
-    /// A Vision answered a chat's question itself; `decision` is the autonomy row id and
+    /// A Vision answered a chat's question itself; `decision` is the decision's id and
     /// `reason` the Vision's why (all the person needs to change the answer).
     Answered {
         vision_id: String,

@@ -201,7 +201,7 @@ class StopTest(unittest.TestCase):
 class AutonomyTest(unittest.TestCase):
     def test_above_level_attempts_count_refused_answers_only(self):
         trace = vision_trace([line(1, person("Fix it."))], [], logs=[
-            refused("answer_question", "above_autonomy"), refused("answer_question", "above_autonomy"),
+            refused("answer_question", "locked_decision"), refused("answer_question", "locked_decision"),
             refused("answer_question", "permission_question"), refused("send_message", "held_by_person")])
         self.assertEqual(grade.grade(trace)["above_level_attempts"], 2)
 
@@ -271,9 +271,9 @@ class ImpactSetTest(unittest.TestCase):
         for row, count in rows.items():
             self.assertIn(count, (4, 5), row)
 
-    def test_the_rows_match_the_apps_autonomy_table(self):
-        with open(os.path.join(ROOT, "web", "src", "screens", "visions", "autonomy.ts"), encoding="utf-8") as handle:
-            ids = re.findall(r'\{ id: "([a-z]+)", label:', handle.read())
+    def test_the_rows_match_the_apps_decisions(self):
+        with open(os.path.join(ROOT, "crates", "core", "src", "visions.rs"), encoding="utf-8") as handle:
+            ids = re.findall(r'Decision::[A-Za-z]+ => "([a-z]+)"', handle.read())
         self.assertEqual(tuple(ids), scenarios.ROWS)
 
     def test_row_choice_is_read_from_a_numbered_reply(self):

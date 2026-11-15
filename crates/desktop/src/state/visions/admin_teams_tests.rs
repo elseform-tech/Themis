@@ -1,5 +1,5 @@
 //! Atlas's team and hire proposals, checked field by field against what exists and against
-//! Settings › Visions (a team's autonomy and budget are never above them).
+//! Settings › Visions (a team's budget is never above them; a proposal sets no level).
 
 use serde_json::json;
 
@@ -46,26 +46,22 @@ fn a_team_proposal_is_checked_field_by_field() {
 }
 
 #[test]
-fn a_proposal_cannot_raise_autonomy_or_budget() {
-    // Settings › Visions: "small" calls and $1 a day (the defaults).
-    let fits = [json!({"autonomy": "ask"}), json!({"daily_budget_usd": 0.5})];
-    for extra in fits {
-        assert_eq!(
-            check(&proposal(team(extra.clone())), &context()),
-            Ok(()),
-            "{extra}"
+fn a_proposal_cannot_raise_the_budget_or_set_a_level() {
+    // Settings › Visions: $1 a day (the default).
+    let fits = json!({"daily_budget_usd": 0.5});
+    assert_eq!(check(&proposal(team(fits)), &context()), Ok(()));
+    let above = json!({"daily_budget_usd": 2.0});
+    let error = check(&proposal(team(above)), &context()).unwrap_err();
+    assert!(error.contains("Settings"), "{error}");
+    // A level is the person's: a team naming one does not read.
+    for level in [json!({"level": "full_access"}), json!({"autonomy": "ask"})] {
+        assert!(
+            serde_json::from_value::<Proposal>(team(level.clone())).is_err(),
+            "{level}"
         );
     }
-    let above = [
-        json!({"autonomy": "most"}),
-        json!({"daily_budget_usd": 2.0}),
-    ];
-    for extra in above {
-        let error = check(&proposal(team(extra.clone())), &context()).unwrap_err();
-        assert!(error.contains("Settings"), "{extra}: {error}");
-    }
-    // The same for a change to an existing channel.
-    let raise = json!({"summary": "x", "changes": [{"channel": "docs", "autonomy": "nearly_all"}]});
+    // The same budget rule for a change to an existing channel.
+    let raise = json!({"summary": "x", "changes": [{"channel": "docs", "daily_budget_usd": 2.0}]});
     assert!(check(&proposal(raise), &context())
         .unwrap_err()
         .contains("Settings"));
@@ -118,12 +114,6 @@ fn a_team_that_cannot_be_set_up_leaves_nothing_behind() {
     assert!(state.visions_set_up_team(&hq, &team, &mut items).is_err());
     assert_eq!(state.visions_list().len(), before, "no stray Visions");
     assert!(items.is_empty(), "{items:?}");
-}
-
-#[test]
-fn a_team_cannot_ask_for_custom_rows() {
-    let error = check(&proposal(team(json!({"autonomy": "custom"}))), &context()).unwrap_err();
-    assert!(error.contains("Custom"), "{error}");
 }
 
 /// A team or a hire is the whole proposal: the card shows only it, so nothing else may ride along

@@ -24,7 +24,6 @@ pub(super) const METHODS: &[&str] = &[
     "post_channel_message",
     "list_channel_threads",
     "hand_back_thread",
-    "answer_channel_request",
     "list_routines",
     "set_routine_enabled",
     "delete_routine",
@@ -45,23 +44,15 @@ fn to_value(value: impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|err| err.to_string())
 }
 
-/// The person's calls on a team's routines and on a request their chief left open.
+/// The person's calls on a team's routines, log and spend.
 fn team_method(
     state: &AppState,
-    sink: &Arc<dyn EventSink>,
     method: &str,
     args: &Value,
 ) -> Result<(Value, Option<VisionsChange>), String> {
     match method {
         "get_team_log" | "get_channel_spend" => team_read(state, method, args),
-        "list_routines" | "set_routine_enabled" | "delete_routine" => {
-            routine_method(state, method, args)
-        }
-        _ => {
-            let request_id: String = arg(args, "requestId")?;
-            state.visions_person_answers_request(sink, &request_id, arg(args, "accept")?)?;
-            Ok((Value::Null, change(None, None)))
-        }
+        _ => routine_method(state, method, args),
     }
 }
 
@@ -263,9 +254,8 @@ async fn chat_method(
         "list_routines"
         | "set_routine_enabled"
         | "delete_routine"
-        | "answer_channel_request"
         | "get_team_log"
-        | "get_channel_spend" => team_method(state, sink, method, args),
+        | "get_channel_spend" => team_method(state, method, args),
         "hand_back_thread" => {
             let owner = state.visions_hand_back(sink, &arg::<String>(args, "threadId")?)?;
             let changed = change(

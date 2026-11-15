@@ -1,14 +1,15 @@
 //! Requests between channels. A chief asks another channel's chief in the same project for
-//! something; the receiving chief accepts (taking on new work: the `scope` decision of its
-//! channel's level) or declines (always allowed) — or, beyond its level, leaves it for the
-//! person, who answers in that channel. Each channel shows its side of the exchange; the asking
-//! chief wakes on the answer. The receiving channel pays for the work, its chief's wake
-//! included. Each channel sends at most `visions.requests_per_day` a local day; past that the
-//! call is refused and the channel is told once.
+//! something; nobody answers it. The receiving channel takes it on as it arrives when its chief
+//! could run (not paused, budget known and not reached), else at that chief's next run start;
+//! both channels then say so. The receiving chief sends the result back with `send_result` (or
+//! says there why it cannot do it), and the asking chief wakes on it. The receiving channel
+//! pays for the work, its chief's wake included. Each channel sends at most
+//! `visions.requests_per_day` a local day; past that the call is refused and the channel is told
+//! once.
 //!
 //! Requests are kept in `requests.json` under the Visions store, written by the server only,
-//! under the Visions lock; answered ones go after [`KEEP_ANSWERED_DAYS`]. Diagnostics carry
-//! ids and outcomes, never the ask or the note.
+//! under the Visions lock; taken ones go after [`KEEP_TAKEN_DAYS`]. Diagnostics carry ids and
+//! outcomes, never the ask or the result.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -22,11 +23,11 @@ use super::{AppState, ChannelEntry, WakeReason};
 use crate::sink::EventSink;
 
 const REQUESTS_FILE: &str = "requests.json";
-/// Answered requests are kept this long, then dropped.
-const KEEP_ANSWERED_DAYS: i64 = 7;
+/// Requests taken on are kept this long, then dropped.
+const KEEP_TAKEN_DAYS: i64 = 7;
 /// Open requests are kept this long (or until their channel goes), then dropped.
 const KEEP_OPEN_DAYS: i64 = 30;
-/// Most characters of an ask or a note.
+/// Most characters of an ask or a result.
 const MAX_TEXT_CHARS: usize = 2000;
 /// How long a request waiting for its result keeps its pair of channels from asking again.
 const OPEN_WAIT_MS: i64 = 6 * 3_600_000;
@@ -39,17 +40,12 @@ struct Request {
     from_channel: String,
     to_channel: String,
     at_ms: i64,
+    /// When the receiving channel took it on; open until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    answered: Option<Answered>,
+    taken_ms: Option<i64>,
     /// The receiving chief sent its result back (once).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     result_sent: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct Answered {
-    accepted: bool,
-    at_ms: i64,
 }
 
 fn now_ms() -> i64 {
@@ -88,7 +84,7 @@ impl AppState {
     }
 
     /// Saves what may still matter: open requests to a channel that still exists (for at most
-    /// [`KEEP_OPEN_DAYS`]) and answered ones for [`KEEP_ANSWERED_DAYS`].
+    /// [`KEEP_OPEN_DAYS`]) and taken ones for [`KEEP_TAKEN_DAYS`].
     /// `channels` are the channel ids now, read before the Visions lock is taken (reading them
     /// takes it).
     fn requests_save(
@@ -99,15 +95,15 @@ impl AppState {
         let now = now_ms();
         let kept: Vec<&Request> = requests
             .iter()
-            // A request to or from a deleted channel goes with it, answered or not.
+            // A request to or from a deleted channel goes with it, taken or not.
             // (None are dropped when the channels could not be read.)
             .filter(|request| {
                 channels.is_empty()
                     || (channels.contains(&request.to_channel)
                         && channels.contains(&request.from_channel))
             })
-            .filter(|request| match &request.answered {
-                Some(answered) => answered.at_ms >= now - KEEP_ANSWERED_DAYS * DAY_MS,
+            .filter(|request| match request.taken_ms {
+                Some(taken) => taken >= now - KEEP_TAKEN_DAYS * DAY_MS,
                 None => request.at_ms >= now - KEEP_OPEN_DAYS * DAY_MS,
             })
             .collect();
@@ -161,21 +157,13 @@ impl AppState {
             "request_sent",
             json!({"request_id": id, "from_channel": from.id, "to_channel": to.id}),
         );
-        // Above Always ask, the request is the receiving team's work at once: both channels say
-        // so now, and its chief wakes to do it and send the result back.
+        // The request is the receiving team's work at once when its chief could run it: both
+        // channels say so now, and its chief wakes to do it and send the result back. Otherwise
+        // it is taken on when that chief's next run starts.
         if self.visions_takes_requests(&to) {
-            let open = |request: &Request| request.answered.is_none();
-            let taken = self.request_update(&to.id, &id, open, |request| {
-                request.answered = Some(Answered {
-                    accepted: true,
-                    at_ms: now_ms(),
-                });
-            });
-            if let Ok(request) = taken {
-                self.post_answered(&request, &to.chief, true, "");
-            }
+            self.visions_take_requests(&to.id, &to.chief, Some(&id));
         }
-        // The receiving channel pays for its chief's wake, whatever it answers.
+        // The receiving channel pays for its chief's wake.
         self.visions_wake(sink, &to.id, &to.chief, WakeReason::Request(id.clone()));
         Ok(id)
     }
@@ -214,11 +202,10 @@ impl AppState {
         // A request whose result has not come back within a few hours stops holding the pair.
         let recent = now_ms() - OPEN_WAIT_MS;
         let waiting = |request: &&Request| {
-            let since = request.answered.as_ref().map_or(request.at_ms, |a| a.at_ms);
+            let since = request.taken_ms.unwrap_or(request.at_ms);
             request.from_channel == from.id
                 && request.to_channel == to_id
                 && !request.result_sent
-                && request.answered.as_ref().is_none_or(|a| a.accepted)
                 && since >= recent
         };
         if one_open && requests.iter().any(|request| waiting(&request)) {
@@ -229,7 +216,7 @@ impl AppState {
             from_channel: from.id.clone(),
             to_channel: to_id.to_owned(),
             at_ms: now_ms(),
-            answered: None,
+            taken_ms: None,
             result_sent: false,
         });
         self.requests_save(&requests, &channels)?;
@@ -282,31 +269,9 @@ impl AppState {
         }
     }
 
-    /// The receiving chief's answer: declining is always its own, and so is accepting, unless
-    /// its channel's level leaves the team no decision (Always ask), when the person takes it on.
-    pub(crate) fn visions_answer_request(
-        &self,
-        sink: &Arc<dyn EventSink>,
-        channel_id: &str,
-        chief: &str,
-        request_id: &str,
-        accept: bool,
-        note: &str,
-    ) -> Result<(), String> {
-        let channel = self.channel_get(channel_id).ok_or("Unknown channel")?;
-        if accept {
-            let config = self
-                .runtime_configuration(Some(&channel.project_root), None)?
-                .config;
-            if super::vision_decisions(&channel, &config.visions).is_empty() {
-                return Err(themis_core::prompts::AGENT_CLI_REQUEST_ABOVE_LEVEL.to_owned());
-            }
-        }
-        self.answer_request(sink, channel_id, chief, request_id, accept, note)
-    }
-
     /// The receiving chief (`chief`, leading `channel_id`) sends back what it made for a
-    /// request its channel took on: the asking channel shows it and its chief wakes. Once.
+    /// request its channel took on, or why it could not do it: the asking channel shows it and
+    /// its chief wakes. Once.
     pub(crate) fn visions_send_result(
         &self,
         sink: &Arc<dyn EventSink>,
@@ -321,9 +286,7 @@ impl AppState {
                 "A result is some text of at most {MAX_TEXT_CHARS} characters"
             ));
         }
-        let waiting = |request: &Request| {
-            request.answered.as_ref().is_some_and(|a| a.accepted) && !request.result_sent
-        };
+        let waiting = |request: &Request| request.taken_ms.is_some() && !request.result_sent;
         let request = self
             .request_update(channel_id, request_id, waiting, |request| {
                 request.result_sent = true;
@@ -344,23 +307,6 @@ impl AppState {
             self.visions_wake(sink, &request.from_channel, &asker, reason);
         }
         Ok(())
-    }
-
-    /// The person accepts or declines a request their channel's chief could not or did not.
-    pub fn visions_person_answers_request(
-        &self,
-        sink: &Arc<dyn EventSink>,
-        request_id: &str,
-        accept: bool,
-    ) -> Result<(), String> {
-        let to = self
-            .requests_load()?
-            .into_iter()
-            .find(|request| request.id == request_id)
-            .map(|request| request.to_channel)
-            .ok_or("This request is no longer open")?;
-        // The answer is the person's own: no Vision gave it.
-        self.answer_request(sink, &to, "", request_id, accept, "")
     }
 
     /// Changes one request to `channel_id` that `keep` accepts, under the Visions lock, and
@@ -386,76 +332,65 @@ impl AppState {
         Ok(request)
     }
 
-    /// Whether `channel`'s team takes another channel's requests on itself: above Always ask
-    /// (its level leaves it some decision); at Always ask the person answers.
-    /// It takes nothing on while its chief could not run it (paused, or over or unsure of its
-    /// budget): the request then stays open for the person.
+    /// Whether `channel`'s team takes a request on as it arrives: its chief could run it (not
+    /// paused, budget known and not reached). Otherwise the request stays open until that
+    /// chief's next run starts.
     fn visions_takes_requests(&self, channel: &super::Channel) -> bool {
-        let runnable = !self.paused_in(&channel.id, &channel.chief)
+        !self.paused_in(&channel.id, &channel.chief)
             && self
                 .visions_budget_gate(&channel.chief, &channel.id)
-                .is_none();
-        runnable
-            && self
-                .runtime_configuration(Some(&channel.project_root), None)
-                .is_ok_and(|resolved| {
-                    !super::vision_decisions(channel, &resolved.config.visions).is_empty()
-                })
+                .is_none()
     }
 
-    /// Shows an answer to `request` in both its channels (`by` answered; empty for the person).
-    fn post_answered(&self, request: &Request, by: &str, accept: bool, note: &str) {
+    /// Takes on the open requests to `channel_id` (only `only` when given) for its chief
+    /// `chief`, under the Visions lock, and shows each in both its channels. A run of the
+    /// channel's chief calls it as it starts, so a request that could not be taken on when it
+    /// arrived is taken on then.
+    pub(super) fn visions_take_requests(&self, channel_id: &str, chief: &str, only: Option<&str>) {
+        let channels = self.channel_ids();
+        let taken: Vec<Request> = {
+            let _guard = self.visions_cache();
+            let Ok(mut requests) = self.requests_load() else {
+                return;
+            };
+            let now = now_ms();
+            let taken: Vec<Request> = requests
+                .iter_mut()
+                .filter(|request| {
+                    request.to_channel == channel_id
+                        && request.taken_ms.is_none()
+                        && only.is_none_or(|id| id == request.id)
+                })
+                .map(|request| {
+                    request.taken_ms = Some(now);
+                    request.clone()
+                })
+                .collect();
+            if taken.is_empty() || self.requests_save(&requests, &channels).is_err() {
+                return;
+            }
+            taken
+        };
+        for request in &taken {
+            self.post_taken(request, chief);
+        }
+    }
+
+    /// Shows that `request` was taken on (by `chief`) in both its channels.
+    fn post_taken(&self, request: &Request, chief: &str) {
         for (here, there) in [
             (&request.to_channel, &request.from_channel),
             (&request.from_channel, &request.to_channel),
         ] {
             let entry = ChannelEntry::RequestAnswered {
-                vision_id: by.to_owned(),
+                vision_id: chief.to_owned(),
                 request_id: request.id.clone(),
                 channel_id: there.clone(),
-                accepted: accept,
-                note: note.to_owned(),
+                accepted: true,
+                note: String::new(),
             };
-            let _ = self.channel_post(here, by, entry);
+            let _ = self.channel_post(here, chief, entry);
         }
-        self.visions_note(
-            "request_answered",
-            json!({"request_id": request.id, "accepted": accept, "by_person": by.is_empty()}),
-        );
-    }
-
-    /// Records the answer once, shows it in both channels and wakes the asking chief.
-    fn answer_request(
-        &self,
-        sink: &Arc<dyn EventSink>,
-        channel_id: &str,
-        by: &str,
-        request_id: &str,
-        accept: bool,
-        note: &str,
-    ) -> Result<(), String> {
-        let note = note.trim();
-        if note.chars().count() > MAX_TEXT_CHARS {
-            return Err(format!("The note is at most {MAX_TEXT_CHARS} characters"));
-        }
-        let open = |request: &Request| request.answered.is_none();
-        let request = self.request_update(channel_id, request_id, open, |request| {
-            request.answered = Some(Answered {
-                accepted: accept,
-                at_ms: now_ms(),
-            });
-        })?;
-        self.post_answered(&request, by, accept, note);
-        let answered = || WakeReason::RequestAnswered(request.id.clone());
-        if let Some(asker) = self.channel_get(&request.from_channel).map(|c| c.chief) {
-            self.visions_wake(sink, &request.from_channel, &asker, answered());
-        }
-        // The person took the work on for their channel: its chief wakes to do it.
-        if by.is_empty() && accept {
-            if let Some(chief) = self.channel_get(&request.to_channel).map(|c| c.chief) {
-                self.visions_wake(sink, &request.to_channel, &chief, answered());
-            }
-        }
-        Ok(())
+        self.visions_note("request_taken", json!({"request_id": request.id}));
     }
 }

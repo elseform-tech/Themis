@@ -7,7 +7,7 @@ Custom-mode rules in `runtime.jsonc` (nothing waits for an approval; the OS sand
 and the same model. Through the `themis` CLI:
 
 - `vision`: a team of one: a chief of staff and one worker (each profile names the model) in a
-  channel in the project (Custom, as a new channel starts). The person posts the task with
+  channel in the project (at `--level`, Auto-review by default, as a new channel starts). The person posts the task with
   `post_channel_message` (it wakes only the chief, who tasks its worker; the worker drives the
   work chat), answers each question passed on (`passed_on`) with the ordinary
   `answer_question`, and when nothing runs and nothing waits, the hidden checks run: unmet, the
@@ -112,7 +112,7 @@ def is_idle(events, now, looked_at=None, settle=SETTLE_S):
 
 def runtime_config(options):
     config = {"schema_version": 1, "approval": verify_run.APPROVAL,
-              "visions": {"autonomy": options.get("autonomy", "small"),
+              "visions": {"level": options.get("level", "auto_review"),
                           "daily_budget_usd": max(0.1, min(100.0, options["max_run_cost"]))}}
     if options.get("provider"):
         config["providers"] = [options["provider"]]
@@ -120,7 +120,7 @@ def runtime_config(options):
 
 
 class Run:
-    """One run of one arm: `options` holds model, timeout, max_run_cost, autonomy, keep, and in a
+    """One run of one arm: `options` holds model, timeout, max_run_cost, level, keep, and in a
     dry run `provider` (the scripted provider's runtime.jsonc entry) and `provider_env`."""
 
     def __init__(self, binary, options, scenario, seed, arm, price):
