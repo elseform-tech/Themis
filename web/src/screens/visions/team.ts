@@ -71,7 +71,10 @@ export function workerStatus(state: AppState, channel: ChannelInfo, worker: Visi
   const expression = expressionFor({
     running: runsHere(state, channel, worker, true),
     waitingOnPerson: worker.needs > 0 || workerWaits(state, channel, worker),
-    finished: workChats(state, channel, worker).some(chat => !going(chat) && (chat.last_outcome ?? "done") === "done"),
+    // A chat of its work that ended well, or its own turn here that ran and ended (a worker may
+    // do its part, such as a review, by reading and reporting, with no chat of its own).
+    finished: workChats(state, channel, worker).some(chat => !going(chat) && (chat.last_outcome ?? "done") === "done")
+      || worker.vision_chats.some(chat => chat.channel_id === channel.id && !going({ id: chat.thread_id, running: chat.running })),
     failed: worker.sorry,
     blocked: false,
     paused: worker.paused || (channel.paused_workers ?? []).includes(worker.id),

@@ -204,6 +204,15 @@ describe("Team screens", () => {
     expect(screen.getByRole("complementary", { name: "Rook with Juno" })).toBeTruthy();
   });
 
+  it("a worker that did its part in its own turn shows Done", async () => {
+    // Wren reviewed by reading, without a chat of her own work: her turn here ran and ended.
+    const reviewed = fixture();
+    const wren = reviewed.visions.list.find(vision => vision.name === "Wren")!;
+    wren.vision_chats = [{ thread_id: "wren-own", channel_id: "c1", running: false }];
+    await show(app, reviewed);
+    expect(screen.getAllByRole("button", { name: "Wren's thread, Done" }).length).toBeGreaterThan(0);
+  });
+
   it("an open question of a worker's chat shows Needs you", async () => {
     const asking = fixture({ questions: { w1: ["q5"] } });
     await show(app, asking);
