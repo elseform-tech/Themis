@@ -385,6 +385,18 @@ describe("visions follow the project", () => {
     expect(state.visions.open.channelId).toBeNull();
   });
 
+  it("opening the channel a chief's profile stands in for shows the channel again", () => {
+    let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    state = appReducer(state, { type: "visions/panel", panel: { kind: "vision", visionId: "v1" } });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    expect(state.visions.open.panel).toBeNull();
+    // A worker's thread and the details sit beside the channel: opening it again keeps them.
+    state = appReducer(state, { type: "visions/panel", panel: { kind: "worker", visionId: "v1" } });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    expect(state.visions.open.panel).toEqual({ kind: "worker", visionId: "v1" });
+  });
+
   it("a project change keeps the open channel when it belongs there", () => {
     let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
     state = appReducer({ ...state, activeProjectRoot: "/q" }, { type: "visions/open", channelId: "c1" });

@@ -212,9 +212,11 @@ function reshow(state: AppState): AppState {
 function open(state: AppState, action: Extract<VisionsAction, { type: "visions/open" }>): AppState {
   const chatId = action.chatId ?? null;
   const plainThreadId = visionsHoldsActive(state) ? state.visions.open.plainThreadId : state.activeThreadId;
-  // A profile or a worker's thread belongs to its channel; the channel's details follow the open one.
+  // A profile stands in the channel's place, so opening a channel closes it; a worker's thread
+  // belongs to its channel; the channel's details follow the open one.
   const was = state.visions.open;
-  const panel = was.channelId !== action.channelId && (was.panel?.kind === "vision" || was.panel?.kind === "worker") ? null : was.panel;
+  const leaves = was.panel?.kind === "vision" || (was.panel?.kind === "worker" && was.channelId !== action.channelId);
+  const panel = leaves ? null : was.panel;
   const visions = { ...state.visions, open: { ...was, channelId: action.channelId, chatId, plainThreadId, panel } };
   if (chatId === null) return { ...state, visions };
   const root = Object.keys(visions.channels).find(each => visions.channels[each]!.some(channel => channel.id === action.channelId));
