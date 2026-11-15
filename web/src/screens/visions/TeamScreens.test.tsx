@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // The team screens against boards TeamChannel, AdminChannel and ChiefProfile.
+import { COLORS } from "./cast";
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useReducer, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -173,6 +174,10 @@ describe("Team screens", () => {
       expect(row).not.toHaveTextContent(/^(You|Juno)/);
     }
     expect(mine.closest("li")!.querySelector("time")).toBeTruthy();
+    // The person's bubbles take the chief's colour, so the two sides read apart in every sky.
+    const juno = fixture().visions.list.find(vision => vision.name === "Juno")!;
+    const log = channel.querySelector(".themis-channel-log") as HTMLElement;
+    expect(log.style.getPropertyValue("--themis-chief-color")).toBe(COLORS[juno.color]!.mid);
   });
 
   it("a_handoff_shows_one_indicator_per_tasked_worker", async () => {
@@ -407,7 +412,7 @@ describe("Team screens", () => {
     await show(app, fixture({ lines: { c1: lines } }));
     const notesShown = screen.getAllByRole("note");
     // The request is quoted, so a question reads as well as an instruction.
-    expect(notesShown[0]).toHaveTextContent(/^Asked# api: “fix the export date format”/);
+    expect(notesShown[0]).toHaveTextContent(/^Asked# api“fix the export date format”/);
     expect(notesShown[1]).toHaveTextContent(/^Added a routine: Weekdays 09:00, Tell me what happened overnight/);
     expect(notesShown[2]).toHaveTextContent(/^Request with# apitaken on: Friday/);
     fireEvent.click(within(notesShown[0]!).getByRole("button", { name: "# api" }));

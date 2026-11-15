@@ -2,7 +2,7 @@
 // only the person and the chief (the newest lines, earlier ones on request; workers' posts and
 // chats stay in their threads with the chief), the approvals the chief's own chats wait on (a
 // worker's wait in its thread), the chief's thinking row and the composer.
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
 import { useApp } from "../../state/store";
 import { ChannelApproval } from "./ChannelApproval";
@@ -10,7 +10,7 @@ import { ChannelComposer } from "./ChannelComposer";
 import { ChannelEntryView, visionById } from "./ChannelEntry";
 import { ChannelTop, ChiefWelcome } from "./ChannelTop";
 import { CharacterAvatar } from "./CharacterAvatar";
-import { lookOf } from "./cast";
+import { lookOf, COLORS } from "./cast";
 import { reducedMotion, useArrivals, useShownAMoment, useWakes } from "./thinking";
 
 /** The Visions whose run in this channel is going (also after a post of their own). */
@@ -109,6 +109,12 @@ function useChannelMotion(state: ReturnType<typeof useApp>["state"], channel: Ch
   return { reduced, thinking, woke, shownUpTo, shown: lines.filter(line => line.seq <= arrived) };
 }
 
+/** The chief's colour, which the person's bubbles take a tint of. */
+function chiefColor(chief: { color: string } | undefined): CSSProperties | undefined {
+  const color = chief && COLORS[chief.color];
+  return color ? ({ "--themis-chief-color": color.mid } as CSSProperties) : undefined;
+}
+
 export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const { state, loadOlderLines } = useApp();
   const [draft, setDraft] = useState("");
@@ -134,7 +140,7 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>
       <ChannelTop channel={channel} fresh={fresh} />
-      <div className="themis-channel-log" ref={log} onScroll={onScroll}>
+      <div className="themis-channel-log" ref={log} onScroll={onScroll} style={chiefColor(chief)}>
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
         {fresh && <ChiefWelcome channel={channel} />}
         <ol className="themis-channel-lines">

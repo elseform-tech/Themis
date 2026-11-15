@@ -102,7 +102,7 @@ function RequestAnswer({ requestId }: { requestId: string }) {
 /** A request line's words around the other channel's pill. */
 function requestWords(entry: Exclude<TeamNoteEntry, { type: "routine_set" }>, pill: ReactNode): ReactNode {
   switch (entry.type) {
-    case "request_sent": return <><span>Asked</span>{pill}<span>: “{entry.ask}”</span></>;
+    case "request_sent": return <><span>Asked</span>{pill}<span>“{entry.ask}”</span></>;
     case "request_received": return <>{pill}<span>asks: “{entry.ask}”</span><RequestAnswer requestId={entry.request_id} /></>;
     case "worker_asked": return <>{pill}<span>asks for a worker: {entry.role}. {entry.why}</span></>;
     case "request_answered": return <><span>Request with</span>{pill}<span>{entry.accepted ? "taken on" : "declined"}{entry.note ? `: ${entry.note}` : "."}</span></>;
