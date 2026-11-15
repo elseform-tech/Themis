@@ -157,3 +157,28 @@
 - [ ] `docs/live-verification.md`: update the Visions team rows (thread indicator, Team section, autonomy → approvals); `live_coverage` test passes.
 - [ ] Real app, isolated HOME, `beam-free`, all four skies against the boards: a task without naming a worker; an approval with the panel closed (indicator, dot, rail count); Allow in the panel; autonomy Always ask vs Most decisions; Full access on/off; the floating chief and `# name`; the Team section; the 3D cloud in welcome, float and profile.
 - [ ] Commit docs: `docs: the quiet team channel`.
+
+---
+
+## Addendum 2026-11-15 15:10 (owner): fewer approvals, requests that complete
+
+Owner: approvals should stop destructive actions, not legitimate work; answered cards pile up; Take it on is annoying and results never come back.
+
+### Task 12: Team chats do project work without asking; destructive steps still stop
+- A team work chat whose run is in Auto (Task 4) gets two allow rules appended to its run's captured approval policy: `write` and `execute` risks proceed (after any deny rule; the sandbox stays: no network, no secrets, no writes outside the project). Destructive variants keep Auto's question box (only the person answers); sandbox escapes and sensitive files keep theirs; anything leaving the computer is the sandbox's block, answered only by the person's Allow once.
+- The reviewer of a team work chat reads, as the person's words, the person's latest messages in its channel (bounded as today: 12, 6000 characters), so what it still judges (Custom-asks that are not plain writes or commands, for example MCP or browser steps) is judged against what the person asked.
+- Tests: `a_team_chat_writes_and_runs_without_asking` (unit on the captured policy: allow rules present for a Vision work chat in Auto, absent for a plain chat and for Custom/YOLO), `a_destructive_step_in_a_team_chat_still_asks` (destructive variant → question box path unchanged), `the_reviewer_reads_the_persons_channel_words`.
+- Docs: configuration.md (Visions approvals), user-guide.
+
+### Task 13: Answered cards fold; dead cards go
+- A `passed_on` card whose question is answered folds to one line: "{verb}: {short action}" (Allowed once / Skipped / Answered). A card whose chat no longer has the question open and that was never answered (the run moved on, was stopped, or the question expired) is not shown.
+- Tests (web): `an_answered_question_folds_to_one_line`, `a_question_its_chat_dropped_is_not_shown`.
+
+### Task 14: A chief takes another channel's request on itself
+- Accepting a request from a channel of the same project is the receiving chief's own call (no `scope` gate) unless the request changes its own channel's goal or spends money, which it passes to the person as today. The prompt (`visions-chief.md`) says so; `requests.rs` drops the scope check for accept. Take it on / Decline stay on the line only while a request waits on the person.
+- Tests: `a_chief_takes_a_request_on_without_the_person` (Rust), prompt tests; eval A/B before merge (prompt change).
+
+### Task 15: Results come back
+- New chief call `send_result {requestId, text}` (receiving chief, accepted request, once; 1–2000 characters): posts `request_result {request_id, channel_id, vision_id, text}` in the asking channel (announced), wakes the asking chief with `request_answered RID` (the entry shows the result), and a short line in the receiving channel. Grant: CHIEF_CALLS; refused for workers and for requests not accepted by this channel.
+- Web: the asking channel shows a result card: "# design sent:" with the text.
+- Tests: `a_result_reaches_the_asking_channel` (e2e through themis), grant test, web `a_request_result_shows_in_the_asking_channel`.
