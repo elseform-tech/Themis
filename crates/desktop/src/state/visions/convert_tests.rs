@@ -147,7 +147,7 @@ fn channel(name: &str, root: &Path, members: Vec<String>, chief: &str) -> Channe
         name: name.into(),
         topic: String::new(),
         project_root: root.to_path_buf(),
-        approval_mode: themis_core::configuration::ApprovalMode::Custom,
+        full_access: false,
         members,
         chief: chief.into(),
         autonomy: None,

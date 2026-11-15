@@ -5,7 +5,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
-use themis_core::configuration::ApprovalMode;
 use themis_core::diagnostics::DiagnosticFilter;
 use themis_core::visions::Autonomy;
 
@@ -51,7 +50,7 @@ fn lead(state: &AppState, root: &Path, name: &str, chief: &str) -> (String, Stri
                 name: name.into(),
                 topic: String::new(),
                 project_root: root.to_path_buf(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: vec![vision.clone()],
                 chief: vision.clone(),
                 autonomy: Some(Autonomy::Most),

@@ -6,7 +6,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use chrono::{Local, NaiveDate, TimeZone};
-use themis_core::configuration::ApprovalMode;
 use themis_core::diagnostics::DiagnosticFilter;
 use themis_core::visions::Autonomy;
 
@@ -77,7 +76,7 @@ fn team(autonomy: Autonomy) -> Team {
                 name: "release".into(),
                 topic: String::new(),
                 project_root: root.canonicalize().unwrap(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: vec![juno.clone(), rook.clone()],
                 chief: juno.clone(),
                 autonomy: Some(autonomy),

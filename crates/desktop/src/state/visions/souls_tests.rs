@@ -30,7 +30,7 @@ fn release(root: &Path, members: Vec<String>) -> Channel {
         name: "release".into(),
         topic: String::new(),
         project_root: root.to_path_buf(),
-        approval_mode: themis_core::configuration::ApprovalMode::Custom,
+        full_access: false,
         chief: members[0].clone(),
         members,
         autonomy: None,

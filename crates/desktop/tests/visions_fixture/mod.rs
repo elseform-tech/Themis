@@ -103,36 +103,34 @@ impl Fixture {
     /// A Vision named `name` working in a new channel of the project, led by a chief of its
     /// own (a worker drives work chats; a chief drives none).
     pub fn vision_and_channel(&self, name: &str, channel: &str) -> (String, String) {
-        self.vision_and_channel_in(name, channel, "custom")
+        self.vision_and_channel_in(name, channel, "auto")
     }
 
-    /// The same, with the channel's approval mode `mode`.
+    /// The same, with its chats in approval mode `mode` (`yolo`: Full access; `custom`: the
+    /// team decides nothing, so its chats ask; `auto`: Settings' level).
     /// The Visions run their chats on the scripted provider's `test-model`.
     pub fn vision_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
         let chief = self.new_vision(&format!("{name} Lead"));
         let vision_id = self.new_vision(name);
-        let saved = self.call_ok(
-            "save_channel",
-            json!({"channel": {"name": channel, "project_root": self.project,
-                "approval_mode": mode, "members": [chief, vision_id], "chief": chief},
-                "revision": null}),
-        );
+        let mut spec = json!({"name": channel, "project_root": self.project,
+            "members": [chief, vision_id], "chief": chief});
+        mode_of(&mut spec, mode);
+        let saved = self.call_ok("save_channel", json!({"channel": spec, "revision": null}));
         (vision_id, saved["id"].as_str().unwrap().to_owned())
     }
 
     /// A Vision named `name` leading a new channel of the project alone.
     pub fn chief_and_channel(&self, name: &str, channel: &str) -> (String, String) {
-        self.chief_and_channel_in(name, channel, "custom")
+        self.chief_and_channel_in(name, channel, "auto")
     }
 
-    /// The same, with the channel's approval mode `mode`.
+    /// The same, with its chats in approval mode `mode` (as [`Self::vision_and_channel_in`]).
     pub fn chief_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
         let vision_id = self.new_vision(name);
-        let saved = self.call_ok(
-            "save_channel",
-            json!({"channel": {"name": channel, "project_root": self.project,
-                "approval_mode": mode, "members": [vision_id]}, "revision": null}),
-        );
+        let mut spec =
+            json!({"name": channel, "project_root": self.project, "members": [vision_id]});
+        mode_of(&mut spec, mode);
+        let saved = self.call_ok("save_channel", json!({"channel": spec, "revision": null}));
         (vision_id, saved["id"].as_str().unwrap().to_owned())
     }
 
@@ -287,6 +285,15 @@ impl Fixture {
             .get_thread(thread)
             .await
             .is_ok_and(|info| info.running)
+    }
+}
+
+/// A channel spec whose chats run in approval mode `mode` (see `vision_and_channel_in`).
+fn mode_of(spec: &mut Value, mode: &str) {
+    match mode {
+        "yolo" => spec["full_access"] = json!(true),
+        "custom" => spec["autonomy"] = json!("ask"),
+        _ => {}
     }
 }
 

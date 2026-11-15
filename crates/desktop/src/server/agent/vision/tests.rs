@@ -147,7 +147,7 @@ fn team(autonomy: Autonomy, custom: Option<BTreeMap<String, bool>>) -> crate::st
         name: "work".into(),
         topic: String::new(),
         project_root: std::path::PathBuf::from("/work/app"),
-        approval_mode: themis_core::configuration::ApprovalMode::Custom,
+        full_access: false,
         members: vec!["v1".into()],
         chief: "v1".into(),
         autonomy: Some(autonomy),

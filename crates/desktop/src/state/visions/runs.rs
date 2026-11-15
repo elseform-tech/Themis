@@ -641,7 +641,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use themis_core::configuration::{ApprovalMode, VisionsConfig};
+    use themis_core::configuration::VisionsConfig;
     use themis_core::visions::Autonomy;
 
     use super::*;
@@ -677,7 +677,7 @@ mod tests {
             name: "release".into(),
             topic: String::new(),
             project_root: PathBuf::from("/work/app"),
-            approval_mode: ApprovalMode::Custom,
+            full_access: false,
             members: vec!["v1".into(), "v2".into()],
             chief: "v1".into(),
             autonomy: None,

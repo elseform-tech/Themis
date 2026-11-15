@@ -828,7 +828,6 @@ mod tests {
         ));
     }
 
-    use themis_core::configuration::ApprovalMode;
     use themis_core::diagnostics::DiagnosticFilter;
 
     use super::super::{Channel, Vision};
@@ -965,7 +964,7 @@ mod tests {
                     name: "work".into(),
                     topic: String::new(),
                     project_root: project.canonicalize().unwrap(),
-                    approval_mode: ApprovalMode::Custom,
+                    full_access: false,
                     members,
                     chief: String::new(),
                     autonomy: None,

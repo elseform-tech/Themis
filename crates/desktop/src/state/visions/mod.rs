@@ -66,6 +66,21 @@ pub use routines::{Routine, Schedule};
 pub use team_log::TeamEntry;
 
 pub use runs::vision_decisions;
+
+/// The approval mode of `channel`'s chats: YOLO with Full access; else Custom (asks before
+/// changes) when its team decides nothing on its own, Auto otherwise.
+pub fn channel_approval_mode(
+    channel: &Channel,
+    config: &themis_core::configuration::VisionsConfig,
+) -> ApprovalMode {
+    if channel.full_access {
+        ApprovalMode::Yolo
+    } else if vision_decisions(channel, config).is_empty() {
+        ApprovalMode::Custom
+    } else {
+        ApprovalMode::Auto
+    }
+}
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
 use store::StoreError;
 pub use wakes::WakeReason;
@@ -133,8 +148,10 @@ pub struct Channel {
     #[serde(default)]
     pub topic: String,
     pub project_root: PathBuf,
-    /// Set by the person and copied onto every chat a Vision starts here.
-    pub approval_mode: ApprovalMode,
+    /// The person's Full access: the team's chats run in YOLO. Otherwise their approval mode
+    /// follows the team's autonomy (see [`channel_approval_mode`]).
+    #[serde(default)]
+    pub full_access: bool,
     /// Vision ids: the chief and its workers.
     #[serde(default)]
     pub members: Vec<String>,

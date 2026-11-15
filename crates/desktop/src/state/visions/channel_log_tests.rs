@@ -1,8 +1,6 @@
 use std::io::Write;
 use std::path::Path;
 
-use themis_core::configuration::ApprovalMode;
-
 use super::channel_log::{read_page, take_bytes_read, ChannelLine};
 use super::*;
 use crate::state::AppState;
@@ -16,7 +14,7 @@ fn state_with_channel(dir: &Path) -> (AppState, String) {
                 name: "general".into(),
                 topic: String::new(),
                 project_root: dir.join("projects").join("docs"),
-                approval_mode: ApprovalMode::Auto,
+                full_access: false,
                 members: Vec::new(),
                 chief: String::new(),
                 autonomy: None,

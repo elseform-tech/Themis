@@ -34,7 +34,7 @@ fn team(state: &AppState, root: &Path) -> (String, String, String) {
                 name: "release".into(),
                 topic: String::new(),
                 project_root: root.to_path_buf(),
-                approval_mode: themis_core::configuration::ApprovalMode::Custom,
+                full_access: false,
                 members: vec![juno.clone(), rook.clone()],
                 chief: juno.clone(),
                 autonomy: None,

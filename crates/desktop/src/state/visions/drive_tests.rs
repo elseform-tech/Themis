@@ -45,7 +45,7 @@ fn setup(model: Option<&str>) -> Setup {
                 name: "work".into(),
                 topic: String::new(),
                 project_root: project.clone(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: vec![vision.id.clone()],
                 chief: String::new(),
                 autonomy: None,
@@ -87,7 +87,8 @@ async fn a_work_chat_runs_on_the_visions_model_or_the_default() {
         .await
         .unwrap();
     assert_eq!(info.model, "vision-model");
-    assert_eq!(info.approval_mode, ApprovalMode::Custom);
+    // Settings' level lets the team decide some things, so its chats run in Auto.
+    assert_eq!(info.approval_mode, ApprovalMode::Auto);
 
     let without = setup(None);
     let info = without

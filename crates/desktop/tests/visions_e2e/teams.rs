@@ -12,7 +12,7 @@ async fn list_channels_shows_chief_autonomy_and_budget() {
     let (rook, _) = fx.vision_and_channel("Rook", "other");
     let saved = fx.call_ok(
         "save_channel",
-        json!({"channel": {"name": "release", "project_root": fx.project, "approval_mode": "custom",
+        json!({"channel": {"name": "release", "project_root": fx.project, "autonomy": "ask",
             "members": [juno, rook], "chief": juno, "autonomy": "ask", "daily_budget_usd": 0.4},
             "revision": null}),
     );
@@ -36,7 +36,7 @@ async fn list_channels_shows_chief_autonomy_and_budget() {
     // A chief who is not a member is refused.
     let refused = fx.call(
         "save_channel",
-        json!({"channel": {"name": "stray", "project_root": fx.project, "approval_mode": "custom",
+        json!({"channel": {"name": "stray", "project_root": fx.project, "autonomy": "ask",
             "members": [rook], "chief": juno}, "revision": null}),
     );
     assert!(!refused.status.success());
@@ -50,7 +50,7 @@ fn release_team(fx: &Fixture) -> (String, String, String) {
     let (rook, _) = fx.vision_and_channel("Rook", "other");
     let saved = fx.call_ok(
         "save_channel",
-        json!({"channel": {"name": "release", "project_root": fx.project, "approval_mode": "custom",
+        json!({"channel": {"name": "release", "project_root": fx.project, "autonomy": "ask",
             "members": [juno, rook], "chief": juno}, "revision": null}),
     );
     (saved["id"].as_str().unwrap().to_owned(), juno, rook)
@@ -340,5 +340,48 @@ async fn a_worker_that_does_nothing_brings_its_chief_back() {
             .any(|entry| entry["type"] == "vision" && entry["vision_id"] == juno.as_str())
     })
     .await;
+    fx.shut_down().await;
+}
+
+/// A channel's autonomy and Full access set its chats' approval mode, a running chat's too: the
+/// person's change applies to the chat's next step, not only to new chats.
+#[tokio::test(flavor = "multi_thread")]
+async fn autonomy_and_full_access_set_the_chats_approval_mode() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    fx.no_wakes();
+    let (channel, _juno, rook) = release_team(&fx);
+    let chat = fx.thread().await;
+    fx.own(&chat, &rook, &channel, OwnedKind::Work);
+    let mode = |fx: &Fixture| {
+        fx.call_ok("get_thread", json!({"threadId": chat}))["approval_mode"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let save = |fx: &Fixture, change: Value| {
+        let current = fx
+            .call_ok("list_channels", json!({"projectRoot": fx.project}))
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|each| each["id"] == channel.as_str())
+            .unwrap()
+            .clone();
+        let mut next = current.clone();
+        for (key, value) in change.as_object().unwrap() {
+            next[key] = value.clone();
+        }
+        fx.call_ok(
+            "save_channel",
+            json!({"channel": next, "revision": current["revision"]}),
+        );
+    };
+    save(&fx, json!({"autonomy": "ask"}));
+    assert_eq!(mode(&fx), "custom");
+    save(&fx, json!({"autonomy": "most"}));
+    assert_eq!(mode(&fx), "auto");
+    save(&fx, json!({"full_access": true}));
+    assert_eq!(mode(&fx), "yolo");
     fx.shut_down().await;
 }

@@ -47,7 +47,7 @@ fn every_entry() -> Vec<ChannelEntry> {
         ChannelEntry::Vision {
             vision_id: "v1".into(),
             text: "On it.".into(),
-            tasked: Vec::new(),
+            tasked: vec!["v2".into()],
         },
         ChannelEntry::ChatStarted {
             vision_id: "v1".into(),
@@ -314,7 +314,7 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             name: "administration".into(),
             topic: "Ship 2.0".into(),
             project_root: "/repo".into(),
-            approval_mode: ApprovalMode::Auto,
+            full_access: true,
             members: vec!["v1".into()],
             chief: "v1".into(),
             autonomy: Some(Autonomy::Custom),

@@ -25,7 +25,7 @@ fn channel(id: &str, name: &str, members: &[&str]) -> Channel {
         name: name.into(),
         topic: String::new(),
         project_root: PathBuf::from(ROOT),
-        approval_mode: ApprovalMode::Custom,
+        full_access: false,
         members: members.iter().map(|member| (*member).to_owned()).collect(),
         chief: members
             .first()

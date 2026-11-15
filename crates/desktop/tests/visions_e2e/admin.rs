@@ -122,7 +122,7 @@ async fn the_admin_proposes_and_creates_only_after_the_person_replies() {
         .cloned()
         .expect("# releases");
     assert_eq!(made["members"], json!([rook["id"]]));
-    assert_eq!(made["approval_mode"], "custom");
+    assert_eq!(made["full_access"], false);
     assert_eq!(made["topic"], "Ship releases");
     let items = json!([
         {"kind": "vision", "id": rook["id"], "name": "Rook", "action": "created"},
@@ -374,7 +374,7 @@ async fn the_admin_cannot_be_deleted() {
     let listed = channels(&fx);
     let hq_now = named(&listed, "administration").unwrap();
     let crowded = json!({"id": hq, "name": "administration", "project_root": fx.project,
-        "approval_mode": "custom", "members": [ADMIN, wren]});
+        "autonomy": "ask", "members": [ADMIN, wren]});
     let saved = fx.call(
         "save_channel",
         json!({"channel": crowded, "revision": hq_now["revision"]}),
@@ -382,7 +382,7 @@ async fn the_admin_cannot_be_deleted() {
     assert!(failed_with(&saved, "only member"), "{}", text(&saved));
     let work_now = named(&listed, "work").unwrap();
     let joined = json!({"id": work, "name": "work", "project_root": fx.project,
-        "approval_mode": "custom", "members": [wren, ADMIN]});
+        "autonomy": "ask", "members": [wren, ADMIN]});
     let saved = fx.call(
         "save_channel",
         json!({"channel": joined, "revision": work_now["revision"]}),

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use themis_core::configuration::ApprovalMode;
 use themis_core::context_metrics::UsageKind;
 use themis_core::providers::{GoModel, ModelPrice};
 
@@ -86,7 +85,7 @@ async fn setup() -> Setup {
                 name: "work".into(),
                 topic: String::new(),
                 project_root: project.canonicalize().unwrap(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: vec![wren.clone(), ada.clone()],
                 chief: String::new(),
                 autonomy: None,
@@ -806,7 +805,7 @@ fn other_project(s: &Setup) -> String {
                 name: "elsewhere".into(),
                 topic: String::new(),
                 project_root: project.canonicalize().unwrap(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: vec![s.ada.clone()],
                 chief: String::new(),
                 autonomy: None,
@@ -1093,7 +1092,7 @@ async fn budget_judging_stays_flat_with_the_number_of_channels() {
                         name: format!("c{n}"),
                         topic: String::new(),
                         project_root: root.clone(),
-                        approval_mode: ApprovalMode::Custom,
+                        full_access: false,
                         members: vec![vision.clone()],
                         chief: vision,
                         autonomy: None,

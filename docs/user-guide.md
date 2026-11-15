@@ -608,8 +608,11 @@ the channel under the chief's name.
 **What a team decides.** Settings › Visions sets, for all Visions, the most a team decides without
 asking you when a chat asks something; see [Settings reference](#settings-reference). Each
 channel has its own level and daily budget, never above Settings (the chief's profile shows and
-sets them). Approvals for actions stay yours: a team's chats use the channel's **Approval
-mode**, which only you set. When a worker's chat needs your approval, the box waits in that
+sets them). The level also sets how the team's chats ask before acting: at **Always ask** they ask
+you before changes (Custom); at any other level they run in Auto, where a reviewer model allows
+routine steps. **Full access** in the channel's details runs them in YOLO instead; only you
+switch it on. Sandbox escapes, sensitive files, your deny rules and destructive steps stay yours
+at every level. When a worker's chat needs your approval, the box waits in that
 worker's thread and the chief does not repeat it; a permission question shows in the channel.
 
 **Requests between channels.** A chief may ask another channel of the same project for help
@@ -633,9 +636,9 @@ most 16 KiB, where you write who it is and how it works; only chiefs and Atlas h
 **Model** (**Default model**, the one Settings › Models sets, unless you pick one), the channel's
 **Autonomy** and **Budget** with today's spend, the **Team** (each worker, role, model and status)
 and the **Routines**. Pause stops the chief; a worker can be paused by its chief in that channel
-only. Click a channel's name in its header for its **details**: the topic, the **Approval mode**
-its chats run in, its members and Delete (the team's chats stop and become ordinary chats);
-deleting one Vision is in the member rows. `# administration` has no approval mode, member
+only. Click the channel's name at the top left for its **details**: the topic, its **Autonomy** (each
+level says how its chats ask), **Full access**, the daily budget, its members and Delete (the team's chats stop and become ordinary chats);
+deleting one Vision is in the member rows. `# administration` has no autonomy, Full access, member
 controls or Delete.
 
 **Budget.** Visions have a daily budget, all together (Settings › Visions) and one for each

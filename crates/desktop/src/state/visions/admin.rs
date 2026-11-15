@@ -16,7 +16,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use themis_core::configuration::{ApprovalMode, VisionsConfig};
+use themis_core::configuration::VisionsConfig;
 use themis_core::prompts::{fill, VISIONS_ADMIN};
 use themis_core::visions::Autonomy;
 
@@ -339,7 +339,7 @@ fn check_new_channel(
         name: new.name.clone(),
         topic: new.topic.clone(),
         project_root: std::env::temp_dir(),
-        approval_mode: ApprovalMode::Custom,
+        full_access: false,
         members,
         chief: String::new(),
         autonomy: None,
@@ -601,7 +601,7 @@ impl AppState {
                     name: ADMINISTRATION.to_owned(),
                     topic: String::new(),
                     project_root: root.to_path_buf(),
-                    approval_mode: ApprovalMode::Custom,
+                    full_access: false,
                     members: admin_only,
                     chief: ADMIN_VISION_ID.to_owned(),
                     autonomy: None,
@@ -867,7 +867,7 @@ impl AppState {
                 name: new.name.trim().to_owned(),
                 topic: new.topic.clone(),
                 project_root: hq.project_root.clone(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: ids(&new.members)?,
                 chief: String::new(),
                 autonomy: None,

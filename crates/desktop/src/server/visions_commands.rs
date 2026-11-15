@@ -110,6 +110,11 @@ pub(super) async fn dispatch(
 ) -> Result<Value, String> {
     let released = released_by(state, method, args);
     let (value, changed) = run(state, sink, method, args).await?;
+    if method == "save_channel" {
+        if let Ok(saved) = serde_json::from_value::<Channel>(value.clone()) {
+            state.visions_apply_channel_mode(&saved).await;
+        }
+    }
     if let Some(changed) = changed {
         sink.emit_visions_changed(&changed);
     }

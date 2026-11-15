@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
+use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Decision;
 
-use super::{ChannelEntry, Hold, OwnedKind, Owner};
+use super::{Channel, ChannelEntry, Hold, OwnedKind, Owner};
 use crate::sink::EventSink;
 use crate::state::threads::SendOptions;
 use crate::state::AppState;
@@ -43,9 +44,8 @@ impl AppState {
                 Some(model),
             )
             .await?;
-        let recorded = self
-            .visions_adopt(vision, &info, channel.approval_mode)
-            .await;
+        let mode = self.visions_channel_mode(&channel);
+        let recorded = self.visions_adopt(vision, &info, mode).await;
         if let Err(error) = recorded {
             let _ = self.discard_thread(info.id.clone()).await;
             return Err(error);
@@ -60,9 +60,31 @@ impl AppState {
         );
         self.visions_note(
             "chat_started",
-            json!({"thread_id": info.id, "vision_id": vision.vision_id, "channel_id": vision.channel_id, "mode": channel.approval_mode}),
+            json!({"thread_id": info.id, "vision_id": vision.vision_id, "channel_id": vision.channel_id, "mode": mode}),
         );
         self.get_thread(&info.id).await
+    }
+
+    /// The approval mode `channel`'s chats run in now (see [`super::channel_approval_mode`]);
+    /// Custom while the configuration cannot be read.
+    pub(crate) fn visions_channel_mode(&self, channel: &Channel) -> ApprovalMode {
+        self.runtime_configuration(Some(&channel.project_root), None)
+            .map(|resolved| super::channel_approval_mode(channel, &resolved.config.visions))
+            .unwrap_or(ApprovalMode::Custom)
+    }
+
+    /// Puts the channel's work chats on its approval mode, after the person changed its
+    /// autonomy or Full access: a running chat's next step follows it.
+    pub(crate) async fn visions_apply_channel_mode(&self, channel: &Channel) {
+        let mode = self.visions_channel_mode(channel);
+        let chats: Vec<String> = self
+            .owners_where(|owner| owner.channel_id == channel.id && owner.kind == OwnedKind::Work)
+            .into_iter()
+            .map(|owner| owner.thread_id)
+            .collect();
+        for thread_id in chats {
+            let _ = self.set_thread_approval_mode(thread_id, mode).await;
+        }
     }
 
     async fn visions_adopt(

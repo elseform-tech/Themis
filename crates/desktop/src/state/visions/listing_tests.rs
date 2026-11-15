@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
-use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Decision;
 
 use super::*;
@@ -48,7 +47,7 @@ fn setup() -> Setup {
                 name: "work".into(),
                 topic: String::new(),
                 project_root: project.clone(),
-                approval_mode: ApprovalMode::Custom,
+                full_access: false,
                 members: vec![vision.id.clone()],
                 chief: String::new(),
                 autonomy: None,

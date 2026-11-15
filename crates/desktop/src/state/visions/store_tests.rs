@@ -30,7 +30,7 @@ fn channel(name: &str, root: &Path, members: Vec<String>) -> Channel {
         name: name.into(),
         topic: "Docs".into(),
         project_root: root.to_path_buf(),
-        approval_mode: ApprovalMode::Custom,
+        full_access: false,
         members,
         chief: String::new(),
         autonomy: None,
@@ -264,4 +264,40 @@ fn a_store_file_edited_on_disk_is_not_overwritten() {
     state
         .vision_save(reloaded[0].clone(), Some(&reloaded[0].revision))
         .unwrap();
+}
+
+/// A channel's chats ask before changes only when its team decides nothing on its own (Always
+/// ask, or Custom with every row off); otherwise Auto. Full access is YOLO whatever the level.
+#[test]
+fn approval_mode_follows_autonomy() {
+    use themis_core::configuration::VisionsConfig;
+    use themis_core::visions::Autonomy;
+    let root = PathBuf::from("/p");
+    let config = VisionsConfig {
+        autonomy: Autonomy::NearlyAll,
+        ..VisionsConfig::default()
+    };
+    let at = |autonomy: Option<Autonomy>, full_access: bool| {
+        let team = Channel {
+            autonomy,
+            full_access,
+            ..channel("c", &root, vec![])
+        };
+        channel_approval_mode(&team, &config)
+    };
+    assert_eq!(at(Some(Autonomy::Ask), false), ApprovalMode::Custom);
+    for level in [Autonomy::Small, Autonomy::Most, Autonomy::NearlyAll] {
+        assert_eq!(at(Some(level), false), ApprovalMode::Auto, "{level:?}");
+    }
+    // The channel's level is Settings' when it has none.
+    assert_eq!(at(None, false), ApprovalMode::Auto);
+    let off = Channel {
+        autonomy: Some(Autonomy::Custom),
+        custom: Some(BTreeMap::new()),
+        ..channel("c", &root, vec![])
+    };
+    assert_eq!(channel_approval_mode(&off, &config), ApprovalMode::Custom);
+    for level in [Autonomy::Ask, Autonomy::Most] {
+        assert_eq!(at(Some(level), true), ApprovalMode::Yolo, "{level:?}");
+    }
 }
