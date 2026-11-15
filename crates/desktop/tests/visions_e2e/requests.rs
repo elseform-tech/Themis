@@ -119,6 +119,9 @@ async fn a_chief_asks_another_channel_by_its_name() {
 async fn a_result_reaches_the_asking_channel() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
+    // Prices known, so the receiving channel's budget allows taking the request on.
+    let provider = quick_provider().await;
+    fx.use_provider(&provider).await;
     let (juno, release) = fx.chief_and_channel("Juno", "release");
     let (ada, design) = fx.chief_and_channel("Ada", "design");
     let (_, asker) = fx.vision_run(&juno, &release).await;

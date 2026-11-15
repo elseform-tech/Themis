@@ -28,6 +28,8 @@ const KEEP_ANSWERED_DAYS: i64 = 7;
 const KEEP_OPEN_DAYS: i64 = 30;
 /// Most characters of an ask or a note.
 const MAX_TEXT_CHARS: usize = 2000;
+/// How long a request waiting for its result keeps its pair of channels from asking again.
+const OPEN_WAIT_MS: i64 = 6 * 3_600_000;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// One request between channels.
@@ -98,8 +100,11 @@ impl AppState {
         let kept: Vec<&Request> = requests
             .iter()
             // A request to or from a deleted channel goes with it, answered or not.
+            // (None are dropped when the channels could not be read.)
             .filter(|request| {
-                channels.contains(&request.to_channel) && channels.contains(&request.from_channel)
+                channels.is_empty()
+                    || (channels.contains(&request.to_channel)
+                        && channels.contains(&request.from_channel))
             })
             .filter(|request| match &request.answered {
                 Some(answered) => answered.at_ms >= now - KEEP_ANSWERED_DAYS * DAY_MS,
@@ -206,14 +211,15 @@ impl AppState {
                 &[("cap", &cap.to_string())],
             ));
         }
+        // A request whose result has not come back within a few hours stops holding the pair.
+        let recent = now_ms() - OPEN_WAIT_MS;
         let waiting = |request: &&Request| {
+            let since = request.answered.as_ref().map_or(request.at_ms, |a| a.at_ms);
             request.from_channel == from.id
                 && request.to_channel == to_id
                 && !request.result_sent
-                && request
-                    .answered
-                    .as_ref()
-                    .is_none_or(|answered| answered.accepted)
+                && request.answered.as_ref().is_none_or(|a| a.accepted)
+                && since >= recent
         };
         if one_open && requests.iter().any(|request| waiting(&request)) {
             return Err(themis_core::prompts::AGENT_CLI_REQUEST_ALREADY_OPEN.to_owned());
@@ -382,11 +388,19 @@ impl AppState {
 
     /// Whether `channel`'s team takes another channel's requests on itself: above Always ask
     /// (its level leaves it some decision); at Always ask the person answers.
+    /// It takes nothing on while its chief could not run it (paused, or over or unsure of its
+    /// budget): the request then stays open for the person.
     fn visions_takes_requests(&self, channel: &super::Channel) -> bool {
-        self.runtime_configuration(Some(&channel.project_root), None)
-            .is_ok_and(|resolved| {
-                !super::vision_decisions(channel, &resolved.config.visions).is_empty()
-            })
+        let runnable = !self.paused_in(&channel.id, &channel.chief)
+            && self
+                .visions_budget_gate(&channel.chief, &channel.id)
+                .is_none();
+        runnable
+            && self
+                .runtime_configuration(Some(&channel.project_root), None)
+                .is_ok_and(|resolved| {
+                    !super::vision_decisions(channel, &resolved.config.visions).is_empty()
+                })
     }
 
     /// Shows an answer to `request` in both its channels (`by` answered; empty for the person).

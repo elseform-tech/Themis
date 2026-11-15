@@ -480,3 +480,43 @@ fn a_second_request_waits_for_the_first_result() {
         .visions_request(&sink(), release, juno, api, "Now the pancake page")
         .unwrap();
 }
+
+/// A request to a channel whose chief is paused is not taken on at arrival: nothing could run
+/// it, so it stays open for the person.
+#[test]
+fn a_paused_chief_does_not_take_a_request_on() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, tess) = &c.api;
+    c.state.visions_pause(tess, true).unwrap();
+    c.state
+        .visions_request(&sink(), release, juno, api, "Fix the export")
+        .unwrap();
+    assert!(of_type(&lines(&c.state, release), "request_answered").is_empty());
+}
+
+/// A request whose result never came back stops holding the pair after a while, so the chief
+/// may ask again.
+#[test]
+fn a_stuck_request_stops_blocking_the_next() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, _) = &c.api;
+    c.state
+        .visions_request(&sink(), release, juno, api, "Sketch a layout")
+        .unwrap();
+    let path = c.state.inner.visions_dir.join("requests.json");
+    let mut stored: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let hours_ago = chrono::Utc::now().timestamp_millis() - 7 * 3_600_000;
+    for request in stored.as_array_mut().unwrap() {
+        request["at_ms"] = hours_ago.into();
+        if let Some(answered) = request.get_mut("answered") {
+            answered["at_ms"] = hours_ago.into();
+        }
+    }
+    std::fs::write(&path, stored.to_string()).unwrap();
+    c.state
+        .visions_request(&sink(), release, juno, api, "Sketch it again")
+        .unwrap();
+}
