@@ -31,6 +31,12 @@ function clock(atMs: number): string {
   return new Date(atMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/** Why a Vision's own reply failed, as the server classifies it (`chat_failed` notices). */
+const FAILED_WHY: Record<string, string> = {
+  busy: ": the model's service was busy",
+  slow: ": the model didn't answer in time",
+};
+
 export type NoticeChat = "work" | "own" | "none";
 
 /** What a notice says about the Vision, in plain words. A work chat it names follows the sentence
@@ -43,7 +49,7 @@ export function noticeText(entry: Extract<Entry, { type: "notice" }>, vision: st
     case "paused": return say(`You paused ${vision}`);
     case "resumed": return say(`${vision} is back`);
     case "budget_reached": return say(`${vision} reached today's budget`, work);
-    case "chat_failed": return chat === "own" ? say(`${vision} couldn't finish its reply`) : say(`A chat ${vision} started failed`, work);
+    case "chat_failed": return chat === "own" ? say(`${vision} couldn't finish its reply${FAILED_WHY[entry.reason ?? ""] ?? ""}. Write here to try again`) : say(`A chat ${vision} started failed`, work);
     case "handed_back": return work ? say(`You handed this chat back to ${vision}`, true) : say(`You handed a chat back to ${vision}`);
     case "sandbox_unavailable": return say(`${vision} couldn't run: no sandbox is available`);
     case "budget_unknown": return say(`${vision} stopped: today's spend is unknown`);

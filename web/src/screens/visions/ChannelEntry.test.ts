@@ -14,7 +14,9 @@ describe("noticeText", () => {
     expect(said("budget_reached", "none")).toEqual({ text: "Rook reached today's budget.", chip: false });
     expect(said("budget_reached", "work")).toEqual({ text: "Rook reached today's budget", chip: true });
     expect(said("chat_failed", "work")).toEqual({ text: "A chat Rook started failed", chip: true });
-    expect(said("chat_failed", "own")).toEqual({ text: "Rook couldn't finish its reply.", chip: false });
+    expect(said("chat_failed", "own")).toEqual({ text: "Rook couldn't finish its reply. Write here to try again.", chip: false });
+    expect(said("chat_failed", "own", { reason: "busy" })).toEqual({ text: "Rook couldn't finish its reply: the model's service was busy. Write here to try again.", chip: false });
+    expect(said("chat_failed", "own", { reason: "slow" })).toEqual({ text: "Rook couldn't finish its reply: the model didn't answer in time. Write here to try again.", chip: false });
     expect(said("chat_failed", "none")).toEqual({ text: "A chat Rook started failed.", chip: false });
     expect(said("handed_back", "work")).toEqual({ text: "You handed this chat back to Rook", chip: true });
     expect(said("handed_back", "none")).toEqual({ text: "You handed a chat back to Rook.", chip: false });

@@ -162,6 +162,31 @@ pub fn vision_decisions(channel: &Channel, config: &VisionsConfig) -> Vec<Decisi
         .collect()
 }
 
+/// Why a Vision's own reply failed, in a word the app says plainly: `busy` (the model's service
+/// was rate limited or overloaded) or `slow` (it did not answer in time); none otherwise. Only
+/// the category leaves the error, never its text.
+pub(super) fn failure_kind(error: &str) -> Option<&'static str> {
+    let error = error.to_ascii_lowercase();
+    let busy = [
+        "429",
+        "rate limit",
+        "rate-limit",
+        "overloaded",
+        "529",
+        "too many requests",
+    ];
+    if busy.iter().any(|word| error.contains(word)) {
+        Some("busy")
+    } else if ["timed out", "timeout", "deadline"]
+        .iter()
+        .any(|word| error.contains(word))
+    {
+        Some("slow")
+    } else {
+        None
+    }
+}
+
 /// The Vision's system head for a run in `channel`, with one table row per decision as
 /// [`vision_decisions`] decides it.
 pub(super) fn vision_head(
@@ -616,7 +641,7 @@ impl AppState {
                     vision_id: Some(owner.vision_id.clone()),
                     thread_id: Some(owner.thread_id.clone()),
                     unpriced_requests: None,
-                    reason: None,
+                    reason: failure_kind(error).map(str::to_owned),
                 })
             }
             _ => None,
@@ -699,6 +724,23 @@ mod tests {
     /// The chief's head (printed so the request path can be read): who it is, its soul and
     /// team, the plain voice it speaks to the person in, the team calls with this channel's
     /// ids, no chat-driving calls, and the table of what its channel's level decides.
+    /// A failed reply says why in a word the app turns into plain words: the model's service
+    /// was busy (rate limited, overloaded), or it did not answer in time; otherwise nothing.
+    #[test]
+    fn a_failed_reply_says_why() {
+        assert_eq!(
+            failure_kind("provider error: 429 Too Many Requests"),
+            Some("busy")
+        );
+        assert_eq!(failure_kind("rate limited by the provider"), Some("busy"));
+        assert_eq!(
+            failure_kind("the service is overloaded (529)"),
+            Some("busy")
+        );
+        assert_eq!(failure_kind("request timed out after 120s"), Some("slow"));
+        assert_eq!(failure_kind("stream ended unexpectedly"), None);
+    }
+
     #[test]
     fn a_chief_head_lists_its_team_and_soul() {
         let head = head(&wren(), &hq());
