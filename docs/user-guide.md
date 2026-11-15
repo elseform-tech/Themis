@@ -605,12 +605,12 @@ worker cannot answer a held chat's questions, and no Vision ever switches on a h
 command-based MCP server. A question the team may not decide, or leaves unanswered, reaches you in
 the channel under the chief's name.
 
-**What a team decides.** A team has one of two levels: **Auto-review** (the default) or **Full
+**What a team decides.** A team has one of two levels: **Auto review** (the default) or **Full
 access**. Settings › Visions sets the level of new channels and of channels with none; each
 channel's details (and the chief's profile) set its own, and only you change it. At either level
 a chief decides a chat's questions itself, except three kinds that always come to you: deleting
 something, anything that leaves this computer, and spending money. The level sets how the team's
-chats run: at **Auto-review** in Auto, where a reviewer model judges each step against what you
+chats run: at **Auto review** in Auto, where a reviewer model judges each step against what you
 asked in the channel, so routine work goes on without you; at **Full access** in YOLO. Sandbox
 escapes, sensitive files, your deny rules and destructive steps stay yours at both levels. When a worker's chat needs your approval, the box waits in that
 worker's thread and the chief does not repeat it; a permission question shows in the channel.
@@ -637,7 +637,7 @@ most 16 KiB, where you write who it is and how it works; only chiefs and Atlas h
 **Level** and **Budget** with today's spend, the **Team** (each worker, role, model and status)
 and the **Routines**. Pause stops the chief; a worker can be paused by its chief in that channel
 only. Click the channel's name at the top left for its **details**: the topic, its **Level**
-(Auto-review or Full access), the daily budget, its members and Delete (the team's chats stop and become ordinary chats);
+(Auto review or Full access), the daily budget, its members and Delete (the team's chats stop and become ordinary chats);
 deleting one Vision is in the member rows. `# administration` has no level, member controls or
 Delete.
 
@@ -795,7 +795,7 @@ browsing, downloads and debugging, with per-site exceptions), Developer mode, th
 folder, and the browser's history and data; see [web tools](web-tools.md#permissions-settings--browser).
 It saves to the `browser` block of your `runtime.jsonc`.
 **Visions** sets the level of new channels and of channels with none (on a computer that cannot
-confine Visions, one line at the top says they can't run there): **Auto-review** (the default;
+confine Visions, one line at the top says they can't run there): **Auto review** (the default;
 the team's chats run in Auto) or **Full access** (YOLO). Three kinds of decision show a lock and
 always come to you at both levels: deleting something, anything that leaves this computer, and
 spending money; approvals stay yours at both levels. Below are the **Daily budget,

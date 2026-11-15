@@ -339,7 +339,6 @@ describe("followVisions", () => {
 /** The shared fixture before the server lane's two-levels change still carries `autonomy`,
  *  `custom` and `full_access`; the shape checks below name the new contract and run once the
  *  fixture does. Remove this gate when the fixture has `level`. */
-const legacyFixture = "autonomy" in fixture.channel;
 
 describe("wire fixture", () => {
   it("holds every channel entry with exactly the fields the app's types name", () => {
@@ -359,7 +358,7 @@ describe("wire fixture", () => {
     expect(fixture.owner.kind in OWNED_KINDS && fixture.owner.hold in HOLDS).toBe(true);
   });
 
-  it.skipIf(legacyFixture)("holds each shape with exactly the fields the app's types name", () => {
+  it("holds each shape with exactly the fields the app's types name", () => {
     const keys = (value: object) => Object.keys(value).sort();
     const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "color", "model", "accessory", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
@@ -377,7 +376,7 @@ describe("wire fixture", () => {
     expect(keys(fixture.question)).toEqual([...questionKeys].sort());
   });
 
-  it.skipIf(legacyFixture)("holds a proposal and what it set up with exactly the fields the app's types name", () => {
+  it("holds a proposal and what it set up with exactly the fields the app's types name", () => {
     const keys = (value: object) => Object.keys(value).sort();
     const entries = (fixture.lines as ChannelLine[]).map(line => line.entry);
     const proposed = entries.find(entry => entry.type === "proposal")!;
