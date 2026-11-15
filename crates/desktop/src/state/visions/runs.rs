@@ -428,6 +428,9 @@ impl AppState {
         // stack holds every one an `await` builds in place.
         let started =
             Box::pin(self.visions_run_start(sink, &channel_id, &vision_id, &reasons)).await;
+        if started.is_ok() {
+            self.visions_watch_silent(&channel_id, &vision_id, &reasons);
+        }
         match started {
             Ok((thread_id, run_id)) => self.visions_note(
                 "run_started",

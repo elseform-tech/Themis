@@ -268,6 +268,7 @@ pub(super) async fn dispatch(
     method: &str,
     args: Value,
 ) -> Result<Value, String> {
+    state.visions_acted(&scope.channel_id, &scope.vision_id, method);
     if admin::ADMIN_WRITES.contains(&method) {
         return admin::dispatch(state, sink, scope, method, &args).await;
     }

@@ -405,6 +405,9 @@ pub(crate) struct VisionsCache {
     awake_in_quiet: std::collections::HashSet<String>,
     /// The workers each chief (channel, chief) tasked in its running turn, for its message.
     tasked: HashMap<(String, String), Vec<String>>,
+    /// Workers in a turn a task woke (channel, worker), and those that acted in it.
+    watched: std::collections::HashSet<(String, String)>,
+    acted: std::collections::HashSet<(String, String)>,
     /// Why the move to teams could not run (file, event), for the log; it is tried again.
     conversion_failed: Option<(&'static str, &'static str)>,
 }

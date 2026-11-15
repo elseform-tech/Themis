@@ -61,6 +61,8 @@ pub enum WakeReason {
     RequestAnswered(String),
     /// One of its routines is due (its id and instruction).
     Routine(String, String),
+    /// A worker it tasked ended that turn without acting (the worker).
+    WorkerSilent(String),
 }
 
 impl WakeReason {
@@ -80,6 +82,7 @@ impl WakeReason {
             WakeReason::Request(_) => "request",
             WakeReason::RequestAnswered(_) => "request_answered",
             WakeReason::Routine(..) => "routine",
+            WakeReason::WorkerSilent(_) => "worker_silent",
         }
     }
 
@@ -91,7 +94,8 @@ impl WakeReason {
             | WakeReason::WorkerNote(..)
             | WakeReason::Request(_)
             | WakeReason::RequestAnswered(_)
-            | WakeReason::Routine(..) => None,
+            | WakeReason::Routine(..)
+            | WakeReason::WorkerSilent(_) => None,
             WakeReason::ChatFinished(thread)
             | WakeReason::ChatFailed(thread)
             | WakeReason::ChatStopped(thread)
@@ -114,7 +118,9 @@ impl WakeReason {
             }
             WakeReason::Tasked(seq) => format!("{} {seq}", self.label()),
             WakeReason::WorkerNote(worker, seq) => format!("{} {worker} {seq}", self.label()),
-            WakeReason::Request(id) | WakeReason::RequestAnswered(id) => {
+            WakeReason::Request(id)
+            | WakeReason::RequestAnswered(id)
+            | WakeReason::WorkerSilent(id) => {
                 format!("{} {id}", self.label())
             }
             WakeReason::Routine(id, instruction) => format!("{} {id}: {instruction}", self.label()),
@@ -394,6 +400,63 @@ impl AppState {
             .unwrap_or_else(|| owner.vision_id.clone())
     }
 
+    /// A worker woken with a task: its turn is watched for any act (see [`Self::visions_acted`]).
+    pub(crate) fn visions_watch_silent(
+        &self,
+        channel_id: &str,
+        vision_id: &str,
+        reasons: &[WakeReason],
+    ) {
+        if !reasons
+            .iter()
+            .any(|reason| matches!(reason, WakeReason::Tasked(_)))
+        {
+            return;
+        }
+        let key = (channel_id.to_owned(), vision_id.to_owned());
+        let mut cache = self.visions_cache();
+        cache.acted.remove(&key);
+        cache.watched.insert(key);
+    }
+
+    /// A Vision made a call that acts (anything but a read) in its running turn.
+    pub(crate) fn visions_acted(&self, channel_id: &str, vision_id: &str, method: &str) {
+        if method.starts_with("list_") || method.starts_with("get_") {
+            return;
+        }
+        let key = (channel_id.to_owned(), vision_id.to_owned());
+        self.visions_cache().acted.insert(key);
+    }
+
+    /// A watched worker's turn finished without an act: its chief is woken, so the task does
+    /// not stall in silence.
+    fn visions_silent_check(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        owner: &Owner,
+        terminal: &ThreadEvent,
+    ) {
+        let key = (owner.channel_id.clone(), owner.vision_id.clone());
+        let silent = {
+            let mut cache = self.visions_cache();
+            let acted = cache.acted.remove(&key);
+            cache.watched.remove(&key) && !acted
+        };
+        let finished = matches!(
+            terminal,
+            ThreadEvent::Finished { .. } | ThreadEvent::Incomplete { .. }
+        );
+        if !silent || !finished || !self.is_worker(owner) {
+            return;
+        }
+        let chief = self.chief_of(owner);
+        if chief == owner.vision_id {
+            return;
+        }
+        let reason = WakeReason::WorkerSilent(owner.vision_id.clone());
+        self.visions_wake(sink, &owner.channel_id, &chief, reason);
+    }
+
     /// Whether `owner`'s chat belongs to a worker of its channel (not to the chief).
     fn is_worker(&self, owner: &Owner) -> bool {
         self.channel_get(&owner.channel_id).is_some_and(|channel| {
@@ -640,6 +703,7 @@ impl AppState {
     fn visions_chat_ended(&self, sink: &Arc<dyn EventSink>, owner: &Owner, terminal: &ThreadEvent) {
         let (vision_id, channel_id) = (owner.vision_id.as_str(), owner.channel_id.as_str());
         self.visions_post_reply(owner, terminal);
+        self.visions_silent_check(sink, owner, terminal);
         let started = self.visions_cache().wakes.ended(vision_id, channel_id);
         if let Some(started) = started {
             self.visions_pass_on_left_open(owner, started);

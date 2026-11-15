@@ -307,3 +307,38 @@ async fn settings_write_the_team_limits_and_quiet_hours() {
     assert!(!same.status.success());
     fx.shut_down().await;
 }
+
+/// The whole loop through the real server: the chief tasks a worker, the worker really runs, and
+/// when its turn ends without doing anything (the model only says "on it", as a free model once
+/// did) the server wakes the chief, whose own turn then speaks in the channel. Without that wake
+/// the task would stall with nothing in the channel.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_does_nothing_brings_its_chief_back() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let provider = quick_provider().await;
+    fx.use_provider(&provider).await;
+    let (channel, juno, rook) = release_team(&fx);
+    // The chief's credential, as its run would hold it (wakes stay on: the worker really runs).
+    let chat = fx.thread().await;
+    fx.own(&chat, &juno, &channel, OwnedKind::VisionChat);
+    let mut scope = themis_core::agent_cli::RunScope::new(&fx.project, None);
+    scope.vision = Some(fx.state.visions_scope(&juno, &channel).unwrap());
+    let chief = themis_core::agent_cli::issue(&chat, "vision-run", &scope)
+        .expect("issued")
+        .env()[0]
+        .1
+        .clone();
+    fx.agent_call_ok(
+        &chief,
+        "assign_task",
+        json!({"workerId": rook, "task": "Write omelette.md"}),
+    );
+    wait_until(|| async {
+        fx.entries(&channel)
+            .iter()
+            .any(|entry| entry["type"] == "vision" && entry["vision_id"] == juno.as_str())
+    })
+    .await;
+    fx.shut_down().await;
+}

@@ -254,3 +254,43 @@ fn a_chief_message_lists_the_workers_it_tasked() {
     assert_eq!(said[0]["tasked"], serde_json::json!([s.ada, "bo"]), "{said:?}");
     assert!(said[1].get("tasked").is_none(), "{said:?}");
 }
+
+/// Ada's turn, woken for `reason`, ends (after the call `acted`, if any); who was woken then.
+fn adas_turn_ends(reason: WakeReason, acted: Option<&str>) -> (Setup, Vec<String>) {
+    let s = setup(true);
+    let chat = Owner {
+        thread_id: "ada-chat".into(),
+        vision_id: s.ada.clone(),
+        channel_id: s.channel.clone(),
+        kind: OwnedKind::VisionChat,
+        hold: Hold::None,
+    };
+    s.state.owner_set(chat).unwrap();
+    s.state.visions_watch_silent(&s.channel, &s.ada, &[reason]);
+    if let Some(method) = acted {
+        s.state.visions_acted(&s.channel, &s.ada, method);
+    }
+    s.state.visions_after_run(&sink(), "ada-chat", &finished());
+    let woken = started(&s.state);
+    (s, woken)
+}
+
+/// A worker its chief tasked that ends its turn without acting (no chat started or written to,
+/// no report) wakes its chief, so the task does not stall in silence.
+#[test]
+fn a_tasked_worker_that_does_nothing_wakes_its_chief() {
+    let (s, woken) = adas_turn_ends(WakeReason::Tasked(1), None);
+    assert!(woken.contains(&s.wren), "{woken:?}");
+}
+
+/// One that acted (here: reported to its chief), or one woken for something other than a task
+/// (its chat finished), wakes no one as silent; a read is no act.
+#[test]
+fn only_a_tasked_worker_that_did_nothing_is_silent() {
+    let (s, woken) = adas_turn_ends(WakeReason::Tasked(1), Some("report"));
+    assert!(!woken.contains(&s.wren), "{woken:?}");
+    let (s, woken) = adas_turn_ends(WakeReason::ChatFinished("w".into()), None);
+    assert!(!woken.contains(&s.wren), "{woken:?}");
+    let (s, woken) = adas_turn_ends(WakeReason::Tasked(1), Some("get_team_log"));
+    assert!(woken.contains(&s.wren), "{woken:?}");
+}
