@@ -65,15 +65,12 @@ async fn a_paused_chief_may_still_decline_but_not_accept() {
     let (tess, api) = fx.chief_and_channel_in("Tess", "api", "custom");
     let (_, asker) = fx.vision_run(&juno, &release).await;
     let (_, helper) = fx.vision_run(&tess, &api).await;
-    let ask = |what: &str| {
-        let asked = fx.agent_call_ok(
-            &asker,
-            "request_channel",
-            json!({"channelId": api, "ask": what}),
-        );
-        asked["requestId"].as_str().unwrap().to_owned()
-    };
-    let (first, second) = (ask("one"), ask("two"));
+    let asked = fx.agent_call_ok(
+        &asker,
+        "request_channel",
+        json!({"channelId": api, "ask": "one"}),
+    );
+    let first = asked["requestId"].as_str().unwrap().to_owned();
     fx.call_ok("pause_vision", json!({"visionId": tess, "paused": true}));
     let accepted = fx.agent_call(
         &helper,
@@ -84,7 +81,7 @@ async fn a_paused_chief_may_still_decline_but_not_accept() {
     fx.agent_call_ok(
         &helper,
         "answer_request",
-        json!({"requestId": second, "accept": false}),
+        json!({"requestId": first, "accept": false}),
     );
     fx.shut_down().await;
 }

@@ -129,7 +129,7 @@ impl AppState {
         if to.chief.is_empty() {
             return Err(format!("# {} has no chief of staff to ask", to.name));
         }
-        let id = self.record_request(&from, &to.id)?;
+        let id = self.record_request(&from, &to.id, true)?;
         // Recorded: the posts are best effort, so a channel that cannot record a line still gets
         // its wake (the failure is logged by the store).
         let _ = self.channel_post(
@@ -176,8 +176,14 @@ impl AppState {
     }
 
     /// Records a request from `from` to `to_id` and returns its id, refused at `from`'s daily
-    /// cap (counted and recorded under one lock, so two calls cannot both pass it).
-    fn record_request(&self, from: &super::Channel, to_id: &str) -> Result<String, String> {
+    /// cap, and with `one_open` while a request between the two still waits for its result
+    /// (checked and recorded under one lock, so two calls cannot both pass).
+    fn record_request(
+        &self,
+        from: &super::Channel,
+        to_id: &str,
+        one_open: bool,
+    ) -> Result<String, String> {
         let cap = self
             .runtime_configuration(Some(&from.project_root), None)?
             .config
@@ -199,6 +205,18 @@ impl AppState {
                 themis_core::prompts::AGENT_CLI_REQUEST_CAP,
                 &[("cap", &cap.to_string())],
             ));
+        }
+        let waiting = |request: &&Request| {
+            request.from_channel == from.id
+                && request.to_channel == to_id
+                && !request.result_sent
+                && request
+                    .answered
+                    .as_ref()
+                    .is_none_or(|answered| answered.accepted)
+        };
+        if one_open && requests.iter().any(|request| waiting(&request)) {
+            return Err(themis_core::prompts::AGENT_CLI_REQUEST_ALREADY_OPEN.to_owned());
         }
         requests.push(Request {
             id: id.clone(),
@@ -230,7 +248,7 @@ impl AppState {
             .into_iter()
             .find(|channel| channel.name == ADMINISTRATION)
             .ok_or("This project has no # administration yet")?;
-        let id = self.record_request(&from, &hq.id)?;
+        let id = self.record_request(&from, &hq.id, false)?;
         let _ = self.channel_post(
             &hq.id,
             chief,

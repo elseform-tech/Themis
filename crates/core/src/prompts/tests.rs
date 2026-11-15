@@ -347,6 +347,11 @@ const ALL: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (
+        AGENT_CLI_REQUEST_ALREADY_OPEN,
+        "agent-cli-request-already-open",
+        &[],
+    ),
+    (
         AGENT_CLI_VISION_OVER_BUDGET,
         "agent-cli-vision-over-budget",
         &[],

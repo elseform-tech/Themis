@@ -238,9 +238,15 @@ fn requests_between_channels_stop_at_the_daily_cap() {
         .path()
         .with_file_name("runtime.jsonc");
     std::fs::write(&runtime, r#"{"visions": {"requests_per_day": 2}}"#).unwrap();
+    let tess = &c.api.1;
     for ask in ["one", "two"] {
-        c.state
+        let id = c
+            .state
             .visions_request(&sink(), release, juno, api, ask)
+            .unwrap();
+        // Its result came back, so the next request to # api is not refused as still open.
+        c.state
+            .visions_send_result(&sink(), api, tess, &id, "done")
             .unwrap();
     }
     for ask in ["three", "four"] {
@@ -447,4 +453,30 @@ fn a_result_reaches_the_asking_channel() {
         .state
         .visions_send_result(&sink(), api, tess, &asked, "again")
         .is_err());
+}
+
+/// One open request per pair of channels: asking the same channel again before its result
+/// came back is refused (the chief waits for it); once the result is in, it may ask again.
+#[test]
+fn a_second_request_waits_for_the_first_result() {
+    let c = company();
+    let (release, juno) = &c.release;
+    let (api, tess) = &c.api;
+    let first = c
+        .state
+        .visions_request(&sink(), release, juno, api, "Sketch a layout")
+        .unwrap();
+    let again = c
+        .state
+        .visions_request(&sink(), release, juno, api, "Sketch a layout, please");
+    assert_eq!(
+        again.unwrap_err(),
+        themis_core::prompts::AGENT_CLI_REQUEST_ALREADY_OPEN
+    );
+    c.state
+        .visions_send_result(&sink(), api, tess, &first, "Done")
+        .unwrap();
+    c.state
+        .visions_request(&sink(), release, juno, api, "Now the pancake page")
+        .unwrap();
 }

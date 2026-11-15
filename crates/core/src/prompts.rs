@@ -501,6 +501,9 @@ pub const AGENT_CLI_REQUEST_CAP: &str =
 /// The app server's answer to a chief accepting a request beyond its channel's level.
 pub const AGENT_CLI_REQUEST_ABOVE_LEVEL: &str =
     include_str!("../builtins/prompts/agent-cli-request-above-level.md");
+/// The app server's answer to a chief asking a channel again before its result came back.
+pub const AGENT_CLI_REQUEST_ALREADY_OPEN: &str =
+    include_str!("../builtins/prompts/agent-cli-request-already-open.md");
 /// The app server's answer to a Vision answering a question already passed on to the person.
 pub const AGENT_CLI_QUESTION_PASSED_ON: &str =
     include_str!("../builtins/prompts/agent-cli-question-passed-on.md");

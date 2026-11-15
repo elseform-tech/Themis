@@ -1,0 +1,1 @@
+Themis refused this call: your channel already has a request open with that channel, and its result has not come back yet. Wait for it; you are woken when it arrives. Tell the person in your channel message that you are waiting on it.
