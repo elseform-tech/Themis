@@ -1,0 +1,1 @@
+Themis refused this call: this channel already sent {{cap}} requests to other channels today, the daily limit. Nothing was sent. Tell the person in your channel message what you wanted to ask.

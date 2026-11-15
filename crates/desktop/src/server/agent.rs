@@ -49,7 +49,7 @@ const ALLOWED: &[&str] = &[
 ];
 
 /// Methods only for the agent's own chat: they need its `threadId`.
-const OWN_CHAT: &[&str] = &[
+pub(crate) const OWN_CHAT: &[&str] = &[
     "get_thread",
     "get_thread_history_page",
     "get_thread_tasks",
@@ -154,14 +154,17 @@ pub(crate) enum Reason {
     Paused,
     /// A Vision's answer to a permission question (an Auto block, a step awaiting approval).
     PermissionQuestion,
-    /// A Vision's answer to a question its autonomy leaves to the person.
-    AboveAutonomy,
+    /// A Vision's answer to a question whose decision is always the person's (`delete`,
+    /// `external`, `spend`).
+    LockedDecision,
     /// A Vision's message dressed as an answer (it starts with an answer marker).
     AnswerMarker,
     /// A Vision's call that would start or send something after it reached today's budget.
     OverBudget,
     /// The same while its spend today cannot be checked (counted as reached).
     BudgetUnknown,
+    /// A team call outside the caller's team (see `vision::chief`).
+    NotYourTeam,
 }
 
 impl Reason {
@@ -176,10 +179,11 @@ impl Reason {
             Self::HeldByPerson => "held_by_person",
             Self::Paused => "paused",
             Self::PermissionQuestion => "permission_question",
-            Self::AboveAutonomy => "above_autonomy",
+            Self::LockedDecision => "locked_decision",
             Self::AnswerMarker => "answer_marker",
             Self::OverBudget => "over_budget",
             Self::BudgetUnknown => "budget_unknown",
+            Self::NotYourTeam => "not_your_team",
         }
     }
 }
@@ -917,6 +921,7 @@ mod tests {
                     channel_id: "c".into(),
                     project_root: PathBuf::from("/no/such/project"),
                     decides: Vec::new(),
+                    chief: false,
                 });
                 let work = format!("work-{index}");
                 owners.insert(

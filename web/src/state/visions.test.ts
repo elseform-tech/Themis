@@ -2,8 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Question, ThreadInfo } from "../lib/types";
 import {
   APPROVAL_MODES, ENTRY_FIELDS, HOLDS, NOTICE_KINDS, OWNED_KINDS,
-  type ChannelEntry, type ChannelInfo, type ChannelLine, type ChannelPage, type OwnedChat, type Proposal, type ProposalChange, type SetUpItem, type VisionInfo, type VisionsChange,
-} from "../lib/visions";
+  type ChannelEntry, type ChannelInfo, type ChannelLine, type ChannelPage, type OwnedChat, type Proposal, type ProposalChange, type SetUpItem, type VisionInfo, type VisionsChange, type ProposalMember, type ProposalTeam } from "../lib/visions";
 import fixture from "../lib/visions.fixture.json";
 import { appReducer, initialState, reducer, type AppState } from "./reducer";
 import {
@@ -20,7 +19,7 @@ import {
 } from "./visions";
 
 const VISION: VisionInfo = {
-  id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false,
+  id: "v1", name: "Wren", role: "", color: "teal", soul: "", paused: false,
   revision: "r1", over_budget: false, vision_chats: [], needs: 0, sorry: false,
 };
 
@@ -33,7 +32,7 @@ function owned(id: string, channelId: string, visionId = "v1", extra: Partial<Th
 }
 
 function channel(id: string, root = "/repo"): ChannelInfo {
-  return { id, name: id, topic: "", project_root: root, approval_mode: "custom", members: ["v1"], revision: "c1" };
+  return { id, name: id, topic: "", project_root: root, members: ["v1"], chief: "v1", revision: "c1" };
 }
 
 function line(seq: number, entry: ChannelEntry = { type: "person", text: `line ${seq}` }): ChannelLine {
@@ -209,10 +208,10 @@ describe("reloadVisions", () => {
   });
 
   it("a first load lists the channels before the Visions, so the admin they make is listed", async () => {
-    // As the server does: listing a project's channels makes Atlas and # hq.
+    // As the server does: listing a project's channels makes Atlas and # administration.
     let made = false;
     const atlas = { ...VISION, id: "admin", name: "Atlas" };
-    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "hq", members: ["admin"] }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
+    const api = { ...bridge(), listChannels: vi.fn(async (root: string) => { made = true; return [{ ...channel("h1", root), name: "administration", members: ["admin"], chief: "admin" }]; }), listVisions: vi.fn(async () => made ? [atlas] : []) };
     const dispatch = vi.fn();
     await reloadVisions(api, {}, withChannel([], []), dispatch, ["/repo"]);
     expect(dispatch).toHaveBeenCalledWith({ type: "visions/loaded", visions: [atlas] });
@@ -221,7 +220,7 @@ describe("reloadVisions", () => {
   it("a Vision alone re-lists only the projects it has channels in", async () => {
     const api = bridge();
     let state = withChannel([], []);
-    state = reducer(state, { type: "visions/loaded", projectRoot: "/other", channels: [{ ...channel("c9", "/other"), members: ["v2"] }] });
+    state = reducer(state, { type: "visions/loaded", projectRoot: "/other", channels: [{ ...channel("c9", "/other"), members: ["v2"], chief: "v2" }] });
     await reloadVisions(api, { vision_id: "v1" }, state, vi.fn());
     expect(api.listChannels).toHaveBeenCalledTimes(1);
     expect(api.listChannels).toHaveBeenCalledWith("/repo");
@@ -236,6 +235,34 @@ describe("reloadVisions", () => {
     expect(await follower.loadOlder("c1")).toBe(true);
     api.getChannelPage = vi.fn(async () => ({ entries: [line(3)], next_before: 2 }));
     expect(await follower.loadOlder("c1")).toBe(false);
+  });
+
+  it("a channel read keeps its chats' answers, and an answer arriving moves its question there", async () => {
+    const api = bridge();
+    api.listQuestions = vi.fn(async (): Promise<Question[]> => [
+      { id: "q1", run_id: "r", question: "?", blocking: false, asked_at: 1 },
+      { id: "q0", run_id: "r", question: "?", blocking: false, asked_at: 0, answer: "Skip it" },
+    ]);
+    const dispatch = vi.fn();
+    let state = withChannel([], []);
+    await reloadVisions(api, { channel_id: "c1" }, state, dispatch);
+    state = apply(state, dispatch);
+    expect(state.visions.questions).toEqual({ w1: ["q1"] });
+    expect(state.visions.answers).toEqual({ w1: { q0: "Skip it" } });
+    state = appReducer(state, { type: "thread/event", envelope: { thread_id: "w1", run_id: "r", event: { kind: "question_answered", id: "q1", answer: "Allow once" } } });
+    expect(state.visions.questions).toEqual({ w1: [] });
+    expect(state.visions.answers).toEqual({ w1: { q0: "Skip it", q1: "Allow once" } });
+  });
+
+  it("older lines read the questions of chats not read yet", async () => {
+    const api = bridge();
+    let state = withChannel([line(5), line(6)], []);
+    const dispatch = (action: Parameters<typeof reducer>[1]) => { state = reducer(state, action); };
+    const follower = followVisions(api, () => state, dispatch, () => false);
+    api.getChannelPage = vi.fn(async () => ({ entries: [line(3, { type: "passed_on", vision_id: "v1", thread_id: "w7", question_id: "q1", decision: "scope", question: "?" })], next_before: null }));
+    await follower.loadOlder("c1");
+    expect(api.listQuestions).toHaveBeenCalledWith("w7");
+    expect(state.visions.questions).toEqual({ w7: ["q1"] });
   });
 
   it("one channel failing to read keeps the others", async () => {
@@ -309,6 +336,10 @@ describe("followVisions", () => {
   });
 });
 
+/** The shared fixture before the server lane's two-levels change still carries `autonomy`,
+ *  `custom` and `full_access`; the shape checks below name the new contract and run once the
+ *  fixture does. Remove this gate when the fixture has `level`. */
+
 describe("wire fixture", () => {
   it("holds every channel entry with exactly the fields the app's types name", () => {
     const lines = fixture.lines as ChannelLine[];
@@ -324,16 +355,16 @@ describe("wire fixture", () => {
     expect([...fixture.holds].sort()).toEqual(Object.keys(HOLDS).sort());
     expect([...fixture.owned_kinds].sort()).toEqual(Object.keys(OWNED_KINDS).sort());
     expect([...fixture.approval_modes].sort()).toEqual(Object.keys(APPROVAL_MODES).sort());
-    expect(fixture.owner.kind in OWNED_KINDS && fixture.owner.hold in HOLDS && fixture.channel.approval_mode in APPROVAL_MODES).toBe(true);
+    expect(fixture.owner.kind in OWNED_KINDS && fixture.owner.hold in HOLDS).toBe(true);
   });
 
   it("holds each shape with exactly the fields the app's types name", () => {
     const keys = (value: object) => Object.keys(value).sort();
-    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "shape", "color", "model", "autonomy", "custom", "daily_budget_usd", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
+    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "color", "model", "accessory", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
     const chatKeys: Array<keyof VisionInfo["vision_chats"][number]> = ["thread_id", "channel_id", "running"];
     expect(keys(fixture.vision.vision_chats[0]!)).toEqual([...chatKeys].sort());
-    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "approval_mode", "members", "revision", "needs"];
+    const channelKeys: Array<keyof ChannelInfo> = ["id", "name", "topic", "project_root", "members", "chief", "level", "daily_budget_usd", "revision", "needs"];
     expect(keys(fixture.channel)).toEqual([...channelKeys].sort());
     const ownerKeys: Array<keyof OwnedChat["owner"]> = ["thread_id", "vision_id", "channel_id", "kind", "hold"];
     expect(keys(fixture.owner)).toEqual([...ownerKeys].sort());
@@ -352,13 +383,18 @@ describe("wire fixture", () => {
     const applied = entries.find(entry => entry.type === "proposal_applied")!;
     if (proposed.type !== "proposal" || applied.type !== "proposal_applied") throw new Error("missing");
     const { proposal } = proposed;
-    const proposalKeys: Array<keyof Proposal> = ["summary", "channels", "visions", "changes"];
+    const proposalKeys: Array<keyof Proposal> = ["summary", "channels", "visions", "changes", "team", "hire"];
     expect(keys(proposal)).toEqual([...proposalKeys].sort());
+    const teamKeys: Array<keyof ProposalTeam> = ["channel", "chief", "workers", "daily_budget_usd"];
+    expect(keys(proposal.team!)).toEqual([...teamKeys].sort());
+    const memberKeys: Array<keyof ProposalMember> = ["name", "role", "color", "accessory", "soul", "model"];
+    expect(keys(proposal.team!.chief)).toEqual([...memberKeys].sort());
+    expect(keys(proposal.hire!)).toEqual(["channel", "worker"]);
     const channelKeys: Array<keyof Proposal["channels"][number]> = ["name", "topic", "members"];
     expect(keys(proposal.channels[0]!)).toEqual([...channelKeys].sort());
-    const visionKeys: Array<keyof Proposal["visions"][number]> = ["name", "role", "shape", "color", "model", "autonomy", "daily_budget_usd"];
+    const visionKeys: Array<keyof Proposal["visions"][number]> = ["name", "role", "color", "model", "daily_budget_usd"];
     expect(keys(proposal.visions[0]!)).toEqual([...visionKeys].sort());
-    const changeKeys: Array<keyof ProposalChange> = ["vision", "channel", "name", "role", "topic", "paused", "autonomy", "daily_budget_usd", "add_members", "remove_members"];
+    const changeKeys: Array<keyof ProposalChange> = ["vision", "channel", "name", "role", "topic", "paused", "daily_budget_usd", "add_members", "remove_members"];
     expect([...new Set(proposal.changes.flatMap(keys))].sort()).toEqual([...changeKeys].sort());
     const itemKeys: Array<keyof SetUpItem> = ["kind", "id", "name", "action"];
     expect(keys(applied.items[0]!)).toEqual([...itemKeys].sort());
@@ -367,7 +403,7 @@ describe("wire fixture", () => {
 });
 
 describe("visions follow the project", () => {
-  it("a project switched from plain chat lands Visions on that project's # hq", () => {
+  it("a project switched from plain chat lands Visions on that project's # administration", () => {
     let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
     state = reducer(state, { type: "visions/loaded", projectRoot: "/q", channels: [channel("c2", "/q")] });
     state = appReducer({ ...state, activeProjectRoot: "/p", projects: [{ root: "/p", name: "P", is_git: true }, { root: "/q", name: "Q", is_git: true }] }, { type: "ui/view", view: "visions" });
@@ -376,9 +412,21 @@ describe("visions follow the project", () => {
     state = appReducer(state, { type: "project/selected", root: "/q" });
     state = appReducer(state, { type: "ui/view", view: "visions" });
     expect(state.visions.open).toMatchObject({ channelId: null, chatId: null });
-    // Back to the first project: still its own # hq, nothing claims a channel elsewhere is gone.
+    // Back to the first project: still its own # administration, nothing claims a channel elsewhere is gone.
     state = appReducer(state, { type: "project/selected", root: "/p" });
     expect(state.visions.open.channelId).toBeNull();
+  });
+
+  it("opening the channel a chief's profile stands in for shows the channel again", () => {
+    let state = reducer(initialState, { type: "visions/loaded", visions: [VISION], projectRoot: "/p", channels: [channel("c1", "/p")] });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    state = appReducer(state, { type: "visions/panel", panel: { kind: "vision", visionId: "v1" } });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    expect(state.visions.open.panel).toBeNull();
+    // A worker's thread and the details sit beside the channel: opening it again keeps them.
+    state = appReducer(state, { type: "visions/panel", panel: { kind: "worker", visionId: "v1" } });
+    state = appReducer(state, { type: "visions/open", channelId: "c1" });
+    expect(state.visions.open.panel).toEqual({ kind: "worker", visionId: "v1" });
   });
 
   it("a project change keeps the open channel when it belongs there", () => {

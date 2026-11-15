@@ -1,5 +1,5 @@
-//! The budget's notices, each kind once a local day per Vision in each of its channels, and
-//! loading the price catalog.
+//! The budget's notices, each kind once a local day per channel (under its chief), and loading
+//! the price catalog.
 //!
 //! A notice counts as given in a channel once that channel recorded it; the day's given notices
 //! are then saved in `budget_notices.json`, so a restart does not post them again. A channel
@@ -26,9 +26,9 @@ const RETRY_AFTER: Duration = Duration::from_secs(60);
 /// How long after a try loading the price catalog is tried again.
 const CATALOG_RETRY: Duration = Duration::from_secs(60);
 /// Longest wait for the catalog to load.
-const CATALOG_WAIT: Duration = Duration::from_secs(30);
+pub(super) const CATALOG_WAIT: Duration = Duration::from_secs(30);
 
-/// The notices given on `day`, as `{kind}:{vision id}:{channel id}` keys.
+/// The notices given on `day`, as `{kind}:{channel id}` keys.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Given {
     day: String,
@@ -49,7 +49,7 @@ fn today() -> String {
 
 impl AppState {
     /// The reached cap, or why spend cannot be known, once a day.
-    pub(super) fn visions_notice_over(&self, vision_id: &str, over: Over) {
+    pub(super) fn visions_notice_over(&self, channel_id: &str, over: Over) {
         let notice = match over {
             Over::Unknown(why) => Notice {
                 kind: NoticeKind::BudgetUnknown,
@@ -57,91 +57,101 @@ impl AppState {
                 unpriced: None,
                 reason: Some(why.label()),
             },
-            Over::Vision { unpriced } | Over::Overall { unpriced } => Notice {
+            Over::Channel { unpriced } | Over::Overall { unpriced } => Notice {
                 kind: NoticeKind::BudgetReached,
                 key: "budget_reached".to_owned(),
                 unpriced: Some(unpriced),
                 reason: None,
             },
         };
-        if self.visions_notice_once(vision_id, &notice) {
+        if self.visions_notice_once(channel_id, &notice) {
             let event = match over {
                 Over::Unknown(_) => "budget_unknown",
                 _ => "budget_reached",
             };
             self.visions_note(
                 event,
-                json!({"vision_id": vision_id, "overall": matches!(over, Over::Overall { .. }),
+                json!({"channel_id": channel_id, "overall": matches!(over, Over::Overall { .. }),
                     "reason": notice.reason, "unpriced_requests": notice.unpriced}),
             );
         }
     }
 
+    /// The channel sent today's last allowed request between channels: once a day, under its
+    /// chief, retried like any notice when the channel could not record it.
+    pub(in crate::state::visions) fn visions_notice_request_cap(&self, channel_id: &str) -> bool {
+        let notice = Notice {
+            kind: NoticeKind::RequestCap,
+            key: "request_cap".to_owned(),
+            unpriced: None,
+            reason: None,
+        };
+        self.visions_notice_once(channel_id, &notice)
+    }
+
     /// Today's first requests without a price, once a day.
-    pub(super) fn visions_notice_unpriced(&self, vision_id: &str, unpriced: u64) {
+    pub(super) fn visions_notice_unpriced(&self, channel_id: &str, unpriced: u64) {
         let notice = Notice {
             kind: NoticeKind::Unpriced,
             key: "unpriced".to_owned(),
             unpriced: Some(unpriced),
             reason: None,
         };
-        if self.visions_notice_once(vision_id, &notice) {
+        if self.visions_notice_once(channel_id, &notice) {
             self.visions_note(
                 "budget_unpriced",
-                json!({"vision_id": vision_id, "unpriced_requests": unpriced}),
+                json!({"channel_id": channel_id, "unpriced_requests": unpriced}),
             );
         }
     }
 
-    /// Posts `notice` in each of the Vision's channels that has not recorded it today; true
-    /// when one recorded it now. A channel that could not record it is tried again after
-    /// [`RETRY_AFTER`], and only that channel.
-    fn visions_notice_once(&self, vision_id: &str, notice: &Notice<'_>) -> bool {
-        let mut posted = false;
-        let mut failed = false;
-        for channel in self.channels_all() {
-            if !channel.members.iter().any(|member| member == vision_id) {
-                continue;
-            }
-            let key = format!("{}:{vision_id}:{}", notice.key, channel.id);
-            if !self.visions_notice_claim(&key) {
-                continue;
-            }
-            let entry = ChannelEntry::Notice {
-                kind: notice.kind,
-                vision_id: Some(vision_id.to_owned()),
-                thread_id: None,
-                unpriced_requests: notice.unpriced,
-                reason: notice.reason.map(str::to_owned),
-            };
-            let recorded = self.channel_post(&channel.id, vision_id, entry).is_ok();
+    /// Posts `notice` in `channel_id`, under its chief, when the channel has not recorded it
+    /// today; true when it recorded it now. A channel that could not record it is tried again
+    /// after [`RETRY_AFTER`].
+    fn visions_notice_once(&self, channel_id: &str, notice: &Notice<'_>) -> bool {
+        let Some(channel) = self.channel_get(channel_id) else {
+            return false;
+        };
+        let key = format!("{}:{channel_id}", notice.key);
+        if !self.visions_notice_claim(&key) {
+            return false;
+        }
+        let chief = (!channel.chief.is_empty()).then(|| channel.chief.clone());
+        let entry = ChannelEntry::Notice {
+            kind: notice.kind,
+            vision_id: chief.clone(),
+            thread_id: None,
+            unpriced_requests: notice.unpriced,
+            reason: notice.reason.map(str::to_owned),
+        };
+        let recorded = self
+            .channel_post(channel_id, chief.as_deref().unwrap_or_default(), entry)
+            .is_ok();
+        {
             let mut cache = self.visions_cache();
             let budget = &mut cache.budget;
             if recorded {
                 budget.retry_after.remove(&key);
-                posted = true;
             } else {
                 if let Some((_, keys)) = budget.notified.as_mut() {
                     keys.remove(&key);
                 }
                 budget.retry_after.insert(key, Instant::now() + RETRY_AFTER);
-                failed = true;
             }
         }
-        if failed {
+        if recorded {
+            self.visions_notices_save(channel_id, notice.kind);
+        } else {
             self.visions_note(
                 "budget_notice_failed",
-                json!({"vision_id": vision_id, "kind": notice.kind}),
+                json!({"channel_id": channel_id, "kind": notice.kind}),
             );
         }
-        if posted {
-            self.visions_notices_save(vision_id, notice.kind);
-        }
-        posted
+        recorded
     }
 
     /// Saves today's given notices; one that cannot be saved stays given in memory.
-    fn visions_notices_save(&self, vision_id: &str, kind: NoticeKind) {
+    fn visions_notices_save(&self, channel_id: &str, kind: NoticeKind) {
         let cache = self.visions_cache();
         let Some((day, keys)) = cache.budget.notified.as_ref() else {
             return;
@@ -157,7 +167,7 @@ impl AppState {
         if saved.is_err() {
             self.visions_note(
                 "budget_notices_unsaved",
-                json!({"vision_id": vision_id, "kind": kind}),
+                json!({"channel_id": channel_id, "kind": kind}),
             );
         }
     }
@@ -228,8 +238,9 @@ impl AppState {
             if failure.is_none() {
                 state.visions_wake_waiting();
             } else {
-                for vision in state.visions_list() {
-                    state.visions_notice_over(&vision.id, Over::Unknown(Unknown::CatalogNotLoaded));
+                for channel in state.channels_all() {
+                    state
+                        .visions_notice_over(&channel.id, Over::Unknown(Unknown::CatalogNotLoaded));
                 }
                 state.visions_budget_recheck();
             }

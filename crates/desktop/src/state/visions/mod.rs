@@ -14,6 +14,7 @@ mod admin;
 mod budget;
 mod channel_log;
 mod control;
+mod convert;
 mod drive;
 mod envelope;
 mod listing;
@@ -26,13 +27,26 @@ mod wakes;
 #[cfg(test)]
 mod channel_log_tests;
 #[cfg(test)]
+mod convert_tests;
+#[cfg(test)]
 mod drive_tests;
 #[cfg(test)]
 mod listing_tests;
 #[cfg(test)]
 mod marks_tests;
+mod requests;
+#[cfg(test)]
+mod requests_tests;
+mod routines;
+#[cfg(test)]
+mod routines_tests;
+#[cfg(test)]
+mod souls_tests;
 #[cfg(test)]
 mod store_tests;
+mod team_log;
+#[cfg(test)]
+mod team_log_tests;
 #[cfg(test)]
 mod wire_tests;
 
@@ -42,14 +56,28 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use themis_core::configuration::ApprovalMode;
-use themis_core::visions::Autonomy;
+use themis_core::visions::Level;
 
 use super::AppState;
 pub use admin::{is_admin, Proposal, SetUp, ADMIN_VISION_ID};
 pub(crate) use budget::Over as BudgetOver;
 pub use channel_log::{ChannelLine, ChannelPage};
+pub use routines::{Routine, Schedule};
+pub use team_log::TeamEntry;
 
-pub use runs::vision_decisions;
+pub use themis_core::visions::vision_decisions;
+
+/// The approval mode of `channel`'s chats: YOLO at Full access, Auto at Auto-review (the
+/// channel's level, else Settings').
+pub fn channel_approval_mode(
+    channel: &Channel,
+    config: &themis_core::configuration::VisionsConfig,
+) -> ApprovalMode {
+    match channel.level.unwrap_or(config.level) {
+        Level::FullAccess => ApprovalMode::Yolo,
+        Level::AutoReview => ApprovalMode::Auto,
+    }
+}
 pub(super) use runs::{boxed_run, confine, run_scope, run_tools, vision_approvals, VisionRunSpec};
 use store::StoreError;
 pub use wakes::WakeReason;
@@ -77,7 +105,7 @@ const OWNERS_FILE: &str = "owners.json";
 /// Channel logs, `channels/<channel id>.jsonl`, under [`VISIONS_DIR`].
 const CHANNEL_LOGS_DIR: &str = "channels";
 /// A Vision's soul (who it is and how it works) is at most this many bytes.
-pub(crate) const SOUL_MAX_BYTES: usize = 4 * 1024;
+pub(crate) const SOUL_MAX_BYTES: usize = 16 * 1024;
 
 /// A Vision's profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,20 +116,13 @@ pub struct Vision {
     pub name: String,
     #[serde(default)]
     pub role: String,
-    pub shape: String,
     pub color: String,
     /// The model its runs use; the configured default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Overrides `visions.autonomy` for this Vision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<Autonomy>,
-    /// Overrides `visions.custom` rows for this Vision.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub custom: Option<BTreeMap<String, bool>>,
-    /// Overrides the daily budget for this Vision, in US dollars.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub daily_budget_usd: Option<f64>,
+    /// What it carries, one of [`ACCESSORIES`] (`none` when it carries nothing).
+    #[serde(default = "no_accessory")]
+    pub accessory: String,
     /// Who it is and how it works, at most [`SOUL_MAX_BYTES`].
     #[serde(default)]
     pub soul: String,
@@ -123,14 +144,59 @@ pub struct Channel {
     #[serde(default)]
     pub topic: String,
     pub project_root: PathBuf,
-    /// Set by the person and copied onto every chat a Vision starts here.
-    pub approval_mode: ApprovalMode,
-    /// Vision ids.
+    /// Vision ids: the chief and its workers.
     #[serde(default)]
     pub members: Vec<String>,
+    /// The member the person talks to; the others are its workers (see [`workers`]).
+    #[serde(default)]
+    pub chief: String,
+    /// The team's level, which sets its chats' approval mode (see [`channel_approval_mode`]);
+    /// Settings › Visions' when absent. Only the person sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<Level>,
+    /// The team's daily budget in US dollars; Settings › Visions' total caps it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_budget_usd: Option<f64>,
+    /// Workers its chief paused in this channel (the person's pause of a Vision is its own).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paused_workers: Vec<String>,
     /// Set by the store on every save.
     #[serde(default)]
     pub revision: String,
+}
+
+/// What a Vision may carry (the cast's accessories, drawn by the web app).
+pub const ACCESSORIES: &[&str] = &[
+    "clipboard",
+    "crown",
+    "hard_hat",
+    "glasses",
+    "goggles",
+    "headphones",
+    "magnifier",
+    "none",
+];
+
+fn no_accessory() -> String {
+    "none".to_owned()
+}
+
+impl Channel {
+    /// Whether `vision_id` is this channel's chief.
+    pub fn is_chief(&self, vision_id: &str) -> bool {
+        !self.chief.is_empty() && self.chief == vision_id
+    }
+}
+
+/// A channel's workers: its members other than the chief, in order.
+#[allow(dead_code)] // The chief's and workers' grants use it from plan Task 3 on.
+pub fn workers(channel: &Channel) -> Vec<String> {
+    channel
+        .members
+        .iter()
+        .filter(|member| **member != channel.chief)
+        .cloned()
+        .collect()
 }
 
 /// What a chat owned by a Vision is for.
@@ -180,6 +246,14 @@ pub enum NoticeKind {
     BudgetUnknown,
     /// Some of today's requests had no price (`unpriced_requests`); they count as $0.
     Unpriced,
+    /// The store moved from one-Vision channels to teams (each channel's first member became
+    /// its chief); posted once in each `# administration`.
+    TeamsArrived,
+    /// The team woke `visions.max_wakes` times since the person last wrote: nothing more starts
+    /// in the channel until they do. Posted once per stop.
+    TeamPaused,
+    /// The channel sent `visions.requests_per_day` requests today; more are refused. Once a day.
+    RequestCap,
 }
 
 /// One entry in a channel's log.
@@ -192,13 +266,17 @@ pub enum ChannelEntry {
     Vision {
         vision_id: String,
         text: String,
+        /// The workers this chief tasked in the turn this message ends, each once, in first-task
+        /// order; the app shows each one's thread under the message.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tasked: Vec<String>,
     },
     ChatStarted {
         vision_id: String,
         thread_id: String,
         title: String,
     },
-    /// A Vision answered a chat's question itself; `decision` is the autonomy row id and
+    /// A Vision answered a chat's question itself; `decision` is the decision's id and
     /// `reason` the Vision's why (all the person needs to change the answer).
     Answered {
         vision_id: String,
@@ -233,8 +311,8 @@ pub enum ChannelEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     },
-    /// The admin's proposal in `# hq`: what it would set up, which it sets up only after the
-    /// person writes in `# hq` after it (see `admin`).
+    /// The admin's proposal in `# administration`: what it would set up, which it sets up only after the
+    /// person writes in `# administration` after it (see `admin`).
     Proposal {
         vision_id: String,
         proposal_id: String,
@@ -245,6 +323,52 @@ pub enum ChannelEntry {
         vision_id: String,
         proposal_id: String,
         items: Vec<SetUp>,
+    },
+    /// This channel's chief (`vision_id`) asked `channel_id` for something.
+    RequestSent {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        ask: String,
+    },
+    /// `channel_id`'s chief (`vision_id`) asked this channel for something.
+    RequestReceived {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        ask: String,
+    },
+    /// The chief (`vision_id`) added a routine, or changed one (`changed`).
+    RoutineSet {
+        vision_id: String,
+        routine_id: String,
+        schedule: routines::Schedule,
+        instruction: String,
+        changed: bool,
+    },
+    /// In `# administration`: `channel_id`'s chief (`vision_id`) asks Atlas for a worker.
+    WorkerAsked {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        role: String,
+        why: String,
+    },
+    /// A request between this channel and `channel_id` was answered, by the receiving chief
+    /// (`vision_id`) or, with an empty `vision_id`, by the person.
+    RequestAnswered {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        accepted: bool,
+        note: String,
+    },
+    /// In the asking channel: what `channel_id`'s chief (`vision_id`) made for the request.
+    RequestResult {
+        vision_id: String,
+        request_id: String,
+        channel_id: String,
+        text: String,
     },
 }
 
@@ -282,6 +406,24 @@ pub(crate) struct VisionsCache {
     /// Each owned chat's kind and Vision as last read from `owners.json`, which plain chat's
     /// listing keeps using while the file cannot be read (see `marks`).
     last_owned: Option<HashMap<String, (OwnedKind, String)>>,
+    /// The one-time move to teams was checked in this process (see `convert`).
+    conversion_checked: bool,
+    /// `# administration` channels still to be told the store moved to teams.
+    conversion_pending: Option<Vec<String>>,
+    /// Now, for routines and quiet hours, when a test set it.
+    clock: Option<chrono::DateTime<chrono::Local>>,
+    /// Whether the last Visions tick was in quiet hours.
+    was_quiet: bool,
+    /// Channels the person wrote in (or handed back, or stopped) during these quiet hours: the
+    /// work that follows there goes on; cleared when quiet hours end.
+    awake_in_quiet: std::collections::HashSet<String>,
+    /// The workers each chief (channel, chief) tasked in its running turn, for its message.
+    tasked: HashMap<(String, String), Vec<String>>,
+    /// Workers in a turn a task woke (channel, worker), and those that acted in it.
+    watched: std::collections::HashSet<(String, String)>,
+    acted: std::collections::HashSet<(String, String)>,
+    /// Why the move to teams could not run (file, event), for the log; it is tried again.
+    conversion_failed: Option<(&'static str, &'static str)>,
 }
 
 impl AppState {

@@ -14,12 +14,9 @@ fn vision(name: &str) -> Vision {
         id: String::new(),
         name: name.into(),
         role: "Keeps the docs tidy".into(),
-        shape: "cloud".into(),
         color: "blue".into(),
         model: None,
-        autonomy: None,
-        custom: None,
-        daily_budget_usd: None,
+        accessory: "none".into(),
         soul: String::new(),
         paused: false,
         revision: String::new(),
@@ -32,8 +29,11 @@ fn channel(name: &str, root: &Path, members: Vec<String>) -> Channel {
         name: name.into(),
         topic: "Docs".into(),
         project_root: root.to_path_buf(),
-        approval_mode: ApprovalMode::Custom,
         members,
+        chief: String::new(),
+        level: None,
+        daily_budget_usd: None,
+        paused_workers: Vec::new(),
         revision: String::new(),
     }
 }
@@ -90,19 +90,16 @@ fn vision_fields_are_validated() {
     let mut long_soul = vision("Wren");
     long_soul.soul = "x".repeat(SOUL_MAX_BYTES + 1);
     assert!(state.vision_save(long_soul, None).is_err());
-    let mut fits = vision("Wren");
-    fits.soul = "x".repeat(SOUL_MAX_BYTES);
-    assert!(state.vision_save(fits, None).is_ok());
+    // A new Vision leads no channel yet, so it has no soul (souls_tests covers chiefs).
+    let mut new_soul = vision("Wren");
+    new_soul.soul = "Calm.".into();
+    assert!(state.vision_save(new_soul, None).is_err());
     assert!(state.vision_save(vision("  "), None).is_err());
-    let mut spends = vision("Wren");
-    spends.custom = Some([("spend".to_string(), true)].into());
-    assert!(state.vision_save(spends, None).is_err());
-    let mut unknown_row = vision("Wren");
-    unknown_row.custom = Some([("everything".to_string(), true)].into());
-    assert!(state.vision_save(unknown_row, None).is_err());
-    let mut negative = vision("Wren");
+    // The team's budget is checked on its channel.
+    let root = project(dir.path(), "docs");
+    let mut negative = channel("docs", &root, Vec::new());
     negative.daily_budget_usd = Some(-1.0);
-    assert!(state.vision_save(negative, None).is_err());
+    assert!(state.channel_save(negative, None).is_err());
     let mut unknown_id = vision("Wren");
     unknown_id.id = "not-saved-yet".into();
     assert!(state.vision_save(unknown_id, None).is_err());
@@ -258,4 +255,53 @@ fn a_store_file_edited_on_disk_is_not_overwritten() {
     state
         .vision_save(reloaded[0].clone(), Some(&reloaded[0].revision))
         .unwrap();
+}
+
+/// A Vision has no shape: a store file that still holds one loads, and the next save drops it.
+#[test]
+fn an_old_shape_in_the_store_file_loads_and_is_not_saved_again() {
+    let dir = tempfile::tempdir().unwrap();
+    state_in(dir.path())
+        .vision_save(vision("Wren"), None)
+        .unwrap();
+    let path = dir.path().join(VISIONS_DIR).join(VISIONS_FILE);
+    let mut old: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    old[0]["shape"] = "cloud".into();
+    std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+
+    let state = state_in(dir.path());
+    let listed = state.visions_list();
+    assert_eq!(listed.len(), 1);
+    state
+        .vision_save(listed[0].clone(), Some(&listed[0].revision))
+        .unwrap();
+    let saved = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+    assert!(!saved.contains("shape"), "{saved}");
+}
+
+/// A channel's chats run in YOLO at Full access and in Auto at Auto-review; a channel with no
+/// level takes Settings'.
+#[test]
+fn approval_mode_follows_the_level() {
+    use themis_core::configuration::VisionsConfig;
+    use themis_core::visions::Level;
+    let root = PathBuf::from("/p");
+    let at = |level: Option<Level>, settings: Level| {
+        let team = Channel {
+            level,
+            ..channel("c", &root, vec![])
+        };
+        let config = VisionsConfig {
+            level: settings,
+            ..VisionsConfig::default()
+        };
+        channel_approval_mode(&team, &config)
+    };
+    for settings in [Level::AutoReview, Level::FullAccess] {
+        assert_eq!(at(Some(Level::FullAccess), settings), ApprovalMode::Yolo);
+        assert_eq!(at(Some(Level::AutoReview), settings), ApprovalMode::Auto);
+    }
+    assert_eq!(at(None, Level::AutoReview), ApprovalMode::Auto);
+    assert_eq!(at(None, Level::FullAccess), ApprovalMode::Yolo);
 }

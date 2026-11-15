@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
+use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Decision;
 
-use super::{ChannelEntry, Hold, OwnedKind, Owner};
+use super::{Channel, ChannelEntry, Hold, OwnedKind, Owner};
 use crate::sink::EventSink;
 use crate::state::threads::SendOptions;
 use crate::state::AppState;
@@ -43,9 +44,8 @@ impl AppState {
                 Some(model),
             )
             .await?;
-        let recorded = self
-            .visions_adopt(vision, &info, channel.approval_mode)
-            .await;
+        let mode = self.visions_channel_mode(&channel);
+        let recorded = self.visions_adopt(vision, &info, mode).await;
         if let Err(error) = recorded {
             let _ = self.discard_thread(info.id.clone()).await;
             return Err(error);
@@ -60,9 +60,97 @@ impl AppState {
         );
         self.visions_note(
             "chat_started",
-            json!({"thread_id": info.id, "vision_id": vision.vision_id, "channel_id": vision.channel_id, "mode": channel.approval_mode}),
+            json!({"thread_id": info.id, "vision_id": vision.vision_id, "channel_id": vision.channel_id, "mode": mode}),
         );
         self.get_thread(&info.id).await
+    }
+
+    /// The approval mode `channel`'s chats run in now (see [`super::channel_approval_mode`]);
+    /// Custom while the configuration cannot be read.
+    pub(crate) fn visions_channel_mode(&self, channel: &Channel) -> ApprovalMode {
+        self.runtime_configuration(Some(&channel.project_root), None)
+            .map(|resolved| super::channel_approval_mode(channel, &resolved.config.visions))
+            .unwrap_or(ApprovalMode::Custom)
+    }
+
+    /// The person's latest messages in the channel of `thread_id`, a team's work chat, oldest
+    /// first (none for any other chat), for Auto's reviewer: what the person asked for.
+    pub(crate) fn visions_person_words(&self, thread_id: &str) -> Vec<String> {
+        let Some(owner) = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+        else {
+            return Vec::new();
+        };
+        self.channel_page(&owner.channel_id, None, 64 * 1024)
+            .map(|page| {
+                page.entries
+                    .into_iter()
+                    .filter_map(|line| match line.entry {
+                        ChannelEntry::Person { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A team's work chat finished run `run_id`: the permission questions it left open in
+    /// earlier runs are dropped (their steps are over, so their cards go), and its channel is
+    /// told. Any other chat keeps its questions.
+    pub(crate) fn visions_drop_stale_questions(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        thread_id: &str,
+        run_id: &str,
+    ) {
+        let Some(owner) = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+        else {
+            return;
+        };
+        let dropped = self.drop_stale_questions(thread_id, run_id);
+        if dropped > 0 {
+            sink.emit_visions_changed(&crate::types::VisionsChange {
+                channel_id: Some(owner.channel_id.clone()),
+                vision_id: Some(owner.vision_id.clone()),
+            });
+            self.visions_note(
+                "questions_dropped",
+                json!({"thread_id": thread_id, "count": dropped}),
+            );
+        }
+    }
+
+    /// The mode a run in `thread_id` starts in, decided now and never written back: a team's
+    /// work chat nobody holds runs in its channel's mode ([`Self::visions_work_mode`]); one the
+    /// person took over or stopped in the stricter of `own` and its channel's mode, so switching
+    /// Full access off always takes YOLO away; any other chat in `own`.
+    pub(crate) fn visions_run_mode(&self, thread_id: &str, own: ApprovalMode) -> ApprovalMode {
+        if let Some(mode) = self.visions_work_mode(thread_id) {
+            return mode;
+        }
+        let channel = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work)
+            .and_then(|owner| self.channel_get(&owner.channel_id));
+        match channel {
+            Some(channel) => stricter(own, self.visions_channel_mode(&channel)),
+            None => own,
+        }
+    }
+
+    /// The approval mode a run in `thread_id` takes when it starts: its channel's mode now
+    /// (see [`super::channel_approval_mode`]) for a team's work chat nobody holds, so a change
+    /// in Settings, the project or the channel applies from the chat's next run; `None` keeps
+    /// the chat's own mode (not a Vision's chat, or the person stopped or took it over).
+    pub(crate) fn visions_work_mode(&self, thread_id: &str) -> Option<ApprovalMode> {
+        let owner = self
+            .owner_of(thread_id)
+            .filter(|owner| owner.kind == OwnedKind::Work && owner.hold == Hold::None)?;
+        let channel = self.channel_get(&owner.channel_id)?;
+        Some(self.visions_channel_mode(&channel))
     }
 
     async fn visions_adopt(
@@ -151,10 +239,8 @@ impl AppState {
         if owner.hold != Hold::None {
             return Some(AGENT_CLI_HELD_BY_PERSON);
         }
-        let paused = self
-            .vision_get(&owner.vision_id)
-            .is_none_or(|vision| vision.paused);
-        if paused {
+        // The person's pause, or its chief's in this chat's channel.
+        if self.paused_in(&owner.channel_id, &owner.vision_id) {
             return Some(AGENT_CLI_VISION_PAUSED);
         }
         self.visions_budget_holds(thread_id)
@@ -187,8 +273,8 @@ impl AppState {
             .any(|id| flagged.contains(id) || blocks.contains_key(id) || pending.contains_key(id))
     }
 
-    /// A Vision answers questions in a chat it owns, on a `decision` its run's autonomy leaves
-    /// to it: as the Vision's answer, never the person's (no "Allow once" it writes lets
+    /// A Vision answers questions in a chat it owns, on a `decision` its run leaves to it (all
+    /// but `delete`, `external` and `spend`): as the Vision's answer, never the person's (no "Allow once" it writes lets
     /// anything run), and each one goes in the channel with the decision and `reason`. Returns
     /// the answered questions and whether the channel failed to record any of them (the
     /// answers stand: they were delivered).
@@ -209,7 +295,15 @@ impl AppState {
             return Err(waits.to_owned());
         }
         if !vision.decides.contains(&decision) {
-            return Err(themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned());
+            return Err(themis_core::prompts::AGENT_CLI_LOCKED_DECISION.to_owned());
+        }
+        // A question passed on to the person is theirs now (the server may have done it).
+        let passed = self
+            .questions_for(&thread_id)
+            .into_iter()
+            .any(|q| q.passed_on && answers.iter().any(|(id, _)| *id == q.id));
+        if passed {
+            return Err(themis_core::prompts::AGENT_CLI_QUESTION_PASSED_ON.to_owned());
         }
         let answered = self
             .answer_questions_by(sink, thread_id.clone(), answers, Some(&vision.vision_id))
@@ -255,22 +349,55 @@ impl AppState {
             .into_iter()
             .find(|question| question.id == question_id)
             .ok_or_else(|| "That question is no longer open in this chat".to_owned())?;
-        self.channel_append(
-            &vision.channel_id,
-            ChannelEntry::PassedOn {
-                vision_id: vision.vision_id.clone(),
-                thread_id: thread_id.to_owned(),
-                question_id: question.id.clone(),
-                decision: decision.id().to_owned(),
-                question: question.question.clone(),
-            },
-        )?;
-        self.mark_passed_on(thread_id, &question.id);
+        let owner = self
+            .owner_of(thread_id)
+            .ok_or_else(|| "Unknown chat".to_owned())?;
+        self.pass_on(&owner, &question, decision.id())?;
         self.visions_note(
             "vision_passed_question",
             json!({"thread_id": thread_id, "vision_id": vision.vision_id, "question_id": question.id, "decision": decision.id()}),
         );
         Ok(question)
+    }
+
+    /// Puts an open question of a team's chat in its channel for the person, under the chief,
+    /// once (a question already passed on is not posted again).
+    fn pass_on(&self, owner: &Owner, question: &Question, decision: &str) -> Result<(), String> {
+        if question.passed_on {
+            return Ok(());
+        }
+        // Announced, so the open channel shows the card where the person answers it.
+        let chief = self.chief_of(owner);
+        self.channel_post(
+            &owner.channel_id,
+            &chief,
+            ChannelEntry::PassedOn {
+                vision_id: chief.clone(),
+                thread_id: owner.thread_id.clone(),
+                question_id: question.id.clone(),
+                decision: decision.to_owned(),
+                question: question.question.clone(),
+            },
+        )?;
+        self.mark_passed_on(&owner.thread_id, &question.id);
+        Ok(())
+    }
+
+    /// A question of a worker's chat that no run will take (paused, over budget, at the
+    /// team's limit, Visions off): passed on to the person under the chief, with no decision
+    /// named. Logged either way.
+    pub(super) fn visions_pass_on_stranded(&self, owner: &Owner, question_id: &str) {
+        let question = self
+            .open_questions(&owner.thread_id)
+            .into_iter()
+            .find(|question| question.id == question_id);
+        let posted = question
+            .as_ref()
+            .is_some_and(|question| self.pass_on(owner, question, "").is_ok());
+        self.visions_note(
+            "question_stranded",
+            json!({"thread_id": owner.thread_id, "question_id": question_id, "posted": posted}),
+        );
     }
 
     /// A Vision stops the run of a chat it owns. Unlike the person's Stop, this holds nothing
@@ -279,5 +406,19 @@ impl AppState {
         self.stop_run(thread_id)?;
         self.visions_note("vision_stopped_chat", json!({"thread_id": thread_id}));
         Ok(())
+    }
+}
+
+/// The stricter of two approval modes (Custom asks most, then Auto, then YOLO).
+fn stricter(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
+    let rank = |mode: ApprovalMode| match mode {
+        ApprovalMode::Custom => 0,
+        ApprovalMode::Auto => 1,
+        ApprovalMode::Yolo => 2,
+    };
+    if rank(a) <= rank(b) {
+        a
+    } else {
+        b
     }
 }

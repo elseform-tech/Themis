@@ -38,6 +38,29 @@ impl AppState {
     }
 
     /// Resolves the provider, builds tools, and spawns the run task.
+    /// Auto mode's reviewer for this run: a reviewer model decides where Custom would ask the
+    /// person (none outside Auto).
+    fn auto_reviewer(
+        &self,
+        sink: &Arc<dyn EventSink>,
+        (thread_id, run_id): (&str, &str),
+        snapshot: &RunSnapshot,
+        config: &themis_core::configuration::RuntimeConfig,
+    ) -> Option<Arc<dyn themis_core::tools::AutoReviewer>> {
+        (snapshot.approval_mode == themis_core::configuration::ApprovalMode::Auto).then(|| {
+            Arc::new(super::auto_review::DesktopReviewer {
+                state: self.clone(),
+                sink: Arc::clone(sink),
+                thread_id: thread_id.to_owned(),
+                run_id: run_id.to_owned(),
+                project_root: snapshot.work_root.clone(),
+                config: config.clone(),
+                is_git: snapshot.is_git,
+                chat_model: snapshot.model.clone(),
+            }) as Arc<dyn themis_core::tools::AutoReviewer>
+        })
+    }
+
     pub(super) async fn spawn_run(
         &self,
         sink: &Arc<dyn EventSink>,
@@ -191,19 +214,7 @@ impl AppState {
                 context: diagnostic_context.clone(),
             }),
         };
-        // Auto mode: a reviewer model decides where Custom would ask the person.
-        let reviewer = (snapshot.approval_mode == themis_core::configuration::ApprovalMode::Auto)
-            .then(|| {
-                Arc::new(super::auto_review::DesktopReviewer {
-                    state: self.clone(),
-                    sink: Arc::clone(sink),
-                    thread_id: thread_id.to_owned(),
-                    run_id: run_id.to_owned(),
-                    project_root: snapshot.work_root.clone(),
-                    config: run_configuration.clone(),
-                    is_git: snapshot.is_git,
-                }) as Arc<dyn themis_core::tools::AutoReviewer>
-            });
+        let reviewer = self.auto_reviewer(sink, (thread_id, run_id), &snapshot, &run_configuration);
         let approvals = themis_core::configuration::configured_hook_with_reviewer(
             snapshot.approval_mode,
             run_configuration.approval.clone(),

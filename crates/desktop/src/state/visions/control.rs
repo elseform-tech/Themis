@@ -12,18 +12,6 @@ use crate::types::ThreadInfo;
 
 const NOT_OWNED: &str = "This chat does not belong to a Vision";
 
-/// True when `text` mentions `name` as `@Name` (any case), not as the start of a longer word.
-fn mentions(text: &str, name: &str) -> bool {
-    let text = text.to_lowercase();
-    let wanted = format!("@{}", name.to_lowercase());
-    text.match_indices(&wanted).any(|(at, found)| {
-        text[at + found.len()..]
-            .chars()
-            .next()
-            .is_none_or(|next| !next.is_alphanumeric() && next != '_' && next != '-')
-    })
-}
-
 impl AppState {
     pub(super) fn visions_note(&self, event: &str, fields: Value) {
         let _ = self
@@ -55,11 +43,11 @@ impl AppState {
     }
 
     /// The channels of the project at `project_root`, which is resolved like `list_threads`
-    /// resolves it; its built-in `# hq` (and the admin) is made first when not there. A store
+    /// resolves it; its built-in `# administration` (and the admin) is made first when not there. A store
     /// that cannot be read leaves that out (it is logged) and lists what it can.
     pub fn visions_project_channels(&self, project_root: &str) -> Result<Vec<Channel>, String> {
         let root = canonical_project_dir(project_root)?;
-        let _ = self.visions_ensure_hq(&root);
+        let _ = self.visions_ensure_administration(&root);
         Ok(self.channel_list(&root))
     }
 
@@ -74,9 +62,9 @@ impl AppState {
     }
 
     /// The person wrote in a channel: the log gets it, chats the person stopped there may be
-    /// picked up again (taken-over ones stay the person's), and the Visions it is for wake:
-    /// those it mentions as `@Name`, or the only member when it mentions none. Returns its seq
-    /// and the Visions whose run will answer (started, or queued behind one going).
+    /// picked up again (taken-over ones stay the person's), and the channel's chief wakes (its
+    /// workers take their work from it). Returns its seq and the Visions whose run will answer
+    /// (started, or queued behind one going).
     pub fn visions_post(
         &self,
         sink: &Arc<dyn EventSink>,
@@ -107,27 +95,18 @@ impl AppState {
             .count();
         // The person wrote: the channel's Visions may wake `visions.max_wakes` times again.
         self.visions_reset_wakes(channel_id);
-        let members: Vec<Vision> = channel
-            .members
-            .iter()
-            .filter_map(|id| self.vision_get(id))
-            .collect();
-        let mut woken: Vec<&Vision> = members
-            .iter()
-            .filter(|vision| mentions(text, &vision.name))
-            .collect();
-        if woken.is_empty() && members.len() == 1 {
-            woken.push(&members[0]);
-        }
-        let answering: Vec<String> = woken
-            .iter()
-            .filter(|vision| {
-                let outcome =
-                    self.visions_wake(sink, channel_id, &vision.id, WakeReason::Mentioned);
+        let answering: Vec<String> = self
+            .vision_get(&channel.chief)
+            .into_iter()
+            .filter(|chief| {
+                let outcome = self.visions_wake(sink, channel_id, &chief.id, WakeReason::Mentioned);
                 matches!(outcome, "started" | "queued")
             })
-            .map(|vision| vision.id.clone())
+            .map(|chief| chief.id)
             .collect();
+        // The count was reset: work that waited at the limit (a worker's finished chat, say)
+        // may start again too.
+        self.visions_wake_waiting_in(sink, channel_id, &channel.chief);
         self.visions_note(
             "channel_posted",
             json!({"channel_id": channel_id, "seq": seq, "released": stopped.len() - release_failed,
@@ -223,12 +202,13 @@ impl AppState {
                 reason: None,
             },
         )?;
-        self.visions_wake(
-            sink,
-            &owner.channel_id,
-            &owner.vision_id,
-            WakeReason::HandedBack(thread_id.to_owned()),
-        );
+        let back = || WakeReason::HandedBack(thread_id.to_owned());
+        self.visions_wake(sink, &owner.channel_id, &owner.vision_id, back());
+        // The chief hears of it too, when the chat is a worker's.
+        let chief = self.chief_of(&owner);
+        if chief != owner.vision_id {
+            self.visions_wake(sink, &owner.channel_id, &chief, back());
+        }
         // What the Vision queued while the person held the chat may go now.
         self.spawn_dispatch_queue(Arc::clone(sink), thread_id.to_owned());
         self.visions_note(
@@ -346,8 +326,8 @@ impl AppState {
     ) -> Result<(), String> {
         match self.channel_get(channel_id) {
             None => return Err("Unknown channel".to_owned()),
-            Some(channel) if channel.name == super::admin::HQ => {
-                return Err(super::admin::HQ_STAYS.to_owned());
+            Some(channel) if channel.name == super::admin::ADMINISTRATION => {
+                return Err(super::admin::ADMINISTRATION_STAYS.to_owned());
             }
             Some(_) => {}
         }
@@ -417,20 +397,5 @@ impl AppState {
             );
         }
         Ok(owners.len())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::mentions;
-
-    #[test]
-    fn mentions_match_the_name_in_any_case_but_not_a_longer_word() {
-        assert!(mentions("hey @wren, look", "Wren"));
-        assert!(mentions("@WREN", "Wren"));
-        assert!(mentions("ask @Ada Lovelace now", "Ada Lovelace"));
-        assert!(!mentions("hey @wrenna", "Wren"));
-        assert!(!mentions("hey wren", "Wren"));
-        assert!(mentions("@wrenna and @wren", "Wren"));
     }
 }

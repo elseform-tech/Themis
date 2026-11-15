@@ -7,9 +7,9 @@
 //! and sends nothing. Everything else stays as refused as for any run: approvals, modes,
 //! settings, secrets, other chats, and integrations (`plugin_action`). A Vision's writes go
 //! the server's way, never as the person's message (`state/visions/drive.rs`). It answers a
-//! question only on a decision its run's autonomy leaves to it (`decision`, with its
+//! question only on a decision that is not always the person's (`decision`, with its
 //! `reason`), and passes the rest on to the person in its channel (`pass_question`). The admin
-//! Vision in `# hq` drives no chat; its grant proposes and sets up channels and Visions instead
+//! Vision in `# administration` drives no chat; its grant proposes and sets up channels and Visions instead
 //! (`admin`).
 
 use themis_core::visions::Decision;
@@ -19,6 +19,7 @@ use crate::state::{Hold, OwnedKind};
 use crate::types::{QueuedMessage, ThreadChangeKind, VisionsChange};
 
 mod admin;
+mod chief;
 
 /// Most characters of the reason a Vision gives with its answer.
 const MAX_REASON_CHARS: usize = 200;
@@ -69,6 +70,9 @@ pub(super) fn refusal(
     if crate::state::is_admin(&scope.vision_id) {
         return admin::refusal(scope, method, args);
     }
+    if let Some(decided) = chief::refusal(scope, method, args, owned) {
+        return Some(decided);
+    }
     match method {
         "create_thread" => return Some((!in_channel_project(scope, args)).then(other_project)),
         "list_channel_threads" => {
@@ -85,7 +89,12 @@ pub(super) fn refusal(
         .get("threadId")
         .and_then(Value::as_str)
         .and_then(owned)
-        .filter(|owner| owner.vision_id == scope.vision_id && owner.kind == OwnedKind::Work);
+        // Its own work chat in the channel its run is for (it may work in others too).
+        .filter(|owner| {
+            owner.vision_id == scope.vision_id
+                && owner.channel_id == scope.channel_id
+                && owner.kind == OwnedKind::Work
+        });
     let Some(owner) = owner else {
         // Not one of its work chats: a driving call is refused; a read goes by the ordinary
         // rules, which allow the Vision's own chat only.
@@ -101,9 +110,9 @@ pub(super) fn refusal(
         }));
     }
     Some(
-        (method == "answer_question" && above_autonomy(scope, args)).then(|| Refusal {
-            reason: Reason::AboveAutonomy,
-            message: themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned(),
+        (method == "answer_question" && locked_decision(scope, args)).then(|| Refusal {
+            reason: Reason::LockedDecision,
+            message: themis_core::prompts::AGENT_CLI_LOCKED_DECISION.to_owned(),
         }),
     )
 }
@@ -112,6 +121,8 @@ pub(super) fn refusal(
 /// driving methods, and the admin's writes for the admin.
 pub(super) fn handles(scope: &VisionScope, method: &str) -> bool {
     VISION_DRIVE.contains(&method)
+        || chief::CHIEF_CALLS.contains(&method)
+        || chief::WORKER_CALLS.contains(&method)
         || (crate::state::is_admin(&scope.vision_id) && admin::ADMIN_WRITES.contains(&method))
 }
 
@@ -122,16 +133,16 @@ fn dressed_as_answer(args: &Value) -> bool {
         .is_some_and(crate::state::forges_answer)
 }
 
-/// Whether an answer names a decision its run's autonomy leaves to the person. One naming no
+/// Whether an answer names a decision that is always the person's. One naming no
 /// known decision is refused when it runs ([`decision_arg`]).
-fn above_autonomy(scope: &VisionScope, args: &Value) -> bool {
+fn locked_decision(scope: &VisionScope, args: &Value) -> bool {
     args.get("decision")
         .and_then(Value::as_str)
         .and_then(Decision::from_id)
         .is_some_and(|decision| !scope.decides.contains(&decision))
 }
 
-/// The call's `decision`: an autonomy row id.
+/// The call's `decision`: a decision id.
 fn decision_arg(args: &Value) -> Result<Decision, String> {
     args.get("decision")
         .and_then(Value::as_str)
@@ -177,6 +188,13 @@ pub(super) fn state_refusal(
     method: &str,
     args: &Value,
 ) -> Option<Refusal> {
+    if crate::state::is_admin(&scope.vision_id) {
+        // The admin's grant has no team calls; its checks stay as they were.
+    } else if let Some(refusal) = chief::role_changed(state, scope, method, args)
+        .or_else(|| chief::state_refusal(state, scope, method, args))
+    {
+        return Some(refusal);
+    }
     if method == "answer_question" && asks_permission(state, args) {
         return Some(Refusal {
             reason: Reason::PermissionQuestion,
@@ -186,9 +204,7 @@ pub(super) fn state_refusal(
     if !STARTS.contains(&method) {
         return None;
     }
-    let paused = state
-        .vision_get(&scope.vision_id)
-        .is_none_or(|vision| vision.paused);
+    let paused = state.paused_in(&scope.channel_id, &scope.vision_id);
     if paused {
         return Some(Refusal {
             reason: Reason::Paused,
@@ -198,7 +214,7 @@ pub(super) fn state_refusal(
     if !SPENDS.contains(&method) {
         return None;
     }
-    let over = state.visions_budget_gate(&scope.vision_id)?;
+    let over = state.visions_budget_gate(&scope.vision_id, &scope.channel_id)?;
     let reason = match over {
         crate::state::BudgetOver::Unknown(_) => Reason::BudgetUnknown,
         _ => Reason::OverBudget,
@@ -252,8 +268,12 @@ pub(super) async fn dispatch(
     method: &str,
     args: Value,
 ) -> Result<Value, String> {
+    state.visions_acted(&scope.channel_id, &scope.vision_id, method);
     if admin::ADMIN_WRITES.contains(&method) {
         return admin::dispatch(state, sink, scope, method, &args).await;
+    }
+    if chief::CHIEF_CALLS.contains(&method) || chief::WORKER_CALLS.contains(&method) {
+        return chief::dispatch(state, sink, scope, method, &args).await;
     }
     let result = match method {
         // The chat's provider and model are the Vision's, never the call's.

@@ -849,21 +849,22 @@ fn legacy_section_max_tokens_still_loads_but_is_not_written() {
 fn visions_defaults_and_validation() {
     let defaults = RuntimeConfig::default().visions;
     assert!(defaults.enabled);
-    assert_eq!(defaults.autonomy, crate::visions::Autonomy::Small);
-    assert!(defaults.custom.is_empty());
+    assert_eq!(defaults.level, crate::visions::Level::AutoReview);
     assert_eq!(defaults.daily_budget_usd, 1.0);
-    assert_eq!(defaults.max_wakes, 6);
+    assert_eq!(defaults.max_wakes, 16);
     let user = resolve(
-        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":true},"daily_budget_usd":5,"max_wakes":10}}"#),
+        Some(r#"{"visions":{"level":"full_access","daily_budget_usd":5,"max_wakes":10}}"#),
         None,
         None,
     )
     .unwrap();
-    assert_eq!(user.provenance["visions.autonomy"], "user");
-    assert!(user.config.visions.custom["delete"]);
+    assert_eq!(user.provenance["visions.level"], "user");
+    assert_eq!(user.config.visions.level, crate::visions::Level::FullAccess);
     for bad in [
-        r#"{"visions":{"autonomy":"all"}}"#,
-        r#"{"visions":{"custom":{"nonsense":true}}}"#,
+        r#"{"visions":{"level":"all"}}"#,
+        // Removed outright: two levels replace the ladder and its rows.
+        r#"{"visions":{"autonomy":"small"}}"#,
+        r#"{"visions":{"custom":{"delete":true}}}"#,
         r#"{"visions":{"daily_budget_usd":0.05}}"#,
         r#"{"visions":{"daily_budget_usd":101}}"#,
         r#"{"visions":{"max_wakes":0}}"#,
@@ -875,25 +876,51 @@ fn visions_defaults_and_validation() {
 }
 
 #[test]
-fn unknown_custom_rows_are_rejected() {
-    let error = resolve(
-        Some(r#"{"visions":{"custom":{"wording":true,"fly":true}}}"#),
-        None,
-        None,
-    )
-    .unwrap_err();
-    assert!(format!("{error:#}").contains("fly"));
+fn requests_per_day_and_routine_limits_are_validated_and_only_lowered_by_a_project() {
+    let defaults = RuntimeConfig::default().visions;
+    assert_eq!(defaults.requests_per_day, 10);
+    assert_eq!(defaults.routines_per_chief, 10);
+    assert!(defaults.quiet_hours.is_none());
+    let user = r#"{"visions":{"requests_per_day":20,"routines_per_chief":5,"quiet_hours":{"start":"22:00","end":"07:30"}}}"#;
+    let resolved = resolve(Some(user), None, None).unwrap();
+    assert_eq!(resolved.config.visions.requests_per_day, 20);
+    assert_eq!(
+        resolved.config.visions.quiet_hours.as_ref().unwrap().start,
+        "22:00"
+    );
+    for bad in [
+        r#"{"visions":{"requests_per_day":0}}"#,
+        r#"{"visions":{"requests_per_day":101}}"#,
+        r#"{"visions":{"routines_per_chief":51}}"#,
+        // Removed: a weekly schedule runs a routine at most once a day.
+        r#"{"visions":{"routine_min_minutes":60}}"#,
+        r#"{"visions":{"quiet_hours":{"start":"25:00","end":"07:00"}}}"#,
+        r#"{"visions":{"quiet_hours":{"start":"22:00"}}}"#,
+    ] {
+        assert!(resolve(Some(bad), None, None).is_err(), "{bad}");
+    }
+    for raise in [
+        r#"{"visions":{"requests_per_day":21}}"#,
+        r#"{"visions":{"routines_per_chief":6}}"#,
+        r#"{"visions":{"quiet_hours":null}}"#,
+    ] {
+        assert!(resolve(Some(user), Some(raise), None).is_err(), "{raise}");
+    }
+    for lower in [
+        r#"{"visions":{"requests_per_day":3}}"#,
+        r#"{"visions":{"routines_per_chief":2}}"#,
+    ] {
+        assert!(resolve(Some(user), Some(lower), None).is_ok(), "{lower}");
+    }
 }
 
 #[test]
-fn a_project_cannot_raise_autonomy_or_budget() {
-    let user = r#"{"visions":{"autonomy":"small","daily_budget_usd":2,"max_wakes":8}}"#;
+fn a_project_cannot_raise_the_level_or_budget() {
+    let user = r#"{"visions":{"daily_budget_usd":2,"max_wakes":8}}"#;
     for raise in [
-        r#"{"visions":{"autonomy":"most"}}"#,
-        r#"{"visions":{"autonomy":"custom"}}"#,
+        r#"{"visions":{"level":"full_access"}}"#,
         r#"{"visions":{"daily_budget_usd":3}}"#,
         r#"{"visions":{"max_wakes":9}}"#,
-        r#"{"visions":{"custom":{"delete":true}}}"#,
         r#"{"visions":{"enabled":true}}"#,
     ] {
         assert!(resolve(Some(user), Some(raise), None).is_err(), "{raise}");
@@ -901,86 +928,62 @@ fn a_project_cannot_raise_autonomy_or_budget() {
     }
     let lowered = resolve(
         Some(user),
-        Some(r#"{"visions":{"autonomy":"ask","daily_budget_usd":1,"max_wakes":2,"custom":{"delete":false},"enabled":false}}"#),
+        Some(r#"{"visions":{"daily_budget_usd":1,"max_wakes":2,"enabled":false}}"#),
         None,
     )
     .unwrap();
-    assert_eq!(
-        lowered.config.visions.autonomy,
-        crate::visions::Autonomy::Ask
-    );
     assert_eq!(lowered.config.visions.max_wakes, 2);
-    assert_eq!(lowered.provenance["visions.autonomy"], "project");
     // Equal is not a raise.
     assert!(resolve(
         Some(user),
-        Some(r#"{"visions":{"autonomy":"small"}}"#),
+        Some(r#"{"visions":{"level":"auto_review"}}"#),
         None
     )
     .is_ok());
 }
 
-fn custom_user(rows: &str) -> String {
-    format!(r#"{{"visions":{{"autonomy":"custom","custom":{rows}}}}}"#)
-}
-
+/// A project may bring a person's Full access down to Auto-review, never the other way.
 #[test]
-fn a_project_may_lower_custom_to_ask() {
-    let user = custom_user(r#"{"delete":true}"#);
-    let lowered = resolve(Some(&user), Some(r#"{"visions":{"autonomy":"ask"}}"#), None).unwrap();
-    assert_eq!(
-        lowered.config.visions.autonomy,
-        crate::visions::Autonomy::Ask
-    );
-}
-
-#[test]
-fn a_project_may_set_a_preset_within_the_users_custom_rows() {
-    let user = custom_user(r#"{"wording":true,"tests":true,"scope":true}"#);
-    let project = resolve(
-        Some(&user),
-        Some(r#"{"visions":{"autonomy":"small"}}"#),
+fn a_project_may_only_set_auto_review() {
+    let user = r#"{"visions":{"level":"full_access"}}"#;
+    let lowered = resolve(
+        Some(user),
+        Some(r#"{"visions":{"level":"auto_review"}}"#),
         None,
     )
     .unwrap();
     assert_eq!(
-        project.config.visions.autonomy,
-        crate::visions::Autonomy::Small
+        lowered.config.visions.level,
+        crate::visions::Level::AutoReview
     );
+    assert_eq!(lowered.provenance["visions.level"], "project");
+    let error = resolve(
+        Some(user),
+        Some(r#"{"visions":{"level":"full_access"}}"#),
+        None,
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("visions.level"));
 }
 
 #[test]
-fn a_project_may_not_set_a_preset_beyond_the_users_custom_rows() {
-    let user = custom_user(r#"{"wording":true}"#);
-    for preset in ["small", "most", "nearly_all"] {
-        let project = format!(r#"{{"visions":{{"autonomy":"{preset}"}}}}"#);
-        assert!(
-            resolve(Some(&user), Some(&project), None).is_err(),
-            "{preset}"
-        );
-    }
-}
-
-#[test]
-fn a_project_may_not_switch_to_custom() {
-    for user in [
-        r#"{"visions":{"autonomy":"most"}}"#,
-        r#"{"visions":{"autonomy":"ask"}}"#,
-    ] {
-        let project = r#"{"visions":{"autonomy":"custom"}}"#;
-        assert!(resolve(Some(user), Some(project), None).is_err(), "{user}");
-    }
-    let user = custom_user(r#"{"delete":true}"#);
-    assert!(resolve(
-        Some(&user),
-        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":true}}}"#),
-        None
-    )
-    .is_err());
-    assert!(resolve(
-        Some(&user),
-        Some(r#"{"visions":{"autonomy":"custom","custom":{"delete":false}}}"#),
-        None
-    )
-    .is_ok());
+fn quiet_hours_cross_midnight_and_need_two_times() {
+    use super::visions::QuietHours;
+    let night = QuietHours {
+        start: "22:00".into(),
+        end: "07:00".into(),
+    };
+    assert!(night.contains(23 * 60) && night.contains(6 * 60 + 59) && night.contains(22 * 60));
+    assert!(!night.contains(7 * 60) && !night.contains(12 * 60));
+    let lunch = QuietHours {
+        start: "12:00".into(),
+        end: "13:00".into(),
+    };
+    assert!(lunch.contains(12 * 60 + 30) && !lunch.contains(13 * 60));
+    let mut config = crate::configuration::RuntimeConfig::default();
+    config.visions.quiet_hours = Some(QuietHours {
+        start: "09:00".into(),
+        end: "09:00".into(),
+    });
+    assert!(crate::configuration::validate(&config).is_err());
 }

@@ -1,7 +1,7 @@
 //! A Vision's run: a turn of its hidden Vision chat for one channel, started by a wake.
 //!
 //! The run is an ordinary chat run with these differences, captured when it starts: its system
-//! head is the Vision's (`visions-system.md`: who it is, its channel, the `themis` calls that
+//! head is the Vision's (`visions-chief.md` or `visions-worker.md`: who it is, its channel, the `themis` calls that
 //! drive chats and its autonomy table) in place of the ordinary instructions; it has only
 //! `read_file`, `list_dir`, `search_file` and the shell (for `themis` only), on every OS, and no
 //! plugins, skills, subagents, browser or memory; it runs in a fixed envelope whatever the channel's mode
@@ -16,11 +16,13 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::{RunScope, VisionScope};
-use themis_core::configuration::{ApprovalMode, ApprovalPolicy, VisionsConfig};
-use themis_core::prompts::{fill, VISIONS_READ_ONLY_NOTE, VISIONS_SYSTEM, VISIONS_WAKE_TURN};
+use themis_core::configuration::{ApprovalMode, ApprovalPolicy};
+use themis_core::prompts::{
+    fill, VISIONS_CHIEF, VISIONS_READ_ONLY_NOTE, VISIONS_WAKE_TURN, VISIONS_WORKER,
+};
 use themis_core::sandbox::SandboxPlan;
 use themis_core::tools::{ApprovalHook, ToolT};
-use themis_core::visions::{profile_decides, Decision};
+use themis_core::visions::{vision_decisions, Decision};
 
 use super::{Channel, ChannelEntry, Hold, NoticeKind, OwnedKind, Owner, Vision, WakeReason};
 use crate::sink::EventSink;
@@ -142,28 +144,35 @@ pub(in crate::state) fn boxed_run<'a, T: 'a>(
     }
 }
 
-/// The decisions `vision` makes itself under `config`: its profile's autonomy and rows may only
-/// lower the configured ones (`profile_decides`). The run's head shows them and its grant
-/// answers questions only on them, both from this one list.
-pub fn vision_decisions(vision: &Vision, config: &VisionsConfig) -> Vec<Decision> {
-    Decision::ALL
-        .into_iter()
-        .filter(|decision| {
-            profile_decides(
-                config.autonomy,
-                &config.custom,
-                vision.autonomy,
-                vision.custom.as_ref(),
-                *decision,
-            )
-        })
-        .collect()
+/// Why a Vision's own reply failed, in a word the app says plainly: `busy` (the model's service
+/// was rate limited or overloaded) or `slow` (it did not answer in time); none otherwise. Only
+/// the category leaves the error, never its text.
+pub(super) fn failure_kind(error: &str) -> Option<&'static str> {
+    let error = error.to_ascii_lowercase();
+    let busy = [
+        "429",
+        "rate limit",
+        "rate-limit",
+        "overloaded",
+        "529",
+        "too many requests",
+    ];
+    if busy.iter().any(|word| error.contains(word)) {
+        Some("busy")
+    } else if ["timed out", "timeout", "deadline"]
+        .iter()
+        .any(|word| error.contains(word))
+    {
+        Some("slow")
+    } else {
+        None
+    }
 }
 
 /// The Vision's system head for a run in `channel`, with one table row per decision as
-/// [`vision_decisions`] decides it.
-pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsConfig) -> String {
-    let decides = vision_decisions(vision, config);
+/// [`vision_decisions`] decides it (the same at both levels).
+pub(super) fn vision_head(vision: &Vision, channel: &Channel, members: &[Vision]) -> String {
+    let decides = vision_decisions();
     let table = Decision::ALL
         .into_iter()
         .map(|decision| {
@@ -180,27 +189,57 @@ pub(super) fn vision_head(vision: &Vision, channel: &Channel, config: &VisionsCo
     let project =
         serde_json::to_string(&channel.project_root.to_string_lossy()).unwrap_or_default();
     let project = project.trim_matches('"');
-    let or_dash = |text: &str| {
-        let text = text.trim();
-        if text.is_empty() {
+    let common = [
+        ("name", vision.name.as_str()),
+        ("channel", channel.name.as_str()),
+        ("channel_id", channel.id.as_str()),
+        ("project", project),
+        ("autonomy_table", table.as_str()),
+    ];
+    let head = if channel.is_chief(&vision.id) {
+        let team = members
+            .iter()
+            .filter(|member| member.id != vision.id)
+            .map(|member| {
+                format!(
+                    "- {} (id {}): {}",
+                    member.name,
+                    member.id,
+                    or_dash(&member.role)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let soul = or_dash(&vision.soul);
+        let team = if team.is_empty() {
             "-".to_owned()
         } else {
-            text.to_owned()
-        }
+            team
+        };
+        let mut values = common.to_vec();
+        values.extend([("soul", soul.as_str()), ("team", team.as_str())]);
+        fill(VISIONS_CHIEF, &values)
+    } else {
+        let chief = members
+            .iter()
+            .find(|member| channel.is_chief(&member.id))
+            .map_or("-", |member| member.name.as_str());
+        let role = or_dash(&vision.role);
+        let mut values = common.to_vec();
+        values.extend([("role", role.as_str()), ("chief", chief)]);
+        fill(VISIONS_WORKER, &values)
     };
-    let head = fill(
-        VISIONS_SYSTEM,
-        &[
-            ("name", &vision.name),
-            ("role", &or_dash(&vision.role)),
-            ("soul", &or_dash(&vision.soul)),
-            ("channel", &channel.name),
-            ("channel_id", &channel.id),
-            ("project", project),
-            ("autonomy_table", &table),
-        ],
-    );
     format!("{head}\n\n{VISIONS_READ_ONLY_NOTE}")
+}
+
+/// `text` trimmed, or `-` when empty.
+fn or_dash(text: &str) -> String {
+    let text = text.trim();
+    if text.is_empty() {
+        "-".to_owned()
+    } else {
+        text.to_owned()
+    }
 }
 
 /// Whether a failed send never reaches the run's end step, which would end the wake: refused
@@ -253,35 +292,41 @@ impl AppState {
         let vision = self
             .vision_get(&spec.vision_id)
             .ok_or_else(|| "This Vision no longer exists".to_owned())?;
-        if vision.paused {
-            return Err("This Vision is paused".to_owned());
-        }
         let channel = self
             .channel_get(&spec.channel_id)
             .ok_or_else(|| "This channel no longer exists".to_owned())?;
+        if vision.paused || channel.paused_workers.contains(&vision.id) {
+            return Err("This Vision is paused".to_owned());
+        }
         let port =
             self.visions_envelope_check(&snapshot.work_root, &snapshot.runtime_configuration)?;
         snapshot.approval_mode = ApprovalMode::Custom;
         let config = &mut snapshot.runtime_configuration;
-        // The admin in `# hq` has its own head; its grant knows it by its id.
-        let head = super::admin::run_head(&vision, &channel, &config.visions);
+        // The admin in `# administration` has its own head; its grant knows it by its id.
+        let members: Vec<Vision> = channel
+            .members
+            .iter()
+            .filter_map(|id| self.vision_get(id))
+            .collect();
+        let head = super::admin::run_head(&vision, &channel, &members);
         config.subagents.enabled = false;
         config.browser.enabled = false;
         config.memory.enabled = false;
         snapshot.plugins.clear();
         snapshot.skills.clear();
         snapshot.skill_catalog.clear();
+        let decides = vision_decisions();
         let scope = VisionScope {
+            chief: channel.is_chief(&spec.vision_id),
             vision_id: spec.vision_id,
             channel_id: spec.channel_id,
             project_root: channel.project_root,
-            decides: vision_decisions(&vision, &config.visions),
+            decides,
         };
         Ok(Some(VisionRun { head, scope, port }))
     }
 
-    /// The grant a run of `vision_id` in `channel_id` gets, its decisions resolved from the
-    /// configuration of the channel's project as a run there captures it.
+    /// The grant a run of `vision_id` in `channel_id` gets, as a run there captures it.
     pub fn visions_scope(&self, vision_id: &str, channel_id: &str) -> Result<VisionScope, String> {
         let vision = self
             .vision_get(vision_id)
@@ -289,11 +334,12 @@ impl AppState {
         let channel = self
             .channel_get(channel_id)
             .ok_or_else(|| "Unknown channel".to_owned())?;
-        let config = self.runtime_configuration(Some(&channel.project_root), None)?;
+        let decides = vision_decisions();
         Ok(VisionScope {
+            chief: channel.is_chief(&vision.id),
             vision_id: vision.id.clone(),
             channel_id: channel.id,
-            decides: vision_decisions(&vision, &config.config.visions),
+            decides,
             project_root: channel.project_root,
         })
     }
@@ -382,6 +428,9 @@ impl AppState {
         // stack holds every one an `await` builds in place.
         let started =
             Box::pin(self.visions_run_start(sink, &channel_id, &vision_id, &reasons)).await;
+        if started.is_ok() {
+            self.visions_watch_silent(&channel_id, &vision_id, &reasons);
+        }
         match started {
             Ok((thread_id, run_id)) => self.visions_note(
                 "run_started",
@@ -444,6 +493,11 @@ impl AppState {
         let chat = Box::pin(self.visions_chat(&vision, &channel))
             .await
             .map_err(|_| NotStarted::Refused("no_chat"))?;
+        // Requests that waited for this chief (paused or out of budget when they came) are its
+        // work now; the wake below shows them taken on.
+        if channel.is_chief(vision_id) && channel.name != super::admin::ADMINISTRATION {
+            self.visions_take_requests(channel_id, vision_id, None);
+        }
         let text = self.visions_wake_text(channel_id, reasons);
         let run_id = uuid::Uuid::new_v4().to_string();
         let (sent, progress) =
@@ -532,15 +586,31 @@ impl AppState {
         )
     }
 
+    /// `chief` tasked `worker` in its running turn: its message at the turn's end names it.
+    pub(crate) fn visions_tasked(&self, channel_id: &str, chief: &str, worker: &str) {
+        let mut cache = self.visions_cache();
+        let list = cache
+            .tasked
+            .entry((channel_id.to_owned(), chief.to_owned()))
+            .or_default();
+        if !list.iter().any(|each| each == worker) {
+            list.push(worker.to_owned());
+        }
+    }
+
     /// Posts a Vision chat's final reply in its channel as the Vision's message (a failure, not
     /// a stop, as a notice). Returns whether the run finished.
     pub(super) fn visions_post_reply(&self, owner: &Owner, terminal: &ThreadEvent) -> bool {
+        // The workers it tasked belong to this turn's message, or to none when the turn failed.
+        let key = (owner.channel_id.clone(), owner.vision_id.clone());
+        let tasked = self.visions_cache().tasked.remove(&key).unwrap_or_default();
         let entry = match terminal {
             ThreadEvent::Finished { result, .. } | ThreadEvent::Incomplete { result, .. } => {
                 let text = bounded(result.trim());
                 (!text.is_empty()).then(|| ChannelEntry::Vision {
                     vision_id: owner.vision_id.clone(),
                     text,
+                    tasked,
                 })
             }
             ThreadEvent::Failed { error }
@@ -551,7 +621,7 @@ impl AppState {
                     vision_id: Some(owner.vision_id.clone()),
                     thread_id: Some(owner.thread_id.clone()),
                     unpriced_requests: None,
-                    reason: None,
+                    reason: failure_kind(error).map(str::to_owned),
                 })
             }
             _ => None,
@@ -573,11 +643,9 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    use themis_core::configuration::{ApprovalMode, VisionsConfig};
-    use themis_core::visions::Autonomy;
+    use themis_core::visions::Level;
 
     use super::*;
 
@@ -586,106 +654,157 @@ mod tests {
             id: "v1".into(),
             name: "Wren".into(),
             role: "Keeps the docs right".into(),
-            shape: "cloud".into(),
             color: "teal".into(),
             model: None,
-            autonomy: None,
-            custom: None,
-            daily_budget_usd: None,
+            accessory: "none".into(),
             soul: "Careful and brief.".into(),
             paused: false,
             revision: String::new(),
         }
     }
 
+    fn rook() -> Vision {
+        Vision {
+            id: "v2".into(),
+            name: "Rook".into(),
+            role: "Builds".into(),
+            soul: String::new(),
+            ..wren()
+        }
+    }
+
     fn hq() -> Channel {
         Channel {
             id: "c1".into(),
-            name: "hq".into(),
+            name: "release".into(),
             topic: String::new(),
             project_root: PathBuf::from("/work/app"),
-            approval_mode: ApprovalMode::Custom,
-            members: vec!["v1".into()],
+            members: vec!["v1".into(), "v2".into()],
+            chief: "v1".into(),
+            level: None,
+            daily_budget_usd: None,
+            paused_workers: Vec::new(),
             revision: String::new(),
         }
     }
 
-    /// The head the run's system message opens with (printed so the request path can be read):
-    /// the Vision, its channel, the `themis` calls with this channel's ids, the rules and one
-    /// table row per decision as the level decides it.
+    fn head(vision: &Vision, channel: &Channel) -> String {
+        vision_head(vision, channel, &[wren(), rook()])
+    }
+
+    /// The chief's head (printed so the request path can be read): who it is, its soul and
+    /// team, the plain voice it speaks to the person in, the team calls with this channel's
+    /// ids, no chat-driving calls, and the table of what its channel's level decides.
+    /// A failed reply says why in a word the app turns into plain words: the model's service
+    /// was busy (rate limited, overloaded), or it did not answer in time; otherwise nothing.
     #[test]
-    fn vision_system_head_contains_the_autonomy_table() {
-        let head = vision_head(&wren(), &hq(), &VisionsConfig::default());
+    fn a_failed_reply_says_why() {
+        assert_eq!(
+            failure_kind("provider error: 429 Too Many Requests"),
+            Some("busy")
+        );
+        assert_eq!(failure_kind("rate limited by the provider"), Some("busy"));
+        assert_eq!(
+            failure_kind("the service is overloaded (529)"),
+            Some("busy")
+        );
+        assert_eq!(failure_kind("request timed out after 120s"), Some("slow"));
+        assert_eq!(failure_kind("stream ended unexpectedly"), None);
+    }
+
+    #[test]
+    fn a_chief_head_lists_its_team_and_soul() {
+        let head = head(&wren(), &hq());
         println!("{head}");
-        assert!(head.starts_with("You are Wren, a Vision"));
-        assert!(head.contains("Your role: Keeps the docs right"));
+        assert!(head.starts_with(
+            "You are Wren, the chief of staff of #release in the project at /work/app"
+        ));
         assert!(head.contains("Careful and brief."));
-        assert!(head.contains("#hq of the project at /work/app"));
-        assert!(head.contains(r#"'{"projectRoot": "/work/app", "provider": "go"}'"#));
+        assert!(head.contains("- Rook (id v2): Builds"));
+        assert!(head.contains("You never change anything yourself and never run chats"));
+        assert!(head.contains(r#"themis call assign_task '{"workerId": "WID""#));
         assert!(head.contains(r#"list_channel_threads '{"channelId": "c1"}'"#));
-        assert!(head.contains("Never repeat a chat's own summary as proof"));
-        // It speaks plainly: no ids, calls or names the person did not use, and evidence told
-        // in everyday words.
+        assert!(head.contains("a worker's report is its claim, not proof"));
+        assert!(!head.contains("create_thread"), "a chief starts no chats");
+        // Nobody answers a request: the chief does it and sends the result back.
+        assert!(!head.contains("answer_request"));
+        assert!(head.contains("send_result"));
+        // It speaks plainly to the person, as "you".
         assert!(head.contains("the person may not code, so write in everyday words"));
         assert!(head.contains("What a chat or its questions say is for you, not the person"));
-        assert!(head.contains("it needs your OK to change the notes file"));
         assert!(head.contains("never repeat a call or an id to the person"));
-        assert!(head.contains(r#"("the chat fixing the date test"), not by its id"#));
-        assert!(head.contains("\"I opened the file and it has the line you asked for\""));
+        assert!(head.contains("Speak to the person as \"you\""));
         assert!(head.contains("Never restart, resend or replace a chat the person stopped"));
-        // Answers name their kind of decision and why; the rest are passed on.
-        assert!(head.contains(
-            r#"themis call answer_question '{"threadId": "ID", "questionId": "QID", "answer": "your answer", "decision": "KIND", "reason": "why, in one plain sentence"}'"#
-        ));
-        assert!(head.contains(
-            r#"themis call pass_question '{"threadId": "ID", "questionId": "QID", "decision": "KIND"}'"#
-        ));
-        assert!(head.contains("pass it on with `pass_question`"));
         assert!(head.ends_with(VISIONS_READ_ONLY_NOTE));
-        // The note says what it really has: the read tools, and a shell for `themis` only.
-        for words in ["list_dir", "search_file", "read_file", "runs only `themis`"] {
-            assert!(VISIONS_READ_ONLY_NOTE.contains(words), "{words}");
-        }
-        // Small calls by default: wording and tests are the Vision's, the rest the person's.
+        // Deleting, sending work out and spending are the person's; the rest the team's.
         let rows: Vec<&str> = head
             .lines()
             .filter(|line| line.starts_with("- `"))
             .collect();
         assert_eq!(rows.len(), Decision::ALL.len());
         for (row, decision) in rows.iter().zip(Decision::ALL) {
-            let mine = matches!(decision, Decision::Wording | Decision::Tests);
+            let mine = !decision.is_locked();
             let who = if mine { "you decide" } else { "ask the person" };
             assert_eq!(*row, format!("- `{}`: {who}", decision.id()));
         }
-        // A profile may only lower the resolved level: `nearly_all` over the default `small`
-        // still decides only wording and tests, and its `ask` lowers it to nothing.
-        let raised = Vision {
-            autonomy: Some(Autonomy::NearlyAll),
-            ..wren()
-        };
-        let head = vision_head(&raised, &hq(), &VisionsConfig::default());
-        assert!(head.contains("- `wording`: you decide"));
-        assert!(head.contains("- `delete`: ask the person"));
-        let lowered = Vision {
-            autonomy: Some(Autonomy::Ask),
-            ..wren()
-        };
-        let head = vision_head(&lowered, &hq(), &VisionsConfig::default());
-        assert!(head.contains("- `wording`: ask the person"));
-        // Custom rows can only take away; `spend` stays the person's.
-        let custom = Vision {
-            custom: Some(BTreeMap::from([
-                ("tests".into(), false),
-                ("delete".into(), true),
-                ("spend".into(), true),
-            ])),
-            ..wren()
-        };
-        let head = vision_head(&custom, &hq(), &VisionsConfig::default());
-        assert!(head.contains("- `wording`: you decide"));
-        assert!(head.contains("- `tests`: ask the person"));
-        assert!(head.contains("- `delete`: ask the person"));
-        assert!(head.contains("- `spend`: ask the person"));
+    }
+
+    /// A worker's head: its role and chief, the calls that drive its own chats, report and
+    /// push back, evidence rules, and no word to the person.
+    #[test]
+    fn a_worker_head_names_its_chief_and_role() {
+        let head = head(&rook(), &hq());
+        println!("{head}");
+        assert!(head
+            .starts_with("You are Rook, a worker Vision in #release of the project at /work/app"));
+        assert!(head.contains("Your role: Builds"));
+        assert!(head.contains("Your chief of staff is Wren"));
+        assert!(head.contains("you never talk to the person"));
+        assert!(head.contains(r#"'{"projectRoot": "/work/app", "provider": "go"}'"#));
+        assert!(head.contains(r#"list_channel_threads '{"channelId": "c1"}'"#));
+        assert!(head.contains("themis call report '{"));
+        assert!(head.contains("themis call push_back '{"));
+        assert!(head.contains("Never pass on a chat's own summary as proof"));
+        assert!(head.contains(
+            r#"themis call pass_question '{"threadId": "ID", "questionId": "QID", "decision": "KIND"}'"#
+        ));
+        assert!(
+            !head.contains("Careful and brief."),
+            "a worker carries no soul"
+        );
+        assert!(head.ends_with(VISIONS_READ_ONLY_NOTE));
+        // The note says what it really has: the read tools, and a shell for `themis` only.
+        for words in ["list_dir", "search_file", "read_file", "runs only `themis`"] {
+            assert!(VISIONS_READ_ONLY_NOTE.contains(words), "{words}");
+        }
+    }
+
+    /// Both levels decide the same: everything but deleting, reaching outside and spending,
+    /// which are the person's.
+    #[test]
+    fn the_autonomy_table_is_the_same_at_both_levels() {
+        for level in [None, Some(Level::AutoReview), Some(Level::FullAccess)] {
+            let table = head(&rook(), &Channel { level, ..hq() });
+            for decided in [
+                "wording",
+                "tests",
+                "undoable",
+                "retry",
+                "scope",
+                "dependency",
+            ] {
+                assert!(
+                    table.contains(&format!("- `{decided}`: you decide")),
+                    "{level:?} {decided}"
+                );
+            }
+            for persons in ["delete", "external", "spend"] {
+                assert!(
+                    table.contains(&format!("- `{persons}`: ask the person")),
+                    "{level:?} {persons}"
+                );
+            }
+        }
     }
 
     /// A failed send whose run never started (refused before saving, or saved but its start
@@ -709,6 +828,7 @@ mod tests {
                 channel_id: "c1".into(),
                 project_root: dir.path().to_path_buf(),
                 decides: Vec::new(),
+                chief: false,
             },
             port: 47123,
         };
@@ -741,6 +861,7 @@ mod tests {
                 channel_id: "c1".into(),
                 project_root: dir.path().to_path_buf(),
                 decides: Vec::new(),
+                chief: false,
             },
             port: 47123,
         };

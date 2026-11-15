@@ -27,7 +27,7 @@ function Probe() {
   return <div data-testid="open">{String(state.visions.open.channelId)}</div>;
 }
 
-const channel = (id: string, root: string): ChannelInfo => ({ id, name: id, topic: "", project_root: root, approval_mode: "custom", members: [], revision: "r" });
+const channel = (id: string, root: string): ChannelInfo => ({ id, name: id, topic: "", project_root: root, members: [], chief: "", revision: "r" });
 
 beforeEach(() => {
   vi.mocked(bridge.getSettings).mockResolvedValue({ ...DEFAULT_SETTINGS, recent_roots: [] });
@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 describe("the app's store", () => {
-  it("lands Visions on the new project's # hq after a project change from anywhere", async () => {
+  it("lands Visions on the new project's # administration after a project change from anywhere", async () => {
     await act(async () => { render(<AppProvider><Probe /></AppProvider>); });
     const send = (action: AppAction) => act(() => { sent.dispatch!(action); });
     send({ type: "project/opened", project: { root: "/p", name: "P", is_git: true } });

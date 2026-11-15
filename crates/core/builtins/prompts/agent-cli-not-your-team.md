@@ -1,0 +1,1 @@
+That is not your team: a chief manages only its own channel's workers, and only while it leads the channel.

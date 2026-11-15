@@ -1,5 +1,6 @@
-//! Channel logs: `channels/<channel id>.jsonl`, one `{seq, at_ms, entry}` per line, seqs
-//! rising from 1.
+//! Append-only JSONL logs: channel logs (`channels/<channel id>.jsonl`) and team logs
+//! (`teams/<channel id>/<worker id>.jsonl`, see `team_log`), one `{seq, at_ms, entry}` per line,
+//! seqs rising from 1.
 //!
 //! A page is read from the end of the file in chunks, never the whole log. To start before a
 //! given seq, a binary search over byte offsets finds that seq's line, reading one or two lines
@@ -10,6 +11,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use serde::de::{DeserializeOwned, IgnoredAny};
 use serde::{Deserialize, Serialize};
 
 use super::store::{channel_log_path, refuse_symlink, StoreError};
@@ -24,20 +26,34 @@ const LINE_CHUNK: u64 = 512;
 /// The longest line an append writes; longer lines are damage and are skipped.
 const MAX_LINE_BYTES: usize = 64 * 1024;
 
-/// One line of a channel log.
+/// One line of a log.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ChannelLine {
+pub struct LogLine<E> {
     pub seq: u64,
     pub at_ms: u64,
-    pub entry: ChannelEntry,
+    pub entry: E,
 }
 
 /// Entries oldest first, and the `before_seq` that continues back (None at the start).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct ChannelPage {
-    pub entries: Vec<ChannelLine>,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogPage<E> {
+    pub entries: Vec<LogLine<E>>,
     pub next_before: Option<u64>,
 }
+
+impl<E> Default for LogPage<E> {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            next_before: None,
+        }
+    }
+}
+
+/// One line of a channel log.
+pub type ChannelLine = LogLine<ChannelEntry>;
+/// A page of a channel log.
+pub type ChannelPage = LogPage<ChannelEntry>;
 
 #[cfg(test)]
 thread_local! {
@@ -178,17 +194,17 @@ fn open_log(path: &Path) -> Result<Option<(File, u64)>, StoreError> {
 }
 
 /// Collects a page's entries, newest first, while they fit.
-struct PageFill {
+struct PageFill<E> {
     before_seq: Option<u64>,
     max_bytes: usize,
     used: usize,
-    entries: Vec<ChannelLine>,
+    entries: Vec<LogLine<E>>,
 }
 
-impl PageFill {
+impl<E: DeserializeOwned> PageFill<E> {
     /// Takes one line; false once the page is full. Unreadable lines are skipped.
     fn take(&mut self, bytes: &[u8]) -> bool {
-        let Ok(line) = serde_json::from_slice::<ChannelLine>(bytes) else {
+        let Ok(line) = serde_json::from_slice::<LogLine<E>>(bytes) else {
             return true;
         };
         if self.before_seq.is_some_and(|before| line.seq >= before) {
@@ -205,13 +221,13 @@ impl PageFill {
 }
 
 /// A page of the log at `path`; see [`super::AppState::channel_page`].
-pub(super) fn read_page(
+pub(super) fn read_page<E: DeserializeOwned>(
     path: &Path,
     before_seq: Option<u64>,
     max_bytes: usize,
-) -> Result<ChannelPage, StoreError> {
+) -> Result<LogPage<E>, StoreError> {
     let Some((mut file, len)) = open_log(path)? else {
-        return Ok(ChannelPage::default());
+        return Ok(LogPage::default());
     };
     let end = match before_seq {
         Some(before) => boundary(&mut file, len, before).map_err(|error| unreadable(&error))?,
@@ -232,7 +248,7 @@ pub(super) fn read_page(
     } else {
         entries.first().map(|line| line.seq)
     };
-    Ok(ChannelPage {
+    Ok(LogPage {
         entries,
         next_before,
     })
@@ -240,7 +256,7 @@ pub(super) fn read_page(
 
 /// The newest readable seq in the log (0 for none), and whether the file ends mid-line.
 fn tail(path: &Path) -> Result<(u64, bool), StoreError> {
-    let newest = read_page(path, None, 0)?;
+    let newest = read_page::<IgnoredAny>(path, None, 0)?;
     let seq = newest.entries.last().map_or(0, |line| line.seq);
     let Some((mut file, len)) = open_log(path)? else {
         return Ok((seq, false));
@@ -275,6 +291,36 @@ fn now_ms() -> u64 {
     u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Appends `entry` after `last` (the newest seq, when known) to the log at `path` and returns its
+/// seq. When `last` is unknown the tail is read, and a torn last line is ended first.
+pub(super) fn append_line<E: Serialize>(
+    path: &Path,
+    last: Option<u64>,
+    entry: E,
+) -> Result<u64, StoreError> {
+    let (last, torn) = match last {
+        Some(seq) => (seq, false),
+        None => tail(path)?,
+    };
+    let line = LogLine {
+        seq: last + 1,
+        at_ms: now_ms(),
+        entry,
+    };
+    let mut bytes = Vec::new();
+    if torn {
+        bytes.push(b'\n');
+    }
+    serde_json::to_writer(&mut bytes, &line)
+        .map_err(|_| StoreError::refused(LOG_FILE, "The entry could not be encoded"))?;
+    if bytes.len() > MAX_LINE_BYTES {
+        return Err(StoreError::refused(LOG_FILE, "The entry is too long"));
+    }
+    bytes.push(b'\n');
+    append_bytes(path, &bytes)?;
+    Ok(line.seq)
+}
+
 impl VisionsCache {
     /// Appends `entry` to a saved channel's log and returns its seq.
     pub(super) fn append_entry(
@@ -287,34 +333,17 @@ impl VisionsCache {
         if !self.channels(dir)?.contains_key(channel_id) {
             return Err(StoreError::refused(CHANNELS_FILE, "Unknown channel"));
         }
-        let (last, torn) = match self.last_seq.get(channel_id) {
-            Some(&seq) => (seq, false),
-            None => tail(&path)?,
-        };
-        let line = ChannelLine {
-            seq: last + 1,
-            at_ms: now_ms(),
-            entry,
-        };
-        let mut bytes = Vec::new();
-        if torn {
-            bytes.push(b'\n');
+        let last = self.last_seq.get(channel_id).copied();
+        match append_line(&path, last, entry) {
+            Ok(seq) => {
+                self.last_seq.insert(channel_id.to_owned(), seq);
+                Ok(seq)
+            }
+            Err(error) => {
+                // Some of the line may have landed: the next append reads the tail again.
+                self.last_seq.remove(channel_id);
+                Err(error)
+            }
         }
-        serde_json::to_writer(&mut bytes, &line)
-            .map_err(|_| StoreError::refused(LOG_FILE, "The entry could not be encoded"))?;
-        if bytes.len() > MAX_LINE_BYTES {
-            return Err(StoreError::refused(
-                LOG_FILE,
-                "The channel entry is too long",
-            ));
-        }
-        bytes.push(b'\n');
-        if let Err(error) = append_bytes(&path, &bytes) {
-            // Some of the line may have landed: the next append reads the tail again.
-            self.last_seq.remove(channel_id);
-            return Err(error);
-        }
-        self.last_seq.insert(channel_id.to_owned(), line.seq);
-        Ok(line.seq)
     }
 }

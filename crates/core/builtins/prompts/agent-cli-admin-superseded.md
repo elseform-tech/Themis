@@ -1,1 +1,1 @@
-Themis refused this call: you posted a newer proposal in #hq after this one, so nothing was set up. Only your newest proposal can be set up; set that one up once the person says yes to it.
+Themis refused this call: you posted a newer proposal in #administration after this one, so nothing was set up. Only your newest proposal can be set up; set that one up once the person says yes to it.

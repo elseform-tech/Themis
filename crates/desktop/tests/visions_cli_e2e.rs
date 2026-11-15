@@ -54,11 +54,13 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
 
     let vision = fx.call_ok(
         "save_vision",
-        json!({"vision": {"name": "Wren", "role": "Release captain", "shape": "cloud",
-            "color": "teal"}, "revision": null}),
+        json!({"vision": {"name": "Wren", "role": "Release captain", "color": "teal"},
+            "revision": null}),
     );
     let vision_id = vision["id"].as_str().unwrap().to_owned();
     let first = vision["revision"].as_str().unwrap().to_owned();
+    // A Vision has no shape: the saved profile carries none.
+    assert!(vision.get("shape").is_none(), "{vision}");
     let changed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let event = Client::next_event(&mut events).await.unwrap();
@@ -71,7 +73,7 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
     .expect("a save announces visions-changed");
     assert_eq!(changed["payload"]["vision_id"], vision_id.as_str());
 
-    let renamed = json!({"id": vision_id, "name": "Wren B", "shape": "cloud", "color": "teal"});
+    let renamed = json!({"id": vision_id, "name": "Wren B", "color": "teal"});
     let saved = fx.call_ok("save_vision", json!({"vision": renamed, "revision": first}));
     assert_ne!(saved["revision"], first.as_str());
     let stale = fx.call("save_vision", json!({"vision": renamed, "revision": first}));
@@ -110,7 +112,7 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
         fx.project.display(),
         fx.project.file_name().unwrap().to_string_lossy()
     );
-    // Listed by name: the built-in `# hq` comes first.
+    // Listed by name: the built-in `# administration` comes first.
     let channels = fx.call_ok("list_channels", json!({"projectRoot": roundabout}));
     assert_eq!(channels.as_array().unwrap().len(), 2);
     assert_eq!(channels[1]["project_root"], json!(fx.project));
@@ -205,7 +207,10 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
         .iter()
         .all(|t| t["vision"].is_null()));
     let left = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
-    assert_eq!(left[0]["name"], "hq", "only the built-in # hq is left");
+    assert_eq!(
+        left[0]["name"], "administration",
+        "only the built-in # administration is left"
+    );
     assert_eq!(left.as_array().unwrap().len(), 1);
     // Nothing deleted: the chats, the Vision and the channel's log stay.
     assert!(fx.state.get_thread(&running).await.is_ok());
@@ -214,8 +219,8 @@ async fn deleting_a_channel_stops_and_releases_its_chats() {
             .as_array()
             .unwrap()
             .len(),
-        2,
-        "Wren and the admin"
+        3,
+        "Wren, its channel's lead and the admin"
     );
     let log = fx
         .data
@@ -377,8 +382,9 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let first = fx.call_ok("get_visions_settings", json!({}));
-    assert_eq!(first["settings"]["autonomy"], "small");
-    assert_eq!(first["settings"]["max_wakes"], 6);
+    assert_eq!(first["settings"]["level"], "auto_review");
+    assert!(first["settings"].get("autonomy").is_none());
+    assert_eq!(first["settings"]["max_wakes"], 16);
     let revision = first["revision"].clone();
 
     let updated = fx.call_ok(
@@ -386,7 +392,7 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
         json!({"changes": {"max_wakes": 3}, "revision": revision}),
     );
     assert_eq!(updated["settings"]["max_wakes"], 3);
-    assert_eq!(updated["settings"]["autonomy"], "small");
+    assert_eq!(updated["settings"]["level"], "auto_review");
     assert_ne!(updated["revision"], revision);
     let file = runtime_file(&fx.data);
     assert!(file.contains("\"visions\""), "{file}");
@@ -399,7 +405,7 @@ async fn visions_settings_write_one_field_and_refuse_a_stale_revision() {
 
     let stale = fx.call(
         "update_visions_settings",
-        json!({"changes": {"autonomy": "most"}, "revision": revision}),
+        json!({"changes": {"level": "full_access"}, "revision": revision}),
     );
     assert!(
         failed_with(&stale, "since this page loaded"),
@@ -461,7 +467,7 @@ async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
     let fx = fixture().await;
     let provider = stalled_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "yolo");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
     let requests = || async { provider.received_requests().await.unwrap().len() };
 
@@ -475,7 +481,7 @@ async fn a_person_stop_blocks_the_visions_sends_until_handed_back() {
     let info = fx.state.get_thread(&work).await.unwrap();
     assert_eq!(
         info.approval_mode,
-        themis_core::configuration::ApprovalMode::Custom
+        themis_core::configuration::ApprovalMode::Yolo
     );
     assert_eq!(
         info.model, "test-model",
@@ -750,6 +756,25 @@ fn waiting_approvals(fx: &Fixture, thread: &str) -> Vec<Value> {
         .collect()
 }
 
+/// A Vision's work chat whose run waits on an approval box. A team's chats run in Auto or YOLO,
+/// which show none, so the person takes the chat over, switches it to Custom, starts the write
+/// themselves and hands it back while the box waits (the run keeps its mode).
+async fn approval_in_a_handed_back_chat(fx: &Fixture, agent: &str) -> String {
+    let work = fx.vision_starts_chat(agent);
+    hold(&fx.state, &work, Hold::TakenOver);
+    fx.call_ok(
+        "set_thread_approval_mode",
+        json!({"threadId": work, "mode": "custom"}),
+    );
+    fx.call_ok(
+        "send_message",
+        json!({"threadId": work, "text": "write the notes", "reasoningEffort": null}),
+    );
+    wait_until(|| async { !waiting_approvals(fx, &work).is_empty() }).await;
+    hold(&fx.state, &work, Hold::None);
+    work
+}
+
 /// A Vision's steer reaches the run but leaves the approval it waits on to the person; the
 /// person's Allow still answers it. Unread when the person stops the run, the steer goes back
 /// to the queue as the Vision's and is not sent while the person holds the chat.
@@ -759,16 +784,9 @@ async fn a_visions_steer_leaves_pending_approvals_for_the_person() {
     let fx = fixture().await;
     let provider = writing_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
-    let work = fx.vision_starts_chat(&agent);
-
-    json_of(&fx.agent_call(
-        &agent,
-        "send_message",
-        json!({"threadId": work, "text": "write the notes"}),
-    ));
-    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let work = approval_in_a_handed_back_chat(&fx, &agent).await;
     let approval = waiting_approvals(&fx, &work).remove(0);
     let queued = json_of(&fx.agent_call(
         &agent,
@@ -812,17 +830,11 @@ async fn an_approval_in_a_taken_over_chat_counts_for_no_vision_or_channel() {
     let fx = fixture().await;
     let provider = writing_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
-    let work = fx.vision_starts_chat(&agent);
-    json_of(&fx.agent_call(
-        &agent,
-        "send_message",
-        json!({"threadId": work, "text": "write the notes"}),
-    ));
-    wait_until(|| async { !waiting_approvals(&fx, &work).is_empty() }).await;
+    let work = approval_in_a_handed_back_chat(&fx, &agent).await;
     let needs = |fx: &Fixture| {
-        // Listing the channels makes `# hq` and Atlas, which sort first.
+        // Listing the channels makes `# administration` and Atlas, which sort first.
         let channels = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
         let vision = fx.call_ok("list_visions", json!({}))[1]["needs"].clone();
         (vision, channels[1]["needs"].clone())
@@ -1035,7 +1047,7 @@ async fn a_vision_steers_only_its_own_queued_messages() {
     let fx = fixture().await;
     let provider = stalled_provider().await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "custom");
+    let (vision, channel) = fx.vision_and_channel("Wren", "work");
     let (_own_chat, agent) = fx.vision_run(&vision, &channel).await;
     let work = fx.vision_starts_chat(&agent);
     let before = provider.received_requests().await.unwrap().len();
@@ -1154,7 +1166,11 @@ async fn vision_provider(project: PathBuf, extra: Vec<Value>) -> MockServer {
                     {"role": "assistant", "content": content}, "finish_reason": "stop"}]}))
             };
             let system = messages.first().and_then(|m| m["content"].as_str());
-            if !system.is_some_and(|text| text.starts_with("You are Wren, a Vision")) {
+            if system.is_some_and(|text| text.starts_with("You are Wren Lead, the chief of staff"))
+            {
+                return suites::routing::lead_tasks_wren(&messages);
+            }
+            if !system.is_some_and(|text| text.starts_with("You are Wren, a worker Vision")) {
                 return reply("done: wrote the greeting");
             }
             let last = messages
@@ -1326,7 +1342,7 @@ async fn a_vision_starts_a_chat_and_reports_when_it_finishes() {
     assert!(!wake_texts.is_empty());
     for text in &wake_texts {
         assert!(text.ends_with(
-            "Act on what woke you, then end your turn with your message for the channel."
+            "Act on what woke you, then end your turn: a chief with its message for the person, a worker with a note of a few words."
         ));
         assert!(!text.contains("The person sees only"));
     }
@@ -1467,6 +1483,14 @@ async fn a_vision_run_in_a_yolo_channel_cannot_read_a_secret_or_reach_the_networ
         fx.shut_down().await;
         return;
     }
+    // The chief tasked Wren: wait for Wren's run (and its chat) to finish too.
+    let wren_owns = || {
+        !fx.state
+            .owners_where(|o| o.channel_id == channel && o.vision_id == _vision)
+            .is_empty()
+    };
+    wait_until(|| async { wren_owns() }).await;
+    wait_for_idle_channel(&fx, &channel).await;
     let results = tool_results(&provider).await;
     assert!(results.len() >= 5, "{results:?}");
     assert!(
@@ -1519,7 +1543,7 @@ async fn a_vision_run_is_refused_without_a_sandbox() {
     .unwrap();
     let provider = vision_provider(fx.project.clone(), Vec::new()).await;
     fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel("Wren", "work");
+    let (vision, channel) = fx.chief_and_channel("Wren", "work");
     fx.call_ok(
         "post_channel_message",
         json!({"channelId": channel, "text": "@Wren go"}),
@@ -1554,63 +1578,6 @@ async fn wait_for_idle_channel(fx: &Fixture, channel: &str) {
     for owner in owned {
         wait_until(|| async { !fx.running(&owner.thread_id).await }).await;
     }
-}
-
-/// The person's hooks and command-based MCP servers never start for a Vision's run (its
-/// envelope has no plugins); they still do for an ordinary chat.
-#[tokio::test(flavor = "multi_thread")]
-async fn hooks_and_command_mcp_servers_do_not_start_for_a_vision_run() {
-    let _turn = ONE_SERVER.lock().await;
-    let fx = fixture().await;
-    let marks = fx.data.join("marks");
-    std::fs::create_dir_all(&marks).unwrap();
-    let hook_mark = marks.join("hook");
-    let mcp_mark = marks.join("mcp");
-    fx.state
-        .plugin_action(json!({"action": "save", "scope": "global", "spec": {
-            "name": "personal",
-            "hooks": [{"name": "mark", "event": "PromptSubmit", "enabled": true,
-                "command": format!("echo ran >> '{}'", hook_mark.display())}],
-            "mcp": {"marker": {"command": "sh", "enabled": true,
-                "args": ["-c", format!("echo ran >> '{}'", mcp_mark.display())]}},
-            "files": {}
-        }}))
-        .await
-        .unwrap();
-    let provider = quick_provider().await;
-    fx.use_provider(&provider).await;
-    let (vision, channel) = fx.vision_and_channel_in("Wren", "work", "yolo");
-    fx.call_ok(
-        "post_channel_message",
-        json!({"channelId": channel, "text": "@Wren look around"}),
-    );
-    if first_vision_turn(&fx, &channel).await {
-        fx.shut_down().await;
-        return;
-    }
-    let own = fx
-        .state
-        .owners_where(|owner| owner.vision_id == vision && owner.kind == OwnedKind::VisionChat);
-    wait_until(|| async { !fx.running(&own[0].thread_id).await }).await;
-    assert!(!hook_mark.exists(), "no hook ran for the Vision's run");
-    assert!(
-        !mcp_mark.exists(),
-        "no MCP server started for the Vision's run"
-    );
-
-    // The same hook runs in an ordinary chat, so the check above is a real one.
-    let plain = fx.thread().await;
-    fx.call_ok(
-        "set_thread_approval_mode",
-        json!({"threadId": plain, "mode": "yolo"}),
-    );
-    fx.call_ok(
-        "send_message",
-        json!({"threadId": plain, "text": "hello", "reasoningEffort": null}),
-    );
-    wait_until(|| async { hook_mark.exists() }).await;
-    wait_until(|| async { !fx.running(&plain).await }).await;
-    fx.shut_down().await;
 }
 
 /// The answer a Vision gives in these tests: words no log may hold.
@@ -1651,9 +1618,8 @@ fn assert_logs_hold_none(fx: &Fixture, texts: &[&str]) {
     }
 }
 
-/// A Vision answers only within its autonomy: at Small calls a `scope` answer is refused and
-/// the question stays open for the person; under Custom with every row on, sending work out and
-/// spending are still the person's.
+/// Deleting, sending work out and spending are always the person's: at Auto-review and at Full
+/// access a Vision's answer naming one is refused and the question stays open for the person.
 #[tokio::test(flavor = "multi_thread")]
 async fn answers_outside_the_level_are_refused_and_stay_open() {
     let _turn = ONE_SERVER.lock().await;
@@ -1661,36 +1627,23 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
     let provider = scripted_provider().await;
     fx.use_provider(&provider).await;
     let (vision, channel) = fx.vision_and_channel("Wren", "work");
-    let (_own_chat, small) = fx.vision_run(&vision, &channel).await;
-    let (work, question) = fx.asked_question(&small).await;
-    let above = "Your autonomy level leaves this to the person; pass it on in the channel.";
+    let (_own_chat, auto_review) = fx.vision_run(&vision, &channel).await;
+    let (work, question) = fx.asked_question(&auto_review).await;
+    let locked = themis_core::prompts::AGENT_CLI_LOCKED_DECISION;
     let why = "quokka refused reason 5521";
     let refused = fx.agent_call(
-        &small,
+        &auto_review,
         "answer_question",
-        vision_answer(&work, &question, "scope", why),
+        vision_answer(&work, &question, "delete", why),
     );
-    assert!(failed_with(&refused, above), "{}", text(&refused));
-    let rows = [
-        "wording",
-        "tests",
-        "undoable",
-        "retry",
-        "scope",
-        "delete",
-        "dependency",
-    ];
-    let custom: serde_json::Map<String, Value> = rows
-        .iter()
-        .map(|row| ((*row).to_owned(), json!(true)))
-        .collect();
-    fx.set_visions(json!({"autonomy": "custom", "custom": custom}));
-    let (_own_chat, all_rows) = fx.vision_run(&vision, &channel).await;
-    for decision in ["external", "spend"] {
+    assert!(failed_with(&refused, locked), "{}", text(&refused));
+    fx.set_visions(json!({"level": "full_access"}));
+    let (_own_chat, full_access) = fx.vision_run(&vision, &channel).await;
+    for decision in ["delete", "external", "spend"] {
         let args = vision_answer(&work, &question, decision, why);
-        let refused = fx.agent_call(&all_rows, "answer_question", args);
+        let refused = fx.agent_call(&full_access, "answer_question", args);
         assert!(
-            failed_with(&refused, above),
+            failed_with(&refused, locked),
             "{decision}: {}",
             text(&refused)
         );
@@ -1708,7 +1661,7 @@ async fn answers_outside_the_level_are_refused_and_stay_open() {
         .map(|file| std::fs::read_to_string(file.path()).unwrap_or_default())
         .collect::<String>();
     assert!(
-        logged.contains("\"reason\":\"above_autonomy\""),
+        logged.contains("\"reason\":\"locked_decision\""),
         "logged as metadata"
     );
     assert_logs_hold_none(&fx, &[ANSWERED, why]);
@@ -1825,16 +1778,20 @@ async fn a_passed_question_is_answered_by_the_person_from_the_channel() {
     let pass = json!({"threadId": work, "questionId": question, "decision": "scope"});
     let passed = json_of(&fx.agent_call(&agent, "pass_question", pass));
     assert!(passed["answer"].is_null(), "{passed}");
+    // The worker's pass, with its decision, under the channel's chief (who speaks for the team).
     let entries = fx.entries(&channel);
-    let entry = entries
+    let passed: Vec<&Value> = entries
         .iter()
-        .find(|entry| entry["type"] == "passed_on")
-        .expect("in the channel");
+        .filter(|entry| entry["type"] == "passed_on")
+        .collect();
+    assert_eq!(passed.len(), 1, "{passed:?}");
+    let chief = fx.state.channel_get(&channel).unwrap().chief;
     assert_eq!(
-        *entry,
-        json!({"type": "passed_on", "vision_id": vision, "thread_id": work,
+        *passed[0],
+        json!({"type": "passed_on", "vision_id": chief, "thread_id": work,
             "question_id": question, "decision": "scope", "question": "Which license?"})
     );
+    let _ = &vision;
     // Only on a chat it owns.
     let elsewhere = json!({"threadId": own_chat, "questionId": question, "decision": "scope"});
     let refused = fx.agent_call(&agent, "pass_question", elsewhere);

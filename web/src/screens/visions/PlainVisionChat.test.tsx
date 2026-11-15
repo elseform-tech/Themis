@@ -26,11 +26,11 @@ vi.mock("../../lib/visions", async importOriginal => ({
 }));
 
 const base = { provider: "go" as const, model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
-const rookMark = { id: "rook", name: "Rook", shape: "flat", color: "amber" };
+const rookMark = { id: "rook", name: "Rook", color: "amber" };
 const plain: ThreadInfo = { ...base, id: "plain", title: "Plain chat", last_activity_seq: 1, vision: null };
 const work: ThreadInfo = { ...base, id: "w1", title: "Fix the date test", last_activity_seq: 2, vision: rookMark };
 const rook: VisionInfo = { ...rookMark, role: "", soul: "", paused: false, revision: "r", over_budget: false, vision_chats: [], needs: 0, sorry: false };
-const channel: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", approval_mode: "custom", members: ["rook"], revision: "r" };
+const channel: ChannelInfo = { id: "c1", name: "release", topic: "", project_root: "/p", members: ["rook"], chief: "rook", revision: "r" };
 const owned = (hold: OwnedChat["owner"]["hold"]): OwnedChat => ({ ...work, owner: { thread_id: "w1", vision_id: "rook", channel_id: "c1", kind: "work", hold } });
 
 function fixture(extra: Partial<AppState> = {}): AppState {
@@ -66,7 +66,7 @@ beforeEach(() => {
 function cloudOf(element: Element) {
   const cloud = element.querySelector("svg.themis-cloud");
   expect(cloud).not.toBeNull();
-  return { amber: cloud!.classList.contains("themis-cloud--amber"), live: cloud!.classList.contains("is-live") };
+  return { amber: cloud!.querySelector("path")?.getAttribute("fill") === "#F59E0B", live: cloud!.classList.contains("is-live") };
 }
 
 describe("Vision chats in plain chat", () => {

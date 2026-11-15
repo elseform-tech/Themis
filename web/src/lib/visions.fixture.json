@@ -3,15 +3,9 @@
     "id": "v1",
     "name": "Wren",
     "role": "Release captain",
-    "shape": "cloud",
     "color": "teal",
     "model": "go/test-model",
-    "autonomy": "custom",
-    "custom": {
-      "tests": true,
-      "wording": false
-    },
-    "daily_budget_usd": 0.5,
+    "accessory": "glasses",
     "soul": "Careful.",
     "paused": false,
     "revision": "r1",
@@ -28,13 +22,15 @@
   },
   "channel": {
     "id": "c1",
-    "name": "hq",
+    "name": "administration",
     "topic": "Ship 2.0",
     "project_root": "/repo",
-    "approval_mode": "auto",
     "members": [
       "v1"
     ],
+    "chief": "v1",
+    "level": "full_access",
+    "daily_budget_usd": 0.5,
     "revision": "r2",
     "needs": 1
   },
@@ -68,7 +64,10 @@
     "handed_back",
     "sandbox_unavailable",
     "budget_unknown",
-    "unpriced"
+    "unpriced",
+    "teams_arrived",
+    "team_paused",
+    "request_cap"
   ],
   "lines": [
     {
@@ -85,7 +84,10 @@
       "entry": {
         "type": "vision",
         "vision_id": "v1",
-        "text": "On it."
+        "text": "On it.",
+        "tasked": [
+          "v2"
+        ]
       }
     },
     {
@@ -158,10 +160,8 @@
             {
               "name": "Rook",
               "role": "Ships releases",
-              "shape": "wide",
               "color": "rose",
               "model": "go/test-model",
-              "autonomy": "ask",
               "daily_budget_usd": 0.25
             }
           ],
@@ -171,7 +171,6 @@
               "name": "Wren B",
               "role": "Writes docs",
               "paused": true,
-              "autonomy": "small",
               "daily_budget_usd": 0.1
             },
             {
@@ -185,7 +184,41 @@
                 "Wren B"
               ]
             }
-          ]
+          ],
+          "team": {
+            "channel": {
+              "name": "release",
+              "topic": "Ship 0.9"
+            },
+            "chief": {
+              "name": "Juno",
+              "role": "",
+              "color": "teal",
+              "accessory": "glasses",
+              "soul": "Calm and direct.",
+              "model": "go/test-model"
+            },
+            "workers": [
+              {
+                "name": "Tess",
+                "role": "Tests",
+                "color": "coral",
+                "accessory": "magnifier",
+                "soul": ""
+              }
+            ],
+            "daily_budget_usd": 0.5
+          },
+          "hire": {
+            "channel": "docs",
+            "worker": {
+              "name": "Ada",
+              "role": "Writes",
+              "color": "rose",
+              "accessory": "none",
+              "soul": ""
+            }
+          }
         }
       }
     },
@@ -210,6 +243,84 @@
             "action": "changed"
           }
         ]
+      }
+    },
+    {
+      "seq": 9,
+      "at_ms": 9000,
+      "entry": {
+        "type": "request_sent",
+        "vision_id": "v1",
+        "request_id": "r1",
+        "channel_id": "c2",
+        "ask": "Fix the export"
+      }
+    },
+    {
+      "seq": 10,
+      "at_ms": 10000,
+      "entry": {
+        "type": "request_received",
+        "vision_id": "v2",
+        "request_id": "r2",
+        "channel_id": "c2",
+        "ask": "Add a flag"
+      }
+    },
+    {
+      "seq": 11,
+      "at_ms": 11000,
+      "entry": {
+        "type": "request_answered",
+        "vision_id": "v1",
+        "request_id": "r2",
+        "channel_id": "c2",
+        "accepted": true,
+        "note": "On it"
+      }
+    },
+    {
+      "seq": 12,
+      "at_ms": 12000,
+      "entry": {
+        "type": "worker_asked",
+        "vision_id": "v1",
+        "request_id": "r3",
+        "channel_id": "c2",
+        "role": "Tests",
+        "why": "Releases keep breaking"
+      }
+    },
+    {
+      "seq": 13,
+      "at_ms": 13000,
+      "entry": {
+        "type": "routine_set",
+        "vision_id": "v1",
+        "routine_id": "rt1",
+        "schedule": {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "time": "09:00"
+        },
+        "instruction": "Summarise yesterday",
+        "changed": false
+      }
+    },
+    {
+      "seq": 14,
+      "at_ms": 14000,
+      "entry": {
+        "type": "request_result",
+        "vision_id": "v2",
+        "request_id": "q1",
+        "channel_id": "c2",
+        "text": "A centered card in omelette.html"
       }
     }
   ],

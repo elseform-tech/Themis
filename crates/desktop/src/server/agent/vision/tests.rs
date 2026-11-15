@@ -1,12 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use proptest::strategy::Strategy;
-use themis_core::configuration::VisionsConfig;
-use themis_core::visions::{Autonomy, Decision};
+use themis_core::visions::Decision;
 
 use super::*;
 use crate::server::agent::tests::{grant, REFUSED};
-use crate::state::{vision_decisions, Vision};
+use crate::state::vision_decisions;
 
 fn project() -> PathBuf {
     std::env::temp_dir().canonicalize().unwrap()
@@ -17,8 +16,9 @@ fn scope() -> VisionScope {
         vision_id: "v1".into(),
         channel_id: "c1".into(),
         project_root: project(),
-        // Small calls, the default level.
-        decides: vec![Decision::Wording, Decision::Tests],
+        // What a Vision decides at either level.
+        decides: vision_decisions(),
+        chief: false,
     }
 }
 
@@ -140,70 +140,36 @@ fn answer(decision: &str) -> Value {
         "reason": "the usual choice"})
 }
 
-fn profile(autonomy: Autonomy, custom: Option<BTreeMap<String, bool>>) -> Vision {
-    Vision {
-        id: "v1".into(),
-        name: "Wren".into(),
-        role: String::new(),
-        shape: "cloud".into(),
-        color: "teal".into(),
-        model: None,
-        autonomy: Some(autonomy),
-        custom,
-        daily_budget_usd: None,
-        soul: String::new(),
-        paused: false,
-        revision: String::new(),
-    }
-}
-
-/// A Vision answers a question itself only on a decision its autonomy leaves to it; above that
-/// its answer is refused (the question stays the person's), but it may always pass one on. Sending
-/// work out and spending are never its own, Custom with every row on included.
+/// A Vision answers a question itself on every decision but deleting, sending work out and
+/// spending, at either level; those answers are refused (the question stays the person's), but
+/// it may always pass one on.
 #[test]
-fn a_vision_answers_only_within_its_autonomy() {
+fn a_vision_answers_all_but_the_locked_decisions() {
     let owners = owners(Hold::None);
-    let small = vision_grant();
-    assert_eq!(
-        check(&small, "answer_question", &answer("wording"), &owners),
-        None
-    );
-    for above in ["undoable", "scope", "delete", "external", "spend"] {
-        let refused = check(&small, "answer_question", &answer(above), &owners).expect(above);
-        assert_eq!(refused.reason, Reason::AboveAutonomy);
-        assert_eq!(refused.reason.label(), "above_autonomy");
-        assert_eq!(
-            refused.message,
-            "Your autonomy level leaves this to the person; pass it on in the channel."
-        );
-        let pass = json!({"threadId": "work", "questionId": "q", "decision": above});
-        assert_eq!(
-            check(&small, "pass_question", &pass, &owners),
-            None,
-            "{above}"
-        );
-    }
-    // Every row on, as a hand-edited file might say: still never `external` or `spend`.
-    let rows: BTreeMap<String, bool> = Decision::ALL
-        .iter()
-        .map(|decision| (decision.id().to_owned(), true))
-        .collect();
-    let config = VisionsConfig {
-        autonomy: Autonomy::Custom,
-        custom: rows.clone(),
-        ..VisionsConfig::default()
-    };
-    let decides = vision_decisions(&profile(Autonomy::Custom, Some(rows)), &config);
-    let custom = Grant {
-        vision: Some(VisionScope { decides, ..scope() }),
-        ..grant()
-    };
+    let grant = vision_grant();
     for decision in Decision::ALL {
-        let refused = check(&custom, "answer_question", &answer(decision.id()), &owners);
-        let theirs = matches!(decision, Decision::External | Decision::Spend);
+        let refused = check(&grant, "answer_question", &answer(decision.id()), &owners);
+        let locked = matches!(
+            decision,
+            Decision::Delete | Decision::External | Decision::Spend
+        );
         assert_eq!(
-            reason(refused),
-            theirs.then_some(Reason::AboveAutonomy),
+            reason(refused.clone()),
+            locked.then_some(Reason::LockedDecision),
+            "{}",
+            decision.id()
+        );
+        if let Some(refused) = refused {
+            assert_eq!(refused.reason.label(), "locked_decision");
+            assert_eq!(
+                refused.message,
+                themis_core::prompts::AGENT_CLI_LOCKED_DECISION
+            );
+        }
+        let pass = json!({"threadId": "work", "questionId": "q", "decision": decision.id()});
+        assert_eq!(
+            check(&grant, "pass_question", &pass, &owners),
+            None,
             "{}",
             decision.id()
         );
@@ -212,7 +178,7 @@ fn a_vision_answers_only_within_its_autonomy() {
     let theirs = json!({"threadId": "theirs", "questionId": "q", "decision": "wording"});
     for method in ["answer_question", "pass_question"] {
         assert_eq!(
-            reason(check(&small, method, &theirs, &owners)),
+            reason(check(&grant, method, &theirs, &owners)),
             Some(Reason::MethodNotAllowed)
         );
     }
@@ -286,10 +252,38 @@ fn a_vision_grant_never_approves_or_changes_modes() {
         );
     }
     let channel = json!({"threadId": "work", "channelId": "c1", "visionId": "v1"});
+    // The person's Visions methods are refused, except those sharing a name with a team call
+    // (a chief's or a worker's, decided by the team grant).
+    let team_call = |method: &str| {
+        super::chief::CHIEF_CALLS.contains(&method) || super::chief::WORKER_CALLS.contains(&method)
+    };
     for method in crate::server::visions_commands::METHODS {
-        if *method != "list_channel_threads" {
+        if *method != "list_channel_threads" && !team_call(method) {
             assert_eq!(
                 reason(check(&grant, method, &channel, &owners)),
+                Some(Reason::MethodNotAllowed),
+                "{method}"
+            );
+        }
+    }
+    // Switching routines and reading spend are the person's alone, for a chief as for a worker;
+    // nobody answers a request any more.
+    let chief = Grant {
+        vision: Some(VisionScope {
+            chief: true,
+            ..scope()
+        }),
+        ..vision_grant()
+    };
+    for grant in [&grant, &chief] {
+        for method in [
+            "answer_channel_request",
+            "answer_request",
+            "set_routine_enabled",
+            "get_channel_spend",
+        ] {
+            assert_eq!(
+                reason(check(grant, method, &channel, &owners)),
                 Some(Reason::MethodNotAllowed),
                 "{method}"
             );

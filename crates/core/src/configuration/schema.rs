@@ -17,13 +17,12 @@ pub fn schema() -> Value {
     }});
     schema["properties"]["visions"] = serde_json::json!({"type":"object","additionalProperties":false,"properties":{
         "enabled":{"type":"boolean","default":true,"description":"Allow Visions to wake and drive chats (Settings › Visions). A project or run layer may only set it to false."},
-        "autonomy":{"enum":["ask","small","most","nearly_all","custom"],"default":"small","description":"How much a Vision decides without asking. A project or run layer may only lower it."},
-        "custom":{"type":"object","additionalProperties":false,"properties":{
-            "wording":{"type":"boolean"},"tests":{"type":"boolean"},"undoable":{"type":"boolean"},"retry":{"type":"boolean"},
-            "scope":{"type":"boolean"},"delete":{"type":"boolean"},"dependency":{"type":"boolean"}
-        },"description":"With autonomy custom, the decisions a Vision makes itself. External and spend are always yours. A project or run layer may only set rows to false."},
+        "level":{"enum":["auto_review","full_access"],"default":"auto_review","description":"The level of new channels and of channels with none: auto_review (their chats run in Auto) or full_access (YOLO). Either way a chief decides everything but deleting, reaching outside your computer and spending, which are always yours. A project or run layer may only set auto_review."},
         "daily_budget_usd":{"type":"number","minimum":MIN_VISIONS_BUDGET_USD,"maximum":MAX_VISIONS_BUDGET_USD,"default":1.0,"description":"Estimated dollars all Visions together may spend in a day. A project or run layer may only lower it."},
-        "max_wakes":{"type":"integer","minimum":1,"maximum":MAX_VISION_WAKES,"default":6,"description":"Most wakes on one thing before a Vision hands back to you. A project or run layer may only lower it."}
+        "max_wakes":{"type":"integer","minimum":1,"maximum":MAX_VISION_WAKES,"default":16,"description":"Most wakes on one thing before a Vision hands back to you. A project or run layer may only lower it."},
+        "requests_per_day":{"type":"integer","minimum":1,"maximum":MAX_VISION_REQUESTS,"default":10,"description":"Most requests a channel's chief may send other channels in a day. A project or run layer may only lower it."},
+        "routines_per_chief":{"type":"integer","minimum":1,"maximum":MAX_VISION_ROUTINES,"default":10,"description":"Most routines one chief may keep. A project or run layer may only lower it."},
+        "quiet_hours":{"type":["object","null"],"default":null,"additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"},"end":{"type":"string","pattern":"^[0-2][0-9]:[0-5][0-9]$"}},"description":"Local hours when routines and other agent-started wakes wait; your messages always go through. Your own runtime.jsonc only."}
     }});
     schema
 }

@@ -80,9 +80,10 @@ impl AppState {
         let visions = self.visions_list();
         let driven = self.owners_where(|owner| owner.hold != Hold::TakenOver);
         // Judged before the chats' lock is taken: the judgement reads usage and configuration.
+        let over_map = self.visions_over_map();
         let over: Vec<bool> = visions
             .iter()
-            .map(|vision| self.visions_over_budget(&vision.id))
+            .map(|vision| over_map.get(&vision.id).copied().unwrap_or(false))
             .collect();
         for (vision, over) in visions.iter().zip(&over) {
             self.visions_budget_shown(&vision.id, *over);
@@ -281,8 +282,9 @@ impl AppState {
         if visions.is_empty() || !enabled {
             return;
         }
+        let over = self.visions_over_map();
         for vision in visions {
-            let over = self.visions_over_budget(&vision.id);
+            let over = over.get(&vision.id).copied().unwrap_or(false);
             self.visions_budget_shown(&vision.id, over);
         }
     }

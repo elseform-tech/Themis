@@ -27,12 +27,9 @@ fn setup(model: Option<&str>) -> Setup {
                 id: String::new(),
                 name: "Wren".into(),
                 role: String::new(),
-                shape: "cloud".into(),
                 color: "teal".into(),
                 model: model.map(str::to_owned),
-                autonomy: None,
-                custom: None,
-                daily_budget_usd: None,
+                accessory: "none".into(),
                 soul: String::new(),
                 paused: false,
                 revision: String::new(),
@@ -47,8 +44,11 @@ fn setup(model: Option<&str>) -> Setup {
                 name: "work".into(),
                 topic: String::new(),
                 project_root: project.clone(),
-                approval_mode: ApprovalMode::Custom,
                 members: vec![vision.id.clone()],
+                chief: String::new(),
+                level: None,
+                daily_budget_usd: None,
+                paused_workers: Vec::new(),
                 revision: String::new(),
             },
             None,
@@ -59,6 +59,7 @@ fn setup(model: Option<&str>) -> Setup {
         channel_id: channel.id,
         project_root: project,
         decides: Vec::new(),
+        chief: false,
     };
     Setup {
         _dir: dir,
@@ -83,7 +84,8 @@ async fn a_work_chat_runs_on_the_visions_model_or_the_default() {
         .await
         .unwrap();
     assert_eq!(info.model, "vision-model");
-    assert_eq!(info.approval_mode, ApprovalMode::Custom);
+    // Settings' level lets the team decide some things, so its chats run in Auto.
+    assert_eq!(info.approval_mode, ApprovalMode::Auto);
 
     let without = setup(None);
     let info = without
@@ -577,6 +579,7 @@ async fn a_persons_steer_of_a_visions_message_keeps_the_visions_words() {
         project_root: fx.scope.project_root.clone(),
         config: themis_core::configuration::RuntimeConfig::default(),
         is_git: false,
+        chat_model: String::new(),
     };
     assert!(!reviewer.person_words().contains("MIT"));
 
@@ -594,4 +597,29 @@ async fn a_persons_steer_of_a_visions_message_keeps_the_visions_words() {
         .map(|message| (message.text, message.vision_id))
         .collect();
     assert_eq!(queued, [("Apache".to_owned(), Some(vision))]);
+}
+
+/// A chief's pause of a worker in this channel holds the worker's sends there, as the
+/// person's pause does.
+#[tokio::test]
+async fn a_team_pause_holds_the_workers_sends() {
+    let fx = setup(None);
+    let info = fx.state.visions_start_work_chat(&fx.scope).await.unwrap();
+    fx.state
+        .visions_team_pause(&fx.scope.channel_id, &fx.scope.vision_id, true)
+        .unwrap();
+    let refused = fx
+        .state
+        .visions_send(
+            sink(),
+            &fx.scope.vision_id,
+            &info.id,
+            "go".into(),
+            None,
+            Vec::new(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused, themis_core::prompts::AGENT_CLI_VISION_PAUSED);
+    assert!(!fx.state.get_thread(&info.id).await.unwrap().running);
 }

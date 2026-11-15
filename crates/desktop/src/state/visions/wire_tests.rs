@@ -8,9 +8,11 @@ use std::collections::BTreeMap;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use themis_core::configuration::ApprovalMode;
-use themis_core::visions::Autonomy;
+use themis_core::visions::Level;
 
-use super::admin::{Change, NewChannel, NewVision, SetUpAction, SetUpKind};
+use super::admin::{
+    Change, Hire, NewChannel, NewMember, NewTeam, NewVision, SetUpAction, SetUpKind, TeamChannel,
+};
 use super::listing::{VisionChat, VisionListed};
 use super::*;
 
@@ -45,6 +47,7 @@ fn every_entry() -> Vec<ChannelEntry> {
         ChannelEntry::Vision {
             vision_id: "v1".into(),
             text: "On it.".into(),
+            tasked: vec!["v2".into()],
         },
         ChannelEntry::ChatStarted {
             vision_id: "v1".into(),
@@ -97,6 +100,48 @@ fn every_entry() -> Vec<ChannelEntry> {
                 },
             ],
         },
+        ChannelEntry::RequestSent {
+            vision_id: "v1".into(),
+            request_id: "r1".into(),
+            channel_id: "c2".into(),
+            ask: "Fix the export".into(),
+        },
+        ChannelEntry::RequestReceived {
+            vision_id: "v2".into(),
+            request_id: "r2".into(),
+            channel_id: "c2".into(),
+            ask: "Add a flag".into(),
+        },
+        ChannelEntry::RequestAnswered {
+            vision_id: "v1".into(),
+            request_id: "r2".into(),
+            channel_id: "c2".into(),
+            accepted: true,
+            note: "On it".into(),
+        },
+        ChannelEntry::WorkerAsked {
+            vision_id: "v1".into(),
+            request_id: "r3".into(),
+            channel_id: "c2".into(),
+            role: "Tests".into(),
+            why: "Releases keep breaking".into(),
+        },
+        ChannelEntry::RoutineSet {
+            vision_id: "v1".into(),
+            routine_id: "rt1".into(),
+            schedule: crate::state::Schedule {
+                days: vec![1, 2, 3, 4, 5],
+                time: "09:00".into(),
+            },
+            instruction: "Summarise yesterday".into(),
+            changed: false,
+        },
+        ChannelEntry::RequestResult {
+            vision_id: "v2".into(),
+            request_id: "q1".into(),
+            channel_id: "c2".into(),
+            text: "A centered card in omelette.html".into(),
+        },
     ];
     for (at, entry) in entries.iter().enumerate() {
         let place = match entry {
@@ -108,6 +153,12 @@ fn every_entry() -> Vec<ChannelEntry> {
             ChannelEntry::Notice { .. } => 5,
             ChannelEntry::Proposal { .. } => 6,
             ChannelEntry::ProposalApplied { .. } => 7,
+            ChannelEntry::RequestSent { .. } => 8,
+            ChannelEntry::RequestReceived { .. } => 9,
+            ChannelEntry::RequestAnswered { .. } => 10,
+            ChannelEntry::WorkerAsked { .. } => 11,
+            ChannelEntry::RoutineSet { .. } => 12,
+            ChannelEntry::RequestResult { .. } => 13,
         };
         assert_eq!(place, at);
     }
@@ -126,10 +177,8 @@ fn every_proposal_field() -> Proposal {
         visions: vec![NewVision {
             name: "Rook".into(),
             role: "Ships releases".into(),
-            shape: "wide".into(),
             color: "rose".into(),
             model: Some("go/test-model".into()),
-            autonomy: Some(Autonomy::Ask),
             daily_budget_usd: Some(0.25),
         }],
         changes: vec![
@@ -138,7 +187,6 @@ fn every_proposal_field() -> Proposal {
                 name: Some("Wren B".into()),
                 role: Some("Writes docs".into()),
                 paused: Some(true),
-                autonomy: Some(Autonomy::Small),
                 daily_budget_usd: Some(0.1),
                 ..Change::default()
             },
@@ -151,6 +199,40 @@ fn every_proposal_field() -> Proposal {
                 ..Change::default()
             },
         ],
+        team: Some(Box::new(NewTeam {
+            channel: TeamChannel {
+                name: "release".into(),
+                topic: "Ship 0.9".into(),
+            },
+            chief: NewMember {
+                name: "Juno".into(),
+                role: String::new(),
+                color: "teal".into(),
+                accessory: "glasses".into(),
+                soul: "Calm and direct.".into(),
+                model: Some("go/test-model".into()),
+            },
+            workers: vec![NewMember {
+                name: "Tess".into(),
+                role: "Tests".into(),
+                color: "coral".into(),
+                accessory: "magnifier".into(),
+                soul: String::new(),
+                model: None,
+            }],
+            daily_budget_usd: Some(0.5),
+        })),
+        hire: Some(Box::new(Hire {
+            channel: "docs".into(),
+            worker: NewMember {
+                name: "Ada".into(),
+                role: "Writes".into(),
+                color: "rose".into(),
+                accessory: "none".into(),
+                soul: String::new(),
+                model: None,
+            },
+        })),
     }
 }
 
@@ -166,6 +248,9 @@ fn every_notice_kind() -> Vec<NoticeKind> {
         NoticeKind::SandboxUnavailable,
         NoticeKind::BudgetUnknown,
         NoticeKind::Unpriced,
+        NoticeKind::TeamsArrived,
+        NoticeKind::TeamPaused,
+        NoticeKind::RequestCap,
     ];
     for (at, kind) in kinds.iter().enumerate() {
         let place = match kind {
@@ -178,6 +263,9 @@ fn every_notice_kind() -> Vec<NoticeKind> {
             NoticeKind::SandboxUnavailable => 6,
             NoticeKind::BudgetUnknown => 7,
             NoticeKind::Unpriced => 8,
+            NoticeKind::TeamsArrived => 9,
+            NoticeKind::TeamPaused => 10,
+            NoticeKind::RequestCap => 11,
         };
         assert_eq!(place, at);
     }
@@ -202,15 +290,9 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             id: "v1".into(),
             name: "Wren".into(),
             role: "Release captain".into(),
-            shape: "cloud".into(),
             color: "teal".into(),
             model: Some("go/test-model".into()),
-            autonomy: Some(Autonomy::Custom),
-            custom: Some(BTreeMap::from([
-                ("tests".into(), true),
-                ("wording".into(), false),
-            ])),
-            daily_budget_usd: Some(0.5),
+            accessory: "glasses".into(),
             soul: "Careful.".into(),
             paused: false,
             revision: "r1".into(),
@@ -228,11 +310,14 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
     let channel = listing::ChannelListed {
         channel: Channel {
             id: "c1".into(),
-            name: "hq".into(),
+            name: "administration".into(),
             topic: "Ship 2.0".into(),
             project_root: "/repo".into(),
-            approval_mode: ApprovalMode::Auto,
             members: vec!["v1".into()],
+            chief: "v1".into(),
+            level: Some(Level::FullAccess),
+            daily_budget_usd: Some(0.5),
+            paused_workers: Vec::new(),
             revision: "r2".into(),
         },
         needs: 1,

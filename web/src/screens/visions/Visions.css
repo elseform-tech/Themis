@@ -1,16 +1,9 @@
 /* Visions: the cast's clouds, the rail cloud, the channels bar and the channel (canvas boards Visions,
    VisionsEntry, VisionsNew, VisionsQuestions, VisionsThread). Colours are app tokens; a Vision's own
-   colour is its `--themis-cast-*` token. */
+   colour is in cast.ts. */
 
 /* The cast. Clouds move only when live, and never with reduced motion. */
 .themis-cloud { flex: none; overflow: visible; transform-box: fill-box; transform-origin: 50% 85%; }
-.themis-cloud--blue { color: var(--themis-cast-blue); }
-.themis-cloud--teal { color: var(--themis-cast-teal); }
-.themis-cloud--violet { color: var(--themis-cast-violet); }
-.themis-cloud--amber { color: var(--themis-cast-amber); }
-.themis-cloud--rose { color: var(--themis-cast-rose); }
-.themis-cloud--indigo { color: var(--themis-cast-indigo); }
-.themis-cloud-crown { fill: var(--themis-cast-amber); stroke: var(--themis-cast-ink); stroke-width: 1.4; stroke-linejoin: round; }
 .themis-cloud-eyes { fill: none; stroke: var(--themis-cast-ink); stroke-linecap: round; transform-box: fill-box; transform-origin: center; }
 .themis-cloud--sleep { opacity: .55; }
 .themis-cloud.is-live.themis-cloud--calm { animation: themis-cloud-breathe 4.5s ease-in-out infinite; }
@@ -21,6 +14,19 @@
 .themis-cloud.is-live.themis-cloud--work .themis-cloud-eyes { animation: themis-cloud-pulse 1.3s ease-in-out infinite; }
 .themis-cloud.is-live.themis-cloud--needs { animation: themis-cloud-nudge 6s infinite; }
 .themis-cloud.is-live.themis-cloud--sleep { animation: themis-cloud-breathe 7s ease-in-out infinite; }
+
+/* The still header picture (ChiefMoods): its motion classes by expression; reduced motion stills it. */
+.themis-still { overflow: visible; flex: none; }
+.vc { overflow: visible; transform-box: fill-box; transform-origin: 50% 85%; }
+.vc .e { transform-box: fill-box; transform-origin: center; }
+.vc-calm { animation: themis-cloud-breathe 4.5s ease-in-out infinite; }
+.vc-calm .e { animation: themis-cloud-blink 5s infinite; }
+.vc-work { animation: themis-cloud-bob 1.3s ease-in-out infinite; }
+.vc-needs { animation: themis-still-hop 3s infinite; }
+.vc-worry { animation: themis-still-shiver 2.6s ease-in-out infinite; }
+.vc-sleep { animation: themis-cloud-breathe 7s ease-in-out infinite; }
+@keyframes themis-still-hop { 0%, 70%, 100% { transform: none; } 78% { transform: translateY(-3px); } 86% { transform: none; } 92% { transform: translateY(-1px); } }
+@keyframes themis-still-shiver { 0%, 100% { transform: none; } 20% { transform: translateX(-.4px); } 40% { transform: translateX(.4px); } 60% { transform: none; } }
 
 /* The rail cloud: an outline in the rail's colour; it hops once when something new needs you. */
 .themis-rail-cloud { overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
@@ -41,7 +47,7 @@
 @keyframes themis-cloud-nudge { 0%, 84%, 100% { transform: none; } 88% { transform: translateY(-4px); } 92% { transform: none; } 95% { transform: translateY(-1.5px); } }
 @keyframes themis-cloud-hop { 0%, 100% { transform: none; } 35% { transform: translateY(-3px); } 60% { transform: translateY(0); } 75% { transform: translateY(-1px); } }
 @media (prefers-reduced-motion: reduce) {
-  .themis-cloud, .themis-cloud *, .themis-rail-cloud, .themis-rail-cloud * { animation: none !important; }
+  .themis-cloud, .themis-cloud *, .themis-rail-cloud, .themis-rail-cloud *, .vc, .vc * { animation: none !important; }
 }
 
 /* The channels bar. */
@@ -52,29 +58,41 @@
 .themis-channel-row:hover { background: var(--themis-nav-hover-bg); }
 .themis-channel-row.themis-sidebar-row--active { background: var(--themis-card); color: var(--themis-text); font-weight: 600; }
 .themis-channel-row.is-waiting { color: var(--themis-text); font-weight: 600; }
-.themis-vision-row:hover { background: var(--themis-nav-hover-bg); }
-.themis-vision-row.themis-sidebar-row--active { background: var(--themis-card); color: var(--themis-text); }
-.themis-channel-title { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.themis-channel-title:hover, .themis-channel-title[aria-expanded="true"] { color: var(--themis-accent); }
-.themis-mood-tag--needs { color: var(--themis-accent); }
-.themis-mood-tag--sorry { color: var(--themis-danger); }
+/* The open channel's team: the chief, then its workers indented, each with its state dot. */
+.themis-team-row { height: 36px; color: var(--themis-text); }
+.themis-team-row.is-worker { height: 30px; padding-left: 26px; }
+.themis-team-row:hover { background: var(--themis-nav-hover-bg); }
+.themis-team-row.themis-sidebar-row--active { background: var(--themis-card); }
+.themis-team-row-name { font-weight: 600; }
+.themis-team-row.is-worker .themis-team-row-name { font-weight: 500; }
+.themis-team-row-role { color: var(--themis-text-2); font-size: 11.5px; font-weight: 400; }
 
-/* A channel and `# hq`. */
-.themis-channel { display: flex; flex-direction: column; min-height: 0; padding: 0 24px; }
-.themis-channel-head { flex: none; display: flex; align-items: center; gap: 12px; height: 52px; }
-.themis-channel-head h1 { margin: 0; font-size: 15px; font-weight: 600; white-space: nowrap; }
-.themis-channel-topic { flex: 1; min-width: 0; overflow: hidden; color: var(--themis-text-2); text-overflow: ellipsis; white-space: nowrap; }
-.themis-channel-members { display: flex; gap: 4px; margin-left: auto; }
-.themis-channel-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 0 16px; }
+/* A channel and `# administration`. */
+.themis-channel { position: relative; display: flex; flex-direction: column; min-height: 0; padding: 0 40px; }
+.themis-channel-log { flex: 1; min-height: 0; overflow-y: auto; padding: 84px 0 12px; }
+/* The log fades out under the channel name and the floating chief, whatever the sky behind it. */
+.themis-channel-log { -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 84px); mask-image: linear-gradient(to bottom, transparent 0, transparent 44px, #000 84px); }
 .themis-channel-empty { margin: 0; color: var(--themis-text-2); }
-.themis-channel-lines { display: flex; flex-direction: column; gap: 18px; max-width: 760px; margin: 0; padding: 0; list-style: none; }
-.themis-channel-entry { display: flex; gap: 12px; }
-.themis-channel-avatar { flex: none; display: grid; place-items: center; width: 30px; height: 30px; }
-.themis-channel-person { border-radius: 50%; background: var(--themis-pill); color: var(--themis-accent); font-size: 13px; font-weight: 600; }
-.themis-channel-body { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
-.themis-channel-who { display: flex; align-items: baseline; gap: 8px; font-weight: 600; }
+.themis-channel-lines { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.themis-channel-entry { display: flex; flex-direction: column; gap: 4px; }
+.themis-channel-entry.is-mine { align-items: flex-end; }
+.themis-channel-entry.is-theirs { align-items: flex-start; }
+.themis-channel-body { display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 0; }
 .themis-channel-time { margin-left: auto; color: var(--themis-text-3); font-size: 11px; font-weight: 400; }
-.themis-channel-who .themis-channel-time { margin-left: 0; }
+/* Bubbles: the person's on the right in the accent tint, the chief's on the left on a card. */
+.themis-bubble { box-sizing: border-box; max-width: 72%; margin: 0; padding: 9px 13px; border-radius: 16px; overflow-wrap: anywhere; text-wrap: pretty; }
+/* The person's bubble: the chief's colour mixed into the sky's own bubble surface, so it follows Morning, Noon, Night and Classic. */
+.themis-bubble-me { border-bottom-right-radius: 6px; background: color-mix(in srgb, var(--themis-chief-color, var(--themis-accent)) 26%, var(--themis-card)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--themis-chief-color, var(--themis-accent)) 40%, var(--themis-border-subtle)); white-space: pre-wrap; }
+.themis-bubble-chief { border-bottom-left-radius: 6px; background: var(--themis-card); box-shadow: inset 0 0 0 1px var(--themis-border-subtle); }
+.themis-channel-entry.is-mine > .themis-channel-time { margin: 0 4px; }
+/* A worker's thread under the chief's message that tasked it. */
+.themis-thread-indicators { display: flex; flex-wrap: wrap; gap: 6px; }
+.themis-thread-indicator { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px; border: 0; border-radius: 10px; background: var(--themis-well); color: var(--themis-text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.themis-thread-indicator b { font-weight: 600; }
+.themis-thread-indicator:hover { background: var(--themis-nav-hover-bg); }
+.themis-thread-indicator:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 1px; }
+.themis-thread-indicator-state { display: inline-flex; align-items: center; gap: 5px; color: var(--themis-text-2); }
+.themis-thread-indicator-more { color: var(--themis-text-2); }
 .themis-channel-text { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .themis-mention { padding: 1px 7px; border-radius: var(--themis-radius-pill); background: var(--themis-pill); color: var(--themis-accent); font-weight: 500; }
 .themis-channel-notice-text { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
@@ -83,15 +101,14 @@
 .themis-chat-chip .themis-sidebar-icon { flex: 0 0 13px; width: 13px; height: 13px; }
 .themis-chat-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .themis-channel-gone { padding-top: 16px; }
-.themis-channel-notice { display: flex; align-items: center; gap: 8px; margin-left: 42px; padding: 8px 12px; border-radius: 12px; background: var(--themis-well); color: var(--themis-text-2); font-size: 12px; }
+.themis-channel-notice { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--themis-well); color: var(--themis-text-2); font-size: 12px; }
 /* A Vision whose run is going and has not posted yet; its posts fade in (VisionChannel's .shim). */
-.themis-channel-thinking { display: flex; align-items: center; gap: 12px; }
-.themis-channel-thinking-text { display: inline-flex; align-items: baseline; color: var(--themis-text-2); }
-.themis-thinking-dots { display: inline-flex; gap: 3px; margin-left: 3px; }
-.themis-thinking-dots i { width: 4px; height: 4px; border-radius: var(--themis-radius-pill); background: currentColor; animation: themis-thinking-wave 1.2s ease-in-out infinite; }
+.themis-channel-thinking { display: flex; align-items: center; gap: 10px; padding: 0 4px; color: var(--themis-text-2); }
+.themis-thinking-dots { display: inline-flex; align-items: center; gap: 4px; height: 14px; }
+.themis-thinking-dots i { width: 5px; height: 5px; border-radius: var(--themis-radius-pill); background: currentColor; animation: themis-thinking-wave 1.2s ease-in-out infinite; }
 .themis-thinking-dots i:nth-child(2) { animation-delay: .15s; }
 .themis-thinking-dots i:nth-child(3) { animation-delay: .3s; }
-@keyframes themis-thinking-wave { 0%, 60%, 100% { transform: none; opacity: .45; } 30% { transform: translateY(-3px); opacity: 1; } }
+@keyframes themis-thinking-wave { 0%, 60%, 100% { transform: none; opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
 .themis-channel-entry.is-fresh { animation: themis-channel-fade .32s ease-out; }
 @keyframes themis-channel-fade { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
@@ -121,7 +138,10 @@
 .themis-question-foot { display: flex; align-items: center; gap: 12px; }
 .themis-question-why { flex: 1; margin: 0; color: var(--themis-text-2); font-size: 11px; }
 .themis-question-text { margin: 0; font-weight: 600; }
-/* The admin's proposal in # hq: its items, then what it set up. */
+.themis-request-result .themis-mention { border: 0; font: inherit; cursor: pointer; }
+.themis-request-result-time { align-self: flex-start; margin: 0; }
+.themis-question-folded { max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The admin's proposal in # administration: its items, then what it set up. */
 .themis-proposal-items { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
 .themis-proposal-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .themis-proposal-items b { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
@@ -136,7 +156,7 @@
 .themis-question-choices button { padding: 6px 12px; border: 0; border-radius: 10px; background: transparent; box-shadow: inset 0 0 0 1px var(--themis-border); color: var(--themis-text); font: inherit; cursor: pointer; }
 .themis-question-choices button.is-recommended { background: var(--themis-accent); box-shadow: none; color: var(--themis-accent-ink); font-weight: 600; }
 .themis-question-own { box-sizing: border-box; width: 100%; height: 34px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--themis-well); color: var(--themis-text); font: inherit; }
-.themis-channel-approval { display: flex; flex-direction: column; gap: 6px; max-width: 640px; margin-left: 42px; }
+.themis-channel-approval { display: flex; flex-direction: column; gap: 6px; max-width: 640px; }
 
 /* The composer: the chat composer's frame (ThreadView.css), sized to the channel. Its focus edge
    shows focus, so the text area draws none of its own. */
@@ -145,11 +165,6 @@
 .themis-channel-input:focus, .themis-channel-input:focus-visible { outline: none; box-shadow: none; }
 .themis-channel .themis-thread-composer:focus-within { box-shadow: var(--themis-panel-edge), 0 0 0 1px var(--themis-accent); }
 .themis-channel-input::placeholder { color: var(--themis-text-3); }
-.themis-channel-mention { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--themis-text-2); cursor: pointer; }
-.themis-channel-mention:hover { color: var(--themis-text); }
-.themis-mention-list { position: absolute; bottom: calc(100% + 6px); left: 12px; z-index: 5; display: grid; gap: 2px; min-width: 180px; padding: 6px; border-radius: 12px; background: var(--themis-raised); box-shadow: 0 12px 32px color-mix(in srgb, var(--themis-shadow) 45%, transparent); }
-.themis-mention-list button { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--themis-text); font: inherit; text-align: left; cursor: pointer; }
-.themis-mention-list button[aria-selected="true"], .themis-mention-list button:hover { background: var(--themis-nav-hover-bg); }
 
 /* A Vision's chat opened from its channel. */
 .themis-vision-chat { display: flex; flex-direction: column; min-height: 0; }
@@ -163,9 +178,9 @@
 /* New channel and New Vision. */
 .themis-visions-sheet-name { display: flex; align-items: flex-end; gap: 14px; }
 .themis-visions-sheet-name > .themis-input-wrap { flex: 1; }
-.themis-visions-shapes { display: flex; justify-content: space-between; }
-.themis-visions-shapes button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
-.themis-visions-shapes button[aria-pressed="true"] { background: var(--themis-pill); }
+.themis-visions-accessories { display: flex; justify-content: space-between; }
+.themis-visions-accessories button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
+.themis-visions-accessories button[aria-pressed="true"] { background: var(--themis-pill); }
 .themis-visions-colors { display: flex; justify-content: space-between; padding: 0 10px; }
 .themis-visions-colors button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: currentColor; cursor: pointer; }
 .themis-visions-colors button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--themis-raised), 0 0 0 3.5px var(--themis-text); }
@@ -173,3 +188,53 @@
 .themis-visions-picks > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
 .themis-visions-pick { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border: 0; border-radius: var(--themis-radius-pill); background: transparent; box-shadow: inset 0 0 0 1px var(--themis-border); color: var(--themis-text-2); font: inherit; cursor: pointer; opacity: .6; }
 .themis-visions-pick[aria-pressed="true"] { background: var(--themis-pill); color: var(--themis-text); opacity: 1; }
+
+/* The 3D chief: a soft glow behind the body (ChiefMoods); the canvas is transparent. */
+.themis-chief-scene { position: relative; flex: none; background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 18%, transparent), transparent); }
+.themis-chief-scene .themis-still, .themis-chief-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* The top of a channel (board ChannelPlain): the name small at the top left, the chief floating
+   at the top middle with a soft glow, and a band fading the log out under them. */
+.themis-state-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
+.themis-team-gradient { background: linear-gradient(100deg, var(--themis-mark-from), var(--themis-mark-to)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+@media (forced-colors: active) { .themis-team-gradient { background: none; color: CanvasText; forced-color-adjust: auto; } }
+.themis-channel-name { position: absolute; top: 16px; left: 22px; z-index: 2; margin: 0; font-size: 14px; font-weight: 600; line-height: 1; }
+.themis-channel-name button { padding: 0; border: 0; background: none; color: var(--themis-text); font: inherit; cursor: pointer; }
+.themis-channel-name button:hover, .themis-channel-name button[aria-expanded="true"] { color: var(--themis-accent); }
+.themis-channel-name-hash { color: var(--themis-text-2); }
+.themis-floating-chief { position: absolute; top: 10px; left: 50%; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0; border: 0; background: none; color: var(--themis-text-2); font: inherit; font-size: 12px; transform: translateX(-50%); cursor: pointer; }
+.themis-floating-chief::before { content: ""; position: absolute; top: -20px; z-index: -1; width: 140px; height: 100px; background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 18%, transparent), transparent); pointer-events: none; }
+.themis-floating-chief-name { display: flex; align-items: center; gap: 6px; }
+.themis-floating-chief-name b { color: var(--themis-text); font-weight: 600; }
+.themis-floating-chief:hover .themis-floating-chief-name b { color: var(--themis-accent); }
+.themis-floating-chief:focus-visible { outline: 2px solid var(--themis-accent); outline-offset: 2px; border-radius: 8px; }
+.themis-chief-welcome { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 100%; }
+.themis-chief-welcome::before { content: ""; position: absolute; top: 50%; left: 50%; width: 320px; height: 300px; transform: translate(-50%, -62%); background: radial-gradient(closest-side, color-mix(in srgb, var(--themis-accent) 24%, transparent), transparent); pointer-events: none; }
+.themis-chief-welcome .themis-chief-scene { position: relative; background: none; }
+.themis-chief-welcome-name { position: relative; display: inline-flex; align-items: baseline; gap: 8px; padding: 0; border: 0; background: none; color: var(--themis-text-2); font: inherit; font-size: 15px; cursor: pointer; }
+.themis-chief-welcome-name b { color: var(--themis-text); font-weight: 600; }
+.themis-chief-welcome-name:hover b { color: var(--themis-accent); }
+.themis-chief-welcome-state { position: relative; display: inline-flex; align-items: center; gap: 6px; color: var(--themis-text-2); }
+
+/* A request between channels or a new routine: one quiet line under the chief's messages. */
+.themis-team-note { align-self: center; color: var(--themis-text-2); font-size: 12px; }
+.themis-team-note-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.themis-team-note .themis-mention { border: 0; font: inherit; cursor: pointer; }
+.themis-team-note b { color: var(--themis-text); font-weight: 600; }
+.themis-team-note .themis-channel-time { margin-left: 0; }
+.themis-team-note-icon { flex: none; }
+
+/* A team or a hire Atlas proposes (board AdminChannel). */
+.themis-team-card { display: flex; flex-direction: column; gap: 8px; max-width: 520px; margin-top: 6px; padding: 12px 14px; border-radius: 14px; background: var(--themis-card); box-shadow: inset 0 0 0 1px var(--themis-border-subtle); }
+.themis-team-card h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 600; }
+.themis-team-card h3 .themis-mention { border: 0; font: inherit; font-weight: 500; }
+.themis-team-card h3 button.themis-mention { cursor: pointer; }
+.themis-team-card ul { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.themis-team-card-member { display: flex; align-items: center; gap: 8px; }
+.themis-team-card-member b { font-weight: 600; }
+.themis-team-card-member span { color: var(--themis-text-2); }
+.themis-team-card-facts { display: flex; gap: 16px; color: var(--themis-text-2); font-size: 12px; }
+.themis-team-card-facts b { color: var(--themis-text); font-weight: 500; }
+.themis-team-card-done { display: inline-flex; margin-left: auto; align-items: center; gap: 5px; color: var(--themis-success); font-size: 12px; font-weight: 600; }
+
+/* A request this channel received waits for the person: its two answers sit on the line. */

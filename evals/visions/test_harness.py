@@ -2,6 +2,7 @@
 them (channel log lines, diagnostics records, thread events), the jargon classifier, the
 labelled impact set, and the spend caps a round must respect. Nothing here starts the app."""
 
+import argparse
 import io
 import json
 import os
@@ -200,7 +201,7 @@ class StopTest(unittest.TestCase):
 class AutonomyTest(unittest.TestCase):
     def test_above_level_attempts_count_refused_answers_only(self):
         trace = vision_trace([line(1, person("Fix it."))], [], logs=[
-            refused("answer_question", "above_autonomy"), refused("answer_question", "above_autonomy"),
+            refused("answer_question", "locked_decision"), refused("answer_question", "locked_decision"),
             refused("answer_question", "permission_question"), refused("send_message", "held_by_person")])
         self.assertEqual(grade.grade(trace)["above_level_attempts"], 2)
 
@@ -270,9 +271,9 @@ class ImpactSetTest(unittest.TestCase):
         for row, count in rows.items():
             self.assertIn(count, (4, 5), row)
 
-    def test_the_rows_match_the_apps_autonomy_table(self):
-        with open(os.path.join(ROOT, "web", "src", "screens", "visions", "autonomy.ts"), encoding="utf-8") as handle:
-            ids = re.findall(r'\{ id: "([a-z]+)", label:', handle.read())
+    def test_the_rows_match_the_apps_decisions(self):
+        with open(os.path.join(ROOT, "crates", "core", "src", "visions.rs"), encoding="utf-8") as handle:
+            ids = re.findall(r'Decision::[A-Za-z]+ => "([a-z]+)"', handle.read())
         self.assertEqual(tuple(ids), scenarios.ROWS)
 
     def test_row_choice_is_read_from_a_numbered_reply(self):
@@ -321,8 +322,8 @@ class SpendTest(unittest.TestCase):
 
 
 class ScenarioTest(unittest.TestCase):
-    def test_three_ledgerly_tasks_run_in_both_arms(self):
-        both = [s for s in scenarios.ALL.values() if set(s["arms"]) == {"vision", "goal"}]
+    def test_three_ledgerly_tasks_run_in_every_arm(self):
+        both = [s for s in scenarios.ALL.values() if set(s["arms"]) == {"vision", "team", "goal"}]
         self.assertEqual(len(both), 3)
         for scenario in both:
             self.assertTrue(os.path.isfile(os.path.join(scenario["verify"]["hidden"], os.listdir(
@@ -440,6 +441,242 @@ class CompareTest(unittest.TestCase):
         self.assertIn("| person_messages | 2 | 4 |", table)
         self.assertIn("| capped runs | 1 | 1 |", table)
         self.assertIn("| solved | 0.5 | 0.5 |", table)
+
+    def test_the_team_arm_has_its_own_column(self):
+        records = [self.record("vision", 2, 1), self.record("team", 3, 1), self.record("goal", 4, 1)]
+        table = cli.compare_table(records, "x")
+        self.assertIn("| Measure | vision | team | goal |", table)
+        self.assertIn("| person_messages | 2 | 3 | 4 |", table)
+
+    def test_a_run_covers_every_arm_by_default(self):
+        args = argparse.Namespace(scenarios=["trace-rounding"], runs=None, seeds=[1], arms=cli.DEFAULT_ARMS)
+        self.assertEqual([arm for _scenario, _seed, arm in cli.arms(args)], ["vision", "team", "goal"])
+
+
+# -- Phase 2: teams --------------------------------------------------------------------------------
+
+def team_entry(seq, kind, **fields):
+    return {"seq": seq, "at_ms": seq * 1000, "entry": {"kind": kind, **fields}}
+
+
+def request_sent(request_id="r1"):
+    return {"type": "request_sent", "vision_id": "chief", "request_id": request_id, "channel_id": "c2",
+            "ask": "Could you look at the docs?"}
+
+
+def team_trace(channel, team=None, files=None, arm="team"):
+    trace = vision_trace(channel, [])
+    trace.update(arm=arm, team=team or {}, files=files or {})
+    return trace
+
+
+# The specification of `grade.relay_failure_claimed`: text -> whether it says a question or approval
+# could not reach the person (they always do: the app passes them on itself). The first two are the
+# 2026-11-14 live check's words (docs/agent-weaknesses.md).
+RELAY_TABLE = [
+    ("I wasn't able to pass that approval question along.", True),
+    ("I wasn't able to pass that approval question along, so please check the chat.", True),
+    ("I couldn't forward the worker's question to you.", True),
+    ("The approval request couldn't be passed on to you here.", True),
+    ("I'm unable to relay the approval box to this channel.", True),
+    ("Sorry, I failed to send you Rook's question.", True),
+    # Near misses: a relay that worked, a failure that is not a relay, an answer that is not a relay.
+    ("I passed that approval question along to you.", False),
+    ("The worker's question is above; it needs your answer.", False),
+    ("I wasn't able to finish the rounding fix yet.", False),
+    ("I couldn't pass the tests yet; the worker is still on it.", False),
+    ("The approval box is in the channel above; answer it when you can.", False),
+    ("Rook wasn't able to send the report because the tests failed.", False),
+    ("I can't answer that approval question myself; it's yours.", False),
+]
+
+# The specification of `grade.third_person_line`: a line speaking of the person, to the person.
+# The first is the 2026-11-14 live check's words.
+THIRD_PERSON_TABLE = [
+    ("The person handed the chat back to me.", True),
+    ("I'll wait for the user to answer.", True),
+    ("The person asked for a fix to the rounding.", True),
+    ("Rook is waiting on the person's answer.", True),
+    ("This human wants the totals fixed first.", True),
+    # Near misses: speaking to the person, a generic person, a word that only contains one.
+    ("You handed the chat back to me.", False),
+    ("I'll wait for your answer.", False),
+    ("Personally, I'd keep the old format.", False),
+    ("The user interface now shows the right total.", False),
+    ("A person reading the report would see two totals.", False),
+    ("The users table now has an index.", False),
+    ("Each invoice shows the price per person.", False),
+]
+
+# The specification of `grade.fact_claims`: text -> the (file, line count) claims it makes. The
+# first is the 2026-11-14 live check's words.
+FACT_TABLE = [
+    ("CHANGELOG.md has 7 lines", [("CHANGELOG.md", 7)]),
+    ("`CHANGELOG.md` now has 6 lines.", [("CHANGELOG.md", 6)]),
+    ("ledgerly/core/money.py is 120 lines long.", [("ledgerly/core/money.py", 120)]),
+    ("There are seven lines in CHANGELOG.md.", [("CHANGELOG.md", 7)]),
+    ("README.md contains 12 lines and CHANGELOG.md has one line.", [("README.md", 12), ("CHANGELOG.md", 1)]),
+    # Near misses: no count, a change rather than a state, a line number, not lines.
+    ("CHANGELOG.md has a new line at the top.", []),
+    ("I added 2 lines to CHANGELOG.md.", []),
+    ("Line 7 of CHANGELOG.md has the date.", []),
+    ("CHANGELOG.md has 7 entries.", []),
+    ("The changelog has 7 lines.", []),
+]
+
+
+class TeamTablesTest(unittest.TestCase):
+    def test_relay_failure_claimed_follows_its_table(self):
+        wrong = [(text, want) for text, want in RELAY_TABLE if grade.relay_failure_claimed(text) != want]
+        self.assertEqual(wrong, [])
+
+    def test_third_person_line_follows_its_table(self):
+        wrong = [(text, want) for text, want in THIRD_PERSON_TABLE if grade.third_person_line(text) != want]
+        self.assertEqual(wrong, [])
+
+    def test_fact_claims_follow_their_table(self):
+        wrong = [(text, want) for text, want in FACT_TABLE if grade.fact_claims(text) != want]
+        self.assertEqual(wrong, [])
+
+
+class TeamMeasuresTest(unittest.TestCase):
+    def test_agent_messages_count_every_team_log_entry_of_the_run(self):
+        team = {"rook": [team_entry(1, "task", from_chief="wren", text="Fix the rounding."),
+                         team_entry(2, "report", text="Done, tests pass.")],
+                "juno": [team_entry(1, "task", from_chief="wren", text="Review it."),
+                         team_entry(2, "pushback", text="Too wide.", safer="Only money.py."),
+                         team_entry(3, "redirect", text="Only money.py then.")]}
+        measures = grade.grade(team_trace([line(1, person("Fix it."))], team=team))
+        self.assertEqual(measures["agent_messages"], 5)
+        self.assertEqual(grade.grade(team_trace([line(1, person("Fix it."))]))["agent_messages"], 0)
+
+    def test_requests_sent_count_the_channels_request_sent_lines(self):
+        received = {**request_sent("r2"), "type": "request_received"}
+        trace = team_trace([line(1, person("Fix it.")), line(2, request_sent("r1")), line(3, received),
+                            line(4, request_sent("r3"))])
+        self.assertEqual(grade.grade(trace)["requests_sent"], 2)
+
+    def test_false_relay_claims_and_third_person_lines_read_the_chiefs_posts(self):
+        trace = team_trace(
+            [line(1, person("Fix it.")),
+             line(2, vision("I wasn't able to pass that approval question along.\nPlease check the chat.")),
+             line(3, vision("The person handed the chat back to me.\nYou can carry on.")),
+             line(4, person("The person? I'm right here."))])
+        measures = grade.grade(trace)
+        self.assertEqual(measures["false_relay_claims"], 1)
+        # The person's own words are not counted.
+        self.assertEqual(measures["third_person_lines"], 1)
+
+    def test_false_facts_compare_counts_with_the_files_at_the_end(self):
+        files = {"CHANGELOG.md": 6, "ledgerly/core/money.py": 120}
+        trace = team_trace([line(1, person("How long is the changelog?")),
+                            line(2, vision("CHANGELOG.md has 7 lines")),
+                            line(3, vision("money.py is 120 lines long.")),
+                            line(4, vision("NOTES.md has 3 lines."))], files=files)
+        # 7 is wrong; 120 is right (matched by its file name); NOTES.md cannot be checked.
+        self.assertEqual(grade.grade(trace)["false_facts"], 1)
+        self.assertEqual(grade.false_fact_lines(["CHANGELOG.md has 6 lines"], files), 0)
+
+    def test_goal_mode_has_no_team_measures_but_false_facts(self):
+        trace = {"arm": "goal", "scenario": "run-to-see", "cost": 0.0, "end": {"reason": "finished"},
+                 "person": [], "idle_checks": [], "files": {"CHANGELOG.md": 6},
+                 "events": [{"event": {"kind": "finished", "result": "CHANGELOG.md has 7 lines"}}]}
+        measures = grade.grade(trace)
+        for name in ("agent_messages", "requests_sent", "false_relay_claims", "third_person_lines"):
+            self.assertIsNone(measures[name], name)
+        self.assertEqual(measures["false_facts"], 1)
+
+    def test_every_new_measure_is_listed(self):
+        for name in ("agent_messages", "requests_sent", "false_relay_claims", "third_person_lines", "false_facts"):
+            self.assertIn(name, grade.MEASURES)
+
+
+class SetupRun:
+    """Just enough of a `Run` for the person's set-up: records every call, gives ids."""
+
+    def __init__(self, arm, verify=True):
+        self.arm, self.calls = arm, []
+        self.options = {"model": "m"}
+        self.project = "/p"
+        self.scenario = {"verify": {} if verify else None}
+        self.vision_ids, self.channel_id, self.hq_id = [], None, None
+
+    def call(self, method, args=None, timeout=60):
+        self.calls.append((method, args))
+        if method == "save_vision":
+            return {"id": args["vision"]["name"].lower()}, None
+        if method == "save_channel":
+            return {"id": "c1"}, None
+        if method == "list_channels":
+            return [{"id": "a1", "name": "administration"}], None
+        return {}, None
+
+
+class TeamSetupTest(unittest.TestCase):
+    def saved_channel(self, arm):
+        from .run import VisionPerson
+
+        run = SetupRun(arm)
+        self.assertIsNone(VisionPerson(run).setup())
+        channel = next(args["channel"] for method, args in run.calls if method == "save_channel")
+        return run, channel
+
+    def test_the_vision_arm_is_a_chief_with_one_worker(self):
+        run, channel = self.saved_channel("vision")
+        self.assertEqual(len(channel["members"]), 2)
+        self.assertEqual(channel["chief"], channel["members"][0])
+        self.assertEqual(run.vision_ids, channel["members"])
+        self.assertEqual(run.channel_id, "c1")
+
+    def test_the_team_arm_is_a_chief_with_two_workers(self):
+        run, channel = self.saved_channel("team")
+        self.assertEqual(len(channel["members"]), 3)
+        self.assertEqual(channel["chief"], channel["members"][0])
+        self.assertEqual(len(set(channel["members"])), 3)
+        models = {args["vision"]["model"] for method, args in run.calls if method == "save_vision"}
+        self.assertEqual(models, {"m"})
+
+    def test_the_administration_channel_is_found_by_its_name(self):
+        from .run import VisionPerson
+
+        run = SetupRun("vision", verify=False)
+        self.assertIsNone(VisionPerson(run).setup())
+        self.assertEqual(run.hq_id, "a1")
+
+
+class TeamReadTest(unittest.TestCase):
+    def test_file_lines_counts_the_projects_text_files(self):
+        import tempfile
+
+        from .run import file_lines
+
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, ".git"))
+            os.makedirs(os.path.join(root, "ledgerly"))
+            for path, body in (("CHANGELOG.md", b"a\nb\nc\nd\ne\nf\n"), (".git/HEAD", b"ref\n"),
+                               ("ledgerly/money.py", b"x = 1\ny = 2"), ("logo.png", b"\x89PNG\x00\x01")):
+                with open(os.path.join(root, path), "wb") as handle:
+                    handle.write(body)
+            self.assertEqual(file_lines(root), {"CHANGELOG.md": 6, "ledgerly/money.py": 2})
+
+    def test_team_lines_read_every_page_of_each_workers_log(self):
+        from .run import Run
+
+        run = Run("themis", {"max_run_cost": 0.5, "model": "m"}, scenarios.load("run-to-see"), 1, "team", None)
+        pages = {None: {"entries": [team_entry(3, "report", text="Done.")], "next_before": 3},
+                 3: {"entries": [team_entry(1, "task", from_chief="wren", text="Fix it."),
+                                 team_entry(2, "paused")], "next_before": None}}
+        asked = []
+
+        def call(method, args=None, timeout=60):
+            asked.append((method, args["channelId"], args["workerId"]))
+            return pages[args.get("beforeSeq")], None
+
+        run.call = call
+        run.channel_id, run.vision_ids = "c1", ["wren", "rook"]
+        self.assertEqual({w: [e["seq"] for e in lines] for w, lines in run.team_lines().items()},
+                         {"rook": [1, 2, 3]})
+        self.assertEqual({method for method, _c, _w in asked}, {"get_team_log"})
 
 
 if __name__ == "__main__":

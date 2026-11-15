@@ -1,7 +1,7 @@
-//! The admin Vision in `# hq` through the real app server: it proposes channels and Visions as a
-//! proposal card and sets them up only after the person writes in `# hq` after it; a proposal
-//! never raises autonomy or a budget and never deletes; its credential drives no chat; it and its
-//! `# hq` cannot be deleted.
+//! The admin Vision in `# administration` through the real app server: it proposes channels and Visions as a
+//! proposal card and sets them up only after the person writes in `# administration` after it; a proposal
+//! never sets a level, never raises a budget and never deletes; its credential drives no chat; it and its
+//! `# administration` cannot be deleted.
 
 use themis_desktop::state::ChannelEntry;
 
@@ -9,7 +9,7 @@ use super::*;
 
 const ADMIN: &str = "admin";
 
-/// The project's `# hq` as listing the channels gives it (made on first listing, with the admin
+/// The project's `# administration` as listing the channels gives it (made on first listing, with the admin
 /// as its only member).
 fn hq(fx: &Fixture) -> String {
     let channels = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
@@ -17,8 +17,8 @@ fn hq(fx: &Fixture) -> String {
         .as_array()
         .unwrap()
         .iter()
-        .find(|channel| channel["name"] == "hq")
-        .unwrap_or_else(|| panic!("no # hq in {channels}"))
+        .find(|channel| channel["name"] == "administration")
+        .unwrap_or_else(|| panic!("no # administration in {channels}"))
         .clone();
     assert_eq!(hq["members"], json!([ADMIN]), "{hq}");
     hq["id"].as_str().unwrap().to_owned()
@@ -95,12 +95,10 @@ async fn the_admin_proposes_and_creates_only_after_the_person_replies() {
     assert_eq!(card["vision_id"], ADMIN);
     assert_eq!(card["proposal_id"], id.as_str());
     assert_eq!(card["proposal"]["summary"], releases()["summary"]);
-    // The server gives the new Vision its look, so the card can draw it.
+    // The server gives the new Vision its colour, so the card can draw it (a Vision has no shape).
     let rook = &card["proposal"]["visions"][0];
     assert_eq!(rook["name"], "Rook");
-    assert!(rook["shape"]
-        .as_str()
-        .is_some_and(|shape| !shape.is_empty()));
+    assert!(rook.get("shape").is_none(), "{rook}");
     assert!(rook["color"]
         .as_str()
         .is_some_and(|color| !color.is_empty()));
@@ -122,7 +120,7 @@ async fn the_admin_proposes_and_creates_only_after_the_person_replies() {
         .cloned()
         .expect("# releases");
     assert_eq!(made["members"], json!([rook["id"]]));
-    assert_eq!(made["approval_mode"], "custom");
+    assert!(made.get("level").is_none(), "Settings' level: {made}");
     assert_eq!(made["topic"], "Ship releases");
     let items = json!([
         {"kind": "vision", "id": rook["id"], "name": "Rook", "action": "created"},
@@ -163,6 +161,7 @@ async fn apply_is_refused_without_a_person_message_after_the_proposal() {
             ChannelEntry::Vision {
                 vision_id: ADMIN.into(),
                 text: "Shall I?".into(),
+                tasked: Vec::new(),
             },
         )
         .unwrap();
@@ -188,18 +187,18 @@ async fn apply_is_refused_without_a_person_message_after_the_proposal() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
+async fn a_proposal_cannot_set_a_level_raise_a_budget_or_delete() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let hq = hq(&fx);
-    fx.set_visions(json!({"enabled": false, "autonomy": "small", "daily_budget_usd": 1.0}));
+    fx.set_visions(json!({"enabled": false, "daily_budget_usd": 1.0}));
     let (wren, _) = fx.vision_and_channel("Wren", "work");
     let saved = visions(&fx);
     let revision = named(&saved, "Wren").unwrap()["revision"].clone();
     fx.call_ok(
         "save_vision",
-        json!({"vision": {"id": wren, "name": "Wren", "shape": "cloud", "color": "teal",
-            "daily_budget_usd": 0.5, "autonomy": "ask"}, "revision": revision}),
+        json!({"vision": {"id": wren, "name": "Wren", "color": "teal",
+            }, "revision": revision}),
     );
     fx.state
         .set_model_catalog_for_test(vec![themis_core::providers::GoModel {
@@ -214,11 +213,14 @@ async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
         proposal
     };
     let refused = [
+        // A level is the person's alone: a change naming one does not read.
         (
-            with("visions", json!([{"name": "Rook", "autonomy": "most"}])),
-            "autonomy",
+            with(
+                "changes",
+                json!([{"channel": "work", "level": "full_access"}]),
+            ),
+            "level",
         ),
-        // Settings allow Small, but Wren's own level is Ask me first: a change only lowers it.
         (
             with("changes", json!([{"vision": "Wren", "autonomy": "small"}])),
             "autonomy",
@@ -273,23 +275,7 @@ async fn a_proposal_cannot_raise_autonomy_or_budget_or_delete() {
         "a refused proposal posts nothing"
     );
 
-    // Lowering is fine.
-    let lower = with(
-        "changes",
-        json!([{"vision": "Wren", "daily_budget_usd": 0.25}]),
-    );
-    json_of(&propose(&fx, &admin, &hq, lower));
-    // Each field is checked again when it is applied: Settings › Visions went down meanwhile.
-    let small = with(
-        "visions",
-        json!([{"name": "Rook", "autonomy": "small", "model": "test-model"}]),
-    );
-    let id = proposal_id(&propose(&fx, &admin, &hq, small));
-    fx.set_visions(json!({"enabled": false, "autonomy": "ask", "daily_budget_usd": 1.0}));
-    say(&fx, &hq, "yes");
-    let late = apply(&fx, &admin, &id);
-    assert!(failed_with(&late, "autonomy"), "{}", text(&late));
-    assert!(named(&visions(&fx), "Rook").is_none());
+    // A team's budget is checked on a team proposal (Task 6).
     fx.shut_down().await;
 }
 
@@ -298,7 +284,7 @@ async fn the_admin_cannot_drive_chats() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let hq = hq(&fx);
-    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    let (wren, work) = fx.chief_and_channel("Wren", "work");
     let chat = fx.thread().await;
     fx.own(&chat, &wren, &work, OwnedKind::Work);
     let (own, admin) = fx.vision_run(ADMIN, &hq).await;
@@ -323,7 +309,7 @@ async fn the_admin_cannot_drive_chats() {
         ("list_channel_threads", json!({"channelId": hq})),
         (
             "save_vision",
-            json!({"vision": {"name": "X", "shape": "tall", "color": "blue"}}),
+            json!({"vision": {"name": "X", "color": "blue"}}),
         ),
         ("delete_vision", json!({"visionId": wren})),
         ("plugin_action", json!({"action": "list"})),
@@ -373,7 +359,7 @@ async fn the_admin_cannot_be_deleted() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let hq = hq(&fx);
-    // Atlas's own chat in # hq stays its own through the refused deletes.
+    // Atlas's own chat in # administration stays its own through the refused deletes.
     let (own, _) = fx.vision_run(ADMIN, &hq).await;
     let gone = fx.call("delete_vision", json!({"visionId": ADMIN}));
     assert!(failed_with(&gone, "built in"), "{}", text(&gone));
@@ -384,12 +370,12 @@ async fn the_admin_cannot_be_deleted() {
         fx.state.owner_of(&own).is_some(),
         "a refused delete released nothing"
     );
-    // `# hq` keeps the admin as its only member, and the admin works nowhere else.
-    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    // `# administration` keeps the admin as its only member, and the admin works nowhere else.
+    let (wren, work) = fx.chief_and_channel("Wren", "work");
     let listed = channels(&fx);
-    let hq_now = named(&listed, "hq").unwrap();
-    let crowded = json!({"id": hq, "name": "hq", "project_root": fx.project,
-        "approval_mode": "custom", "members": [ADMIN, wren]});
+    let hq_now = named(&listed, "administration").unwrap();
+    let crowded = json!({"id": hq, "name": "administration", "project_root": fx.project,
+        "members": [ADMIN, wren]});
     let saved = fx.call(
         "save_channel",
         json!({"channel": crowded, "revision": hq_now["revision"]}),
@@ -397,20 +383,20 @@ async fn the_admin_cannot_be_deleted() {
     assert!(failed_with(&saved, "only member"), "{}", text(&saved));
     let work_now = named(&listed, "work").unwrap();
     let joined = json!({"id": work, "name": "work", "project_root": fx.project,
-        "approval_mode": "custom", "members": [wren, ADMIN]});
+        "members": [wren, ADMIN]});
     let saved = fx.call(
         "save_channel",
         json!({"channel": joined, "revision": work_now["revision"]}),
     );
     assert!(failed_with(&saved, "only member"), "{}", text(&saved));
     assert_eq!(
-        named(&channels(&fx), "hq").unwrap()["members"],
+        named(&channels(&fx), "administration").unwrap()["members"],
         json!([ADMIN])
     );
-    // Each project lists its own `# hq`, all with the one admin.
+    // Each project lists its own `# administration`, all with the one admin.
     let (_other_repo, other) = crate::common::init_repo();
     let theirs = fx.call_ok("list_channels", json!({"projectRoot": other}));
-    let theirs = named(&theirs, "hq").unwrap();
+    let theirs = named(&theirs, "administration").unwrap();
     assert_eq!(theirs["members"], json!([ADMIN]));
     assert_ne!(theirs["id"], hq.as_str());
     assert_eq!(visions(&fx).as_array().unwrap().len(), 2);
@@ -424,7 +410,7 @@ async fn the_admin_applies_changes_to_visions_and_channels() {
     let _turn = ONE_SERVER.lock().await;
     let fx = fixture().await;
     let hq = hq(&fx);
-    let (wren, work) = fx.vision_and_channel("Wren", "work");
+    let (wren, work) = fx.chief_and_channel("Wren", "work");
     let (_, admin) = fx.vision_run(ADMIN, &hq).await;
     let proposal = json!({
         "summary": "Rook takes over the work channel; Wren rests.",
@@ -462,7 +448,7 @@ async fn the_admin_applies_changes_to_visions_and_channels() {
     fx.shut_down().await;
 }
 
-/// The first listing of a project's channels makes Atlas and `# hq` and says so, so an app that
+/// The first listing of a project's channels makes Atlas and `# administration` and says so, so an app that
 /// read the Visions first reads them again and finds Atlas.
 #[tokio::test(flavor = "multi_thread")]
 async fn making_hq_announces_a_visions_change() {
@@ -480,7 +466,7 @@ async fn making_hq_announces_a_visions_change() {
         }
     })
     .await
-    .expect("making # hq announces visions-changed");
+    .expect("making # administration announces visions-changed");
     assert_eq!(changed["payload"], json!({}), "{changed}");
     assert!(named(&visions(&fx), "Atlas").is_some());
     fx.shut_down().await;
@@ -513,5 +499,96 @@ async fn a_post_says_which_visions_it_woke() {
         json!({"channelId": hq, "text": "never mind"}),
     );
     assert_eq!(quiet["woken"], json!([]), "{quiet}");
+    fx.shut_down().await;
+}
+
+/// A whole team, as Atlas proposes it after the person's yes: the channel, its chief (with its
+/// soul) and workers (with their roles), and the team's budget, nothing else (its level is
+/// Settings').
+#[tokio::test(flavor = "multi_thread")]
+async fn a_team_proposal_creates_exactly_what_it_says() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (_, admin) = fx.vision_run(ADMIN, &hq).await;
+    let team = json!({"summary": "A release team.", "team": {
+        "channel": {"name": "release", "topic": "Ship 0.9"},
+        "chief": {"name": "Juno", "soul": "Calm and direct.", "accessory": "glasses"},
+        "workers": [{"name": "Rook", "role": "Builds"}, {"name": "Tess", "role": "Tests", "accessory": "magnifier"}],
+        "daily_budget_usd": 0.5}});
+    let id = proposal_id(&propose(&fx, &admin, &hq, team));
+    say(&fx, &hq, "yes, go ahead");
+    let applied = json_of(&apply(&fx, &admin, &id));
+    assert_eq!(applied["items"].as_array().unwrap().len(), 4, "{applied}");
+    let listed = visions(&fx);
+    let juno = named(&listed, "Juno").unwrap();
+    assert_eq!(juno["soul"], "Calm and direct.");
+    assert_eq!(juno["accessory"], "glasses");
+    assert_eq!(named(&listed, "Tess").unwrap()["role"], "Tests");
+    let release = named(&channels(&fx), "release").cloned().unwrap();
+    assert_eq!(release["chief"], juno["id"]);
+    assert_eq!(release["members"].as_array().unwrap().len(), 3);
+    assert!(release.get("level").is_none(), "{release}");
+    assert_eq!(release["daily_budget_usd"], 0.5);
+    assert_eq!(release["topic"], "Ship 0.9");
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hire_needs_the_persons_yes() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (_, docs) = fx.chief_and_channel("Wren", "docs");
+    let (_, admin) = fx.vision_run(ADMIN, &hq).await;
+    let hire = json!({"summary": "A tester for # docs.", "hire": {"channel": "docs", "worker": {"name": "Tess", "role": "Tests"}}});
+    let id = proposal_id(&propose(&fx, &admin, &hq, hire));
+    assert!(!apply(&fx, &admin, &id).status.success(), "no yes yet");
+    say(&fx, &hq, "yes");
+    json_of(&apply(&fx, &admin, &id));
+    let tess = named(&visions(&fx), "Tess").unwrap()["id"].clone();
+    let docs_now = channels(&fx)
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == docs.as_str())
+        .cloned()
+        .unwrap();
+    assert!(
+        docs_now["members"].as_array().unwrap().contains(&tess),
+        "{docs_now}"
+    );
+    fx.shut_down().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chief_asking_for_a_worker_wakes_atlas_and_shows_in_administration() {
+    let _turn = ONE_SERVER.lock().await;
+    let fx = fixture().await;
+    let hq = hq(&fx);
+    let (wren, docs) = fx.chief_and_channel("Wren", "docs");
+    let (_, chief) = fx.vision_run(&wren, &docs).await;
+    let asked = fx.agent_call_ok(
+        &chief,
+        "ask_for_worker",
+        json!({"role": "Tests", "why": "Releases keep breaking"}),
+    );
+    assert!(asked["requestId"].is_string(), "{asked}");
+    let line = fx
+        .entries(&hq)
+        .into_iter()
+        .find(|e| e["type"] == "worker_asked")
+        .expect("in # administration");
+    assert_eq!(line["vision_id"], wren.as_str());
+    assert_eq!(line["channel_id"], docs.as_str());
+    assert_eq!(line["role"], "Tests");
+    // It counts towards the channel's daily requests.
+    fx.set_visions(json!({"enabled": false, "requests_per_day": 1}));
+    let again = fx.agent_call(
+        &chief,
+        "ask_for_worker",
+        json!({"role": "Docs", "why": "x"}),
+    );
+    assert!(!again.status.success());
     fx.shut_down().await;
 }

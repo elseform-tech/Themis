@@ -7,7 +7,7 @@ import { selectionToSave } from "./store";
 import type { OwnedChat } from "../lib/visions";
 
 const VISION: VisionInfo = {
-  id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false,
+  id: "v1", name: "Wren", role: "", color: "teal", soul: "", paused: false,
   revision: "r1", over_budget: false, vision_chats: [], needs: 0, sorry: false,
 };
 
@@ -26,7 +26,7 @@ function newest(last: number) {
 function session(size: number): AppState {
   let state = reducer(initialState, {
     type: "visions/loaded", visions: [VISION], projectRoot: "/repo",
-    channels: [{ id: "c1", name: "hq", topic: "", project_root: "/repo", approval_mode: "custom", members: ["v1"], revision: "r" }],
+    channels: [{ id: "c1", name: "administration", topic: "", project_root: "/repo", members: ["v1"], chief: "v1", revision: "r" }],
   });
   for (let last = 1; last <= size; last += 1) {
     state = reducer(state, { type: "visions/changed", channelId: "c1", page: newest(last), chats: [], questions: {} });

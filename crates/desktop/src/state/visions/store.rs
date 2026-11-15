@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use themis_core::visions::Decision;
 
-use super::admin::{admin_profile, ADMIN_STAYS, ADMIN_VISION_ID, HQ, HQ_STAYS};
+use super::admin::{
+    admin_profile, ADMINISTRATION, ADMINISTRATION_STAYS, ADMIN_STAYS, ADMIN_VISION_ID,
+};
 use super::{
     Channel, Owner, Vision, VisionsCache, CHANNELS_FILE, CHANNEL_LOGS_DIR, OWNERS_FILE,
     SOUL_MAX_BYTES, VISIONS_FILE,
@@ -218,7 +219,8 @@ pub(super) fn project_channels(channels: &BTreeMap<String, Channel>, root: &Path
         .filter(|channel| channel.project_root == root)
         .cloned()
         .collect();
-    list.sort_by(|a, b| a.name.cmp(&b.name));
+    // `# administration` first, then by name.
+    list.sort_by_key(|channel| (channel.name != ADMINISTRATION, channel.name.clone()));
     list
 }
 
@@ -226,19 +228,6 @@ pub(super) fn project_channels(channels: &BTreeMap<String, Channel>, root: &Path
 fn bounded(text: &str, max_chars: usize, empty_ok: bool) -> Option<String> {
     let text = text.trim();
     (text.chars().count() <= max_chars && (empty_ok || !text.is_empty())).then(|| text.to_owned())
-}
-
-fn validate_custom(custom: Option<&BTreeMap<String, bool>>) -> Result<(), &'static str> {
-    for (row, allowed) in custom.into_iter().flatten() {
-        match Decision::from_id(row) {
-            None => return Err("Unknown autonomy row"),
-            Some(Decision::External | Decision::Spend) if *allowed => {
-                return Err("Sending work out and spending are always the person's decisions")
-            }
-            Some(_) => {}
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
@@ -249,8 +238,6 @@ pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
         .ok_or("A Vision needs a name of at most 60 characters")?;
     spec.role = bounded(&spec.role, MAX_ROLE_CHARS, true)
         .ok_or("A Vision's role is at most 200 characters")?;
-    spec.shape = bounded(&spec.shape, MAX_LOOK_CHARS, false)
-        .ok_or("A Vision needs a shape of at most 40 characters")?;
     spec.color = bounded(&spec.color, MAX_LOOK_CHARS, false)
         .ok_or("A Vision needs a colour of at most 40 characters")?;
     spec.model = match spec.model.as_deref().map(str::trim) {
@@ -258,15 +245,14 @@ pub(super) fn validate_vision(spec: &mut Vision) -> Result<(), &'static str> {
         Some(model) if model.chars().count() <= MAX_MODEL_CHARS => Some(model.to_owned()),
         Some(_) => return Err("A Vision's model name is at most 200 characters"),
     };
-    validate_custom(spec.custom.as_ref())?;
-    if spec
-        .daily_budget_usd
-        .is_some_and(|budget| !budget.is_finite() || budget < 0.0)
-    {
-        return Err("A daily budget is a positive number of dollars");
+    if spec.accessory.trim().is_empty() {
+        spec.accessory = "none".to_owned();
+    }
+    if !super::ACCESSORIES.contains(&spec.accessory.as_str()) {
+        return Err("A Vision carries one of the cast's accessories");
     }
     if spec.soul.len() > SOUL_MAX_BYTES {
-        return Err("A Vision's soul is at most 4 KiB");
+        return Err("A soul is at most 16 KiB");
     }
     Ok(())
 }
@@ -300,9 +286,23 @@ pub(super) fn validate_channel(spec: &mut Channel) -> Result<(), &'static str> {
         return Err("A channel has at most 32 members");
     }
     let admin = members.iter().any(|member| member == ADMIN_VISION_ID);
-    let hq = spec.name == HQ;
-    if hq != admin || (hq && members.len() != 1) {
-        return Err("# hq is built in: Atlas is its only member, and works in no other channel");
+    let administration = spec.name == ADMINISTRATION;
+    if administration != admin || (administration && members.len() != 1) {
+        return Err(
+            "# administration is built in: Atlas is its only member, and works in no other channel",
+        );
+    }
+    if spec.chief.is_empty() {
+        spec.chief = members.first().cloned().unwrap_or_default();
+    }
+    if !members.is_empty() && !members.contains(&spec.chief) {
+        return Err("A channel's chief of staff is one of its members");
+    }
+    if spec
+        .daily_budget_usd
+        .is_some_and(|budget| !budget.is_finite() || budget < 0.0)
+    {
+        return Err("A daily budget is a positive number of dollars");
     }
     spec.members = members;
     Ok(())
@@ -327,6 +327,19 @@ fn by_key<'a, T: 'a>(records: impl Iterator<Item = (&'a String, &'a T)>) -> Vec<
     let mut records: Vec<(&String, &T)> = records.collect();
     records.sort_by(|a, b| a.0.cmp(b.0));
     records.into_iter().map(|(_, record)| record).collect()
+}
+
+/// Takes `vision_id` out of `channel`; a deleted chief hands the channel to its next member,
+/// who is no longer paused there.
+fn leave_channel(channel: &mut Channel, vision_id: &str) {
+    channel.members.retain(|member| member != vision_id);
+    channel.paused_workers.retain(|worker| worker != vision_id);
+    if channel.chief == vision_id {
+        channel.chief = channel.members.first().cloned().unwrap_or_default();
+        let chief = channel.chief.clone();
+        channel.paused_workers.retain(|worker| *worker != chief);
+    }
+    channel.revision = next_revision(Some(&channel.revision));
 }
 
 impl VisionsCache {
@@ -360,6 +373,7 @@ impl VisionsCache {
         dir: &Path,
     ) -> Result<&mut BTreeMap<String, Vision>, StoreError> {
         if self.visions.is_none() {
+            self.ensure_converted(dir)?;
             let stamp = stamp_of(dir, VISIONS_FILE);
             let list: Vec<Vision> = read_store(dir, VISIONS_FILE)?;
             self.stamps.insert(VISIONS_FILE, stamp);
@@ -373,6 +387,7 @@ impl VisionsCache {
         dir: &Path,
     ) -> Result<&mut BTreeMap<String, Channel>, StoreError> {
         if self.channels.is_none() {
+            self.ensure_converted(dir)?;
             let stamp = stamp_of(dir, CHANNELS_FILE);
             let list: Vec<Channel> = read_store(dir, CHANNELS_FILE)?;
             self.stamps.insert(CHANNELS_FILE, stamp);
@@ -399,7 +414,23 @@ impl VisionsCache {
     ) -> Result<Vision, StoreError> {
         validate_vision(&mut spec).map_err(|message| StoreError::refused(VISIONS_FILE, message))?;
         self.ensure_unchanged(dir, VISIONS_FILE)?;
+        // Only Atlas and a channel's chief have a soul.
+        let leads = super::is_admin(&spec.id)
+            || (!spec.id.is_empty()
+                && self
+                    .channels(dir)?
+                    .values()
+                    .any(|channel| channel.is_chief(&spec.id)));
         let visions = self.visions(dir)?;
+        let unchanged_soul = visions
+            .get(&spec.id)
+            .is_some_and(|previous| previous.soul == spec.soul);
+        if !spec.soul.is_empty() && !leads && !unchanged_soul {
+            return Err(StoreError::refused(
+                VISIONS_FILE,
+                "Only a channel's chief of staff and Atlas have a soul",
+            ));
+        }
         let current = if spec.id.is_empty() {
             spec.id = new_id();
             None
@@ -442,13 +473,20 @@ impl VisionsCache {
         let channels = self.channels(dir)?;
         let current = if spec.id.is_empty() {
             spec.id = new_id();
+            spec.paused_workers.clear();
             None
         } else {
             let previous = channels
                 .get(&spec.id)
                 .ok_or_else(|| refused("Unknown channel"))?;
+            // Only the chief's team calls pause a worker in its channel (`team_pause`).
+            spec.paused_workers.clone_from(&previous.paused_workers);
             Some(previous.revision.as_str())
         };
+        // Only workers are paused: a member that now leads the channel is not.
+        let (members, chief) = (spec.members.clone(), spec.chief.clone());
+        spec.paused_workers
+            .retain(|worker| members.contains(worker) && *worker != chief);
         let stale = "Channel changed since it was opened; reload before saving";
         check_revision(CHANNELS_FILE, current, expected, stale)?;
         let taken = channels.values().any(|other| {
@@ -460,12 +498,41 @@ impl VisionsCache {
             return Err(refused("This project already has a channel with that name"));
         }
         spec.revision = next_revision(current);
+        self.put_channel(dir, spec)
+    }
+
+    /// Writes `spec` (its revision already set) in place of the channel with its id.
+    fn put_channel(&mut self, dir: &Path, spec: Channel) -> Result<Channel, StoreError> {
+        let channels = self.channels(dir)?;
         let mut all = by_key(channels.iter().filter(|(id, _)| **id != spec.id));
         all.push(&spec);
         write_store(dir, CHANNELS_FILE, &all)?;
         channels.insert(spec.id.clone(), spec.clone());
         self.restamp(dir, CHANNELS_FILE);
         Ok(spec)
+    }
+
+    /// Pauses (or resumes) `worker_id` in `channel_id` only: the chief's team pause, kept apart
+    /// from the person's pause of the Vision. Returns the saved channel.
+    pub(super) fn team_pause(
+        &mut self,
+        dir: &Path,
+        channel_id: &str,
+        worker_id: &str,
+        paused: bool,
+    ) -> Result<Channel, StoreError> {
+        self.ensure_unchanged(dir, CHANNELS_FILE)?;
+        let channels = self.channels(dir)?;
+        let mut spec = channels
+            .get(channel_id)
+            .cloned()
+            .ok_or_else(|| StoreError::refused(CHANNELS_FILE, "Unknown channel"))?;
+        spec.paused_workers.retain(|worker| worker != worker_id);
+        if paused {
+            spec.paused_workers.push(worker_id.to_owned());
+        }
+        spec.revision = next_revision(Some(&spec.revision));
+        self.put_channel(dir, spec)
     }
 
     pub(super) fn set_owner(&mut self, dir: &Path, owner: Owner) -> Result<(), StoreError> {
@@ -524,8 +591,7 @@ impl VisionsCache {
             let mut updated = channels.clone();
             for channel in updated.values_mut() {
                 if channel.members.iter().any(|member| member == vision_id) {
-                    channel.members.retain(|member| member != vision_id);
-                    channel.revision = next_revision(Some(&channel.revision));
+                    leave_channel(channel, vision_id);
                 }
             }
             write_store(dir, CHANNELS_FILE, &by_key(updated.iter()))?;
@@ -550,8 +616,8 @@ impl VisionsCache {
         let channels = self.channels(dir)?;
         match channels.get(channel_id) {
             None => return Err(StoreError::refused(CHANNELS_FILE, "Unknown channel")),
-            Some(channel) if channel.name == HQ => {
-                return Err(StoreError::refused(CHANNELS_FILE, HQ_STAYS));
+            Some(channel) if channel.name == ADMINISTRATION => {
+                return Err(StoreError::refused(CHANNELS_FILE, ADMINISTRATION_STAYS));
             }
             Some(_) => {}
         }

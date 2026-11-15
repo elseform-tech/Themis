@@ -41,7 +41,8 @@ pub struct ApprovalPolicy {
     /// defaults when set; `[]` turns it off; a project may only add to it.
     pub sensitive_files: Vec<String>,
     /// The model Auto mode's reviewer uses (`<provider>/<id>` for a model from providers);
-    /// unset, the first memory model. User file only: a project may not choose who reviews.
+    /// unset, the memory models in order, then the chat's own model. User file only: a project
+    /// may not choose who reviews.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_model: Option<String>,
 }

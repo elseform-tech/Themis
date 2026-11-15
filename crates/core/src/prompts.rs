@@ -491,9 +491,28 @@ pub const AGENT_CLI_READ_UNAVAILABLE: &str =
 /// stopped or took over.
 pub const AGENT_CLI_HELD_BY_PERSON: &str =
     include_str!("../builtins/prompts/agent-cli-held-by-person.md");
+/// The app server's answer to a team call outside the caller's team: a worker not in the chief's
+/// channel, a chief that no longer leads it, or a worker no longer on the team.
+pub const AGENT_CLI_NOT_YOUR_TEAM: &str =
+    include_str!("../builtins/prompts/agent-cli-not-your-team.md");
+/// The app server's answer to a chief's request past its channel's daily cap; `{{cap}}`.
+pub const AGENT_CLI_REQUEST_CAP: &str =
+    include_str!("../builtins/prompts/agent-cli-request-cap.md");
+/// The app server's answer to a chief asking a channel again before its result came back.
+pub const AGENT_CLI_REQUEST_ALREADY_OPEN: &str =
+    include_str!("../builtins/prompts/agent-cli-request-already-open.md");
+/// The app server's answer to a Vision answering a question already passed on to the person.
+pub const AGENT_CLI_QUESTION_PASSED_ON: &str =
+    include_str!("../builtins/prompts/agent-cli-question-passed-on.md");
+/// The app server's answer to a chief adding or changing a routine beyond its channel's level.
+pub const AGENT_CLI_ROUTINE_ABOVE_LEVEL: &str =
+    include_str!("../builtins/prompts/agent-cli-routine-above-level.md");
 /// The app server's answer to a paused Vision's call that would start or send something.
 pub const AGENT_CLI_VISION_PAUSED: &str =
     include_str!("../builtins/prompts/agent-cli-vision-paused.md");
+/// Refusal for a chief that gives work to a worker paused in its channel.
+pub const AGENT_CLI_WORKER_PAUSED: &str =
+    include_str!("../builtins/prompts/agent-cli-worker-paused.md");
 /// The app server's answer to a driving call of a Vision whose spend today cannot be checked.
 pub const AGENT_CLI_VISION_BUDGET_UNKNOWN: &str =
     include_str!("../builtins/prompts/agent-cli-vision-budget-unknown.md");
@@ -504,10 +523,10 @@ pub const AGENT_CLI_VISION_OVER_BUDGET: &str =
 /// block or a step waiting on the person's approval).
 pub const AGENT_CLI_PERMISSION_QUESTION: &str =
     include_str!("../builtins/prompts/agent-cli-permission-question.md");
-/// The app server's answer to a Vision's `answer_question` on a decision its autonomy level
-/// leaves to the person.
-pub const AGENT_CLI_ABOVE_AUTONOMY: &str =
-    include_str!("../builtins/prompts/agent-cli-above-autonomy.md");
+/// The app server's answer to a Vision's `answer_question` on a decision that is always the
+/// person's (`delete`, `external`, `spend`).
+pub const AGENT_CLI_LOCKED_DECISION: &str =
+    include_str!("../builtins/prompts/agent-cli-locked-decision.md");
 /// The app server's answer to a Vision's `answer_question` or `pass_question` without a known
 /// `decision`.
 pub const AGENT_CLI_VISION_DECISION: &str =
@@ -529,9 +548,12 @@ pub const AGENT_CLI_VISION_STEERS_ITS_OWN: &str =
 /// The app server's answer to a Vision's `create_thread` outside its channel's project.
 pub const AGENT_CLI_VISION_OTHER_PROJECT: &str =
     include_str!("../builtins/prompts/agent-cli-vision-other-project.md");
-/// A Vision run's system head, in place of the ordinary instructions; `{{name}}`, `{{role}}`,
-/// `{{soul}}`, `{{channel}}`, `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
-pub const VISIONS_SYSTEM: &str = include_str!("../builtins/prompts/visions-system.md");
+/// A chief of staff's system head, in place of the ordinary instructions; `{{name}}`,
+/// `{{soul}}`, `{{team}}`, `{{channel}}`, `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
+pub const VISIONS_CHIEF: &str = include_str!("../builtins/prompts/visions-chief.md");
+/// A worker Vision's system head; `{{name}}`, `{{role}}`, `{{chief}}`, `{{channel}}`,
+/// `{{channel_id}}`, `{{project}}`, `{{autonomy_table}}`.
+pub const VISIONS_WORKER: &str = include_str!("../builtins/prompts/visions-worker.md");
 /// Follows the Vision system head: a Vision run's tools only read.
 pub const VISIONS_READ_ONLY_NOTE: &str =
     include_str!("../builtins/prompts/visions-read-only-note.md");
@@ -540,10 +562,10 @@ pub const VISIONS_STEP_REFUSED: &str = include_str!("../builtins/prompts/visions
 /// What every command of a Vision run says when its sandbox envelope could not be built.
 pub const VISIONS_SANDBOX_REFUSED: &str =
     include_str!("../builtins/prompts/visions-sandbox-refused.md");
-/// The admin Vision's system head in `# hq`, in place of `visions-system.md`; `{{name}}`,
-/// `{{project}}`, `{{channel_id}}`.
+/// The admin Vision's system head in `# administration`; `{{name}}`, `{{soul}}`, `{{project}}`,
+/// `{{channel_id}}`.
 pub const VISIONS_ADMIN: &str = include_str!("../builtins/prompts/visions-admin.md");
-/// The app server's answer to the admin's `apply_proposal` before the person replied in `# hq`.
+/// The app server's answer to the admin's `apply_proposal` before the person replied in `# administration`.
 pub const AGENT_CLI_ADMIN_NO_REPLY: &str =
     include_str!("../builtins/prompts/agent-cli-admin-no-reply.md");
 /// The app server's answer to the admin's `apply_proposal` of a proposal it posted a newer one

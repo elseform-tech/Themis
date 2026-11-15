@@ -328,6 +328,24 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (AGENT_CLI_HELD_BY_PERSON, "agent-cli-held-by-person", &[]),
     (AGENT_CLI_VISION_PAUSED, "agent-cli-vision-paused", &[]),
+    (AGENT_CLI_WORKER_PAUSED, "agent-cli-worker-paused", &[]),
+    (AGENT_CLI_NOT_YOUR_TEAM, "agent-cli-not-your-team", &[]),
+    (
+        AGENT_CLI_ROUTINE_ABOVE_LEVEL,
+        "agent-cli-routine-above-level",
+        &[],
+    ),
+    (
+        AGENT_CLI_QUESTION_PASSED_ON,
+        "agent-cli-question-passed-on",
+        &[],
+    ),
+    (AGENT_CLI_REQUEST_CAP, "agent-cli-request-cap", &["cap"]),
+    (
+        AGENT_CLI_REQUEST_ALREADY_OPEN,
+        "agent-cli-request-already-open",
+        &[],
+    ),
     (
         AGENT_CLI_VISION_OVER_BUDGET,
         "agent-cli-vision-over-budget",
@@ -343,7 +361,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "agent-cli-permission-question",
         &[],
     ),
-    (AGENT_CLI_ABOVE_AUTONOMY, "agent-cli-above-autonomy", &[]),
+    (AGENT_CLI_LOCKED_DECISION, "agent-cli-locked-decision", &[]),
     (AGENT_CLI_VISION_DECISION, "agent-cli-vision-decision", &[]),
     (AGENT_CLI_VISION_REASON, "agent-cli-vision-reason", &[]),
     (
@@ -492,12 +510,25 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (SKILL_COMMAND_NOTE, "skill-command-note", &[]),
     (SKILL_OUTPUT_STYLE_NOTE, "skill-output-style-note", &[]),
     (
-        VISIONS_SYSTEM,
-        "visions-system",
+        VISIONS_CHIEF,
+        "visions-chief",
+        &[
+            "name",
+            "soul",
+            "team",
+            "channel",
+            "channel_id",
+            "project",
+            "autonomy_table",
+        ],
+    ),
+    (
+        VISIONS_WORKER,
+        "visions-worker",
         &[
             "name",
             "role",
-            "soul",
+            "chief",
             "channel",
             "channel_id",
             "project",
@@ -510,7 +541,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
     (
         VISIONS_ADMIN,
         "visions-admin",
-        &["name", "project", "channel_id"],
+        &["name", "soul", "project", "channel_id"],
     ),
     (AGENT_CLI_ADMIN_NO_REPLY, "agent-cli-admin-no-reply", &[]),
     (

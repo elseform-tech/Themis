@@ -9,9 +9,12 @@ function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise
   return tauriInvoke<T>("backend_command", { command, args });
 }
 
-export type Autonomy = "ask" | "small" | "most" | "nearly_all" | "custom";
+/** How far a team goes on its own (Rust `Level`): Auto review runs its chats in Auto, Full access
+ *  in YOLO. Either way, what leaves this computer, deleting or replacing work and spending past the
+ *  budget always ask the person. */
+export type Level = "auto_review" | "full_access";
 
-/** The built-in admin Vision's id: Atlas, drawn with a crown, the only member of each `# hq`. */
+/** The built-in admin Vision's id: Atlas, drawn with a crown, the only member of each `# administration`. */
 export const ADMIN_VISION_ID = "admin";
 export type ApprovalModeName = "custom" | "auto" | "yolo";
 
@@ -28,12 +31,10 @@ export interface VisionProfile {
   id: string;
   name: string;
   role: string;
-  shape: string;
   color: string;
+  /** What it wears (an id from `cast.ts`); the server supplies it, absent means none. */
+  accessory?: string;
   model?: string;
-  autonomy?: Autonomy;
-  custom?: Record<string, boolean>;
-  daily_budget_usd?: number;
   soul: string;
   paused: boolean;
   revision: string;
@@ -56,8 +57,15 @@ export interface ChannelInfo {
   name: string;
   topic: string;
   project_root: string;
-  approval_mode: ApprovalModeName;
   members: string[];
+  /** The member the person talks to; the others are its workers. */
+  chief: string;
+  /** The team's level; Settings › Visions' when absent or null. Only the person sets it. */
+  level?: Level | null;
+  /** The team's daily budget in dollars (none: Settings › Visions'); Settings' total caps it. */
+  daily_budget_usd?: number | null;
+  /** Workers its chief paused here; only the chief's team calls change it. */
+  paused_workers?: string[];
   revision: string;
   /** In the channel list: what waits on the person in this channel's own chats (approvals and
    *  open questions passed on or asking a permission), counted by the server. */
@@ -88,15 +96,30 @@ export type NoticeKind =
   | "handed_back"
   | "sandbox_unavailable"
   | "budget_unknown"
-  | "unpriced";
+  | "unpriced"
+  | "teams_arrived"
+  | "team_paused"
+  | "request_cap";
 
 /** What the admin would set up (Rust `Proposal`): new channels and Visions by name, and changes
  *  to existing ones (a change names one `vision` or one `channel`). */
 export interface Proposal {
   summary: string;
   channels: Array<{ name: string; topic: string; members: string[] }>;
-  visions: Array<{ name: string; role: string; shape: string; color: string; model?: string; autonomy?: Autonomy; daily_budget_usd?: number }>;
+  visions: Array<{ name: string; role: string; color: string; model?: string; daily_budget_usd?: number }>;
   changes: ProposalChange[];
+  /** A whole team for a new channel. */
+  team?: ProposalTeam;
+  /** One more worker for a channel (by name). */
+  hire?: { channel: string; worker: ProposalMember };
+}
+/** A chief or worker in a proposal; its look is filled by the server when absent. */
+export interface ProposalMember { name: string; role?: string; color?: string; accessory?: string; soul?: string; model?: string }
+export interface ProposalTeam {
+  channel: { name: string; topic?: string };
+  chief: ProposalMember;
+  workers: ProposalMember[];
+  daily_budget_usd?: number;
 }
 export interface ProposalChange {
   vision?: string;
@@ -105,7 +128,6 @@ export interface ProposalChange {
   role?: string;
   topic?: string;
   paused?: boolean;
-  autonomy?: Autonomy;
   daily_budget_usd?: number;
   add_members?: string[];
   remove_members?: string[];
@@ -121,13 +143,22 @@ export interface SetUpItem {
 /** One entry in a channel's log (Rust `ChannelEntry`). */
 export type ChannelEntry =
   | { type: "person"; text: string }
-  | { type: "vision"; vision_id: string; text: string }
+  /** `tasked`: the workers the chief tasked in the run that posted this message, each once, in
+   *  first-task order (absent when it tasked no one). */
+  | { type: "vision"; vision_id: string; text: string; tasked?: string[] }
   | { type: "chat_started"; vision_id: string; thread_id: string; title: string }
   | { type: "answered"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string; answer: string; reason: string }
   | { type: "passed_on"; vision_id: string; thread_id: string; question_id: string; decision: string; question: string }
   | { type: "notice"; kind: NoticeKind; vision_id?: string; thread_id?: string; unpriced_requests?: number; reason?: string }
   | { type: "proposal"; vision_id: string; proposal_id: string; proposal: Proposal }
-  | { type: "proposal_applied"; vision_id: string; proposal_id: string; items: SetUpItem[] };
+  | { type: "proposal_applied"; vision_id: string; proposal_id: string; items: SetUpItem[] }
+  | { type: "request_sent"; vision_id: string; request_id: string; channel_id: string; ask: string }
+  | { type: "request_received"; vision_id: string; request_id: string; channel_id: string; ask: string }
+  | { type: "request_answered"; vision_id: string; request_id: string; channel_id: string; accepted: boolean; note: string }
+  /** What another channel did with a request this one sent: `channel_id` sent it, `vision_id` is its chief. */
+  | { type: "request_result"; vision_id: string; request_id: string; channel_id: string; text: string }
+  | { type: "worker_asked"; vision_id: string; request_id: string; channel_id: string; role: string; why: string }
+  | { type: "routine_set"; vision_id: string; routine_id: string; schedule: { days: number[]; time: string }; instruction: string; changed: boolean };
 
 export interface ChannelLine {
   seq: number;
@@ -144,10 +175,16 @@ export interface ChannelPage {
 /** Settings › Visions (`visions` in your runtime.jsonc). */
 export interface VisionsSettings {
   enabled: boolean;
-  autonomy: Autonomy;
-  custom: Record<string, boolean>;
+  /** The level of new channels and of channels with none of their own. */
+  level: Level;
   daily_budget_usd: number;
   max_wakes: number;
+  /** Requests a channel may send other channels a day (1–100). */
+  requests_per_day: number;
+  /** Routines a chief may keep (1–50). */
+  routines_per_chief: number;
+  /** Local hours when routines and other agent-started wakes wait; null for none. */
+  quiet_hours: { start: string; end: string } | null;
 }
 export interface VisionsSettingsView {
   settings: VisionsSettings;
@@ -164,7 +201,7 @@ export interface VisionsChange {
 
 /** A profile to save: a new one has an empty `id`. */
 export type VisionDraft = Omit<VisionProfile, "id" | "revision" | "soul" | "paused" | "role"> & Partial<Pick<VisionProfile, "id" | "role" | "soul" | "paused">>;
-export type ChannelDraft = Omit<ChannelInfo, "id" | "revision" | "topic"> & Partial<Pick<ChannelInfo, "id" | "topic">>;
+export type ChannelDraft = Omit<ChannelInfo, "id" | "revision" | "topic" | "chief"> & Partial<Pick<ChannelInfo, "id" | "topic" | "chief">>;
 
 export function listVisions(): Promise<VisionInfo[]> { return invoke("list_visions"); }
 export function saveVision(vision: VisionDraft, revision: string | null): Promise<VisionProfile> { return invoke("save_vision", { vision, revision }); }
@@ -172,6 +209,16 @@ export function pauseVision(visionId: string, paused: boolean): Promise<VisionPr
 export function deleteVision(visionId: string): Promise<void> { return invoke("delete_vision", { visionId }); }
 export function listChannels(projectRoot: string): Promise<ChannelInfo[]> { return invoke("list_channels", { projectRoot }); }
 export function saveChannel(channel: ChannelDraft, revision: string | null): Promise<ChannelInfo> { return invoke("save_channel", { channel, revision }); }
+/** A chief's routine (Rust `Routine`): weekdays 0 (Sunday) to 6 at a local `HH:MM`. */
+export interface RoutineSchedule { days: number[]; time: string }
+export interface Routine { id: string; chief: string; channel_id: string; schedule: RoutineSchedule; instruction: string; enabled: boolean; next_due_ms: number }
+/** A worker's thread with its chief, newest page (the person's read of the team log). */
+export function getTeamLog(channelId: string, workerId: string): Promise<{ entries: Array<{ seq: number; at_ms: number; entry: unknown }>; next_before: number | null }> { return invoke("get_team_log", { channelId, workerId }); }
+/** What a channel's agents spent today, in dollars. */
+export function getChannelSpend(channelId: string): Promise<{ spent_usd: number | null }> { return invoke("get_channel_spend", { channelId }); }
+export function listRoutines(channelId: string): Promise<Routine[]> { return invoke("list_routines", { channelId }); }
+export function setRoutineEnabled(routineId: string, enabled: boolean): Promise<void> { return invoke("set_routine_enabled", { routineId, enabled }); }
+export function deleteRoutine(routineId: string): Promise<void> { return invoke("delete_routine", { routineId }); }
 export function deleteChannel(channelId: string): Promise<void> { return invoke("delete_channel", { channelId }); }
 export function getChannelPage(channelId: string, beforeSeq: number | null = null, maxBytes: number | null = null): Promise<ChannelPage> { return invoke("get_channel_page", { channelId, beforeSeq, maxBytes }); }
 /** The post's seq and the Visions whose run will answer it (started, or queued behind one going). */
@@ -183,17 +230,26 @@ export function updateVisionsSettings(changes: Partial<{ [K in keyof VisionsSett
 /** A chat's questions, answered ones included: which passed-on questions are still open. */
 export function listQuestions(threadId: string): Promise<Question[]> { return invoke("list_questions", { threadId }); }
 
+/** The built-in channel where Atlas sets up teams (Rust `ADMINISTRATION`). */
+export const ADMINISTRATION = "administration";
+
 /** Every channel entry's fields besides `type`, optional ones included: the wire fixture test
- *  checks them against Rust. */
+ *  checks them against Rust. `request_result` joins once the Rust side adds it to the fixture. */
 export const ENTRY_FIELDS: { [K in ChannelEntry["type"]]: Array<Exclude<keyof Extract<ChannelEntry, { type: K }>, "type">> } = {
   person: ["text"],
-  vision: ["vision_id", "text"],
+  vision: ["vision_id", "text", "tasked"],
   chat_started: ["vision_id", "thread_id", "title"],
   answered: ["vision_id", "thread_id", "question_id", "decision", "question", "answer", "reason"],
   passed_on: ["vision_id", "thread_id", "question_id", "decision", "question"],
   notice: ["kind", "vision_id", "thread_id", "unpriced_requests", "reason"],
   proposal: ["vision_id", "proposal_id", "proposal"],
   proposal_applied: ["vision_id", "proposal_id", "items"],
+  request_sent: ["vision_id", "request_id", "channel_id", "ask"],
+  request_received: ["vision_id", "request_id", "channel_id", "ask"],
+  request_answered: ["vision_id", "request_id", "channel_id", "accepted", "note"],
+  worker_asked: ["vision_id", "request_id", "channel_id", "role", "why"],
+  routine_set: ["vision_id", "routine_id", "schedule", "instruction", "changed"],
+  request_result: ["vision_id", "request_id", "channel_id", "text"],
 };
 
 /** Every value of the unions the app reads, for the same check. */
@@ -205,4 +261,5 @@ export const APPROVAL_MODES: Record<ApprovalModeName, true> = { custom: true, au
 export const NOTICE_KINDS: Record<NoticeKind, true> = {
   stopped: true, paused: true, resumed: true, budget_reached: true, chat_failed: true,
   handed_back: true, sandbox_unavailable: true, budget_unknown: true, unpriced: true,
+  teams_arrived: true, team_paused: true, request_cap: true,
 };

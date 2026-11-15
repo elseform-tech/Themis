@@ -1,8 +1,6 @@
 use std::io::Write;
 use std::path::Path;
 
-use themis_core::configuration::ApprovalMode;
-
 use super::channel_log::{read_page, take_bytes_read, ChannelLine};
 use super::*;
 use crate::state::AppState;
@@ -16,8 +14,11 @@ fn state_with_channel(dir: &Path) -> (AppState, String) {
                 name: "general".into(),
                 topic: String::new(),
                 project_root: dir.join("projects").join("docs"),
-                approval_mode: ApprovalMode::Auto,
                 members: Vec::new(),
+                chief: String::new(),
+                level: None,
+                daily_budget_usd: None,
+                paused_workers: Vec::new(),
                 revision: String::new(),
             },
             None,
@@ -151,17 +152,17 @@ fn channel_page_reads_stay_bounded_by_page_not_log_size() {
         let path = dir.path().join("log.jsonl");
         write_log(&path, size);
         take_bytes_read();
-        let newest = read_page(&path, None, 4096).unwrap();
+        let newest: ChannelPage = read_page(&path, None, 4096).unwrap();
         assert_eq!(
             newest.entries.last().map(|line| line.seq),
             Some(size as u64)
         );
-        let middle = read_page(&path, Some(size as u64 / 2), 4096).unwrap();
+        let middle: ChannelPage = read_page(&path, Some(size as u64 / 2), 4096).unwrap();
         assert_eq!(
             middle.entries.last().map(|line| line.seq),
             Some(size as u64 / 2 - 1)
         );
-        let oldest = read_page(&path, Some(5), 4096).unwrap();
+        let oldest: ChannelPage = read_page(&path, Some(5), 4096).unwrap();
         assert_eq!(seqs(&oldest), vec![1, 2, 3, 4]);
         take_bytes_read()
     });

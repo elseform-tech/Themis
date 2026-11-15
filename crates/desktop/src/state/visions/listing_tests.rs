@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
-use themis_core::configuration::ApprovalMode;
 use themis_core::visions::Decision;
 
 use super::*;
@@ -30,12 +29,9 @@ fn setup() -> Setup {
                 id: String::new(),
                 name: "Wren".into(),
                 role: String::new(),
-                shape: "cloud".into(),
                 color: "teal".into(),
                 model: None,
-                autonomy: None,
-                custom: None,
-                daily_budget_usd: None,
+                accessory: "none".into(),
                 soul: String::new(),
                 paused: false,
                 revision: String::new(),
@@ -50,8 +46,11 @@ fn setup() -> Setup {
                 name: "work".into(),
                 topic: String::new(),
                 project_root: project.clone(),
-                approval_mode: ApprovalMode::Custom,
                 members: vec![vision.id.clone()],
+                chief: String::new(),
+                level: None,
+                daily_budget_usd: None,
+                paused_workers: Vec::new(),
                 revision: String::new(),
             },
             None,
@@ -62,6 +61,7 @@ fn setup() -> Setup {
         channel_id: channel.id,
         project_root: project,
         decides: Vec::new(),
+        chief: false,
     };
     Setup {
         _dir: dir,

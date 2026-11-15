@@ -1,21 +1,12 @@
-// New channel: a name, a topic and the Visions that work there. The channel starts in the
-// person's default approval mode (changed later in channel details, by the person only).
+// New channel: a name, a topic and the Visions that work there. The channel starts with no level of
+// its own, so Settings › Visions' level sets its chats' approvals (changed later in channel
+// details, by the person only).
 import { useState, type FormEvent } from "react";
 import { Button, Dialog, Input } from "../../components";
 import { ADMIN_VISION_ID, saveChannel } from "../../lib/visions";
 import { describeError, useApp } from "../../state/store";
-import { CloudIcon } from "./CloudIcon";
-import { NewVisionSheet } from "./NewVisionSheet";
-
-export type Sheet = "channel" | "vision" | null;
-
-/** The two ways to add something in Visions, shared by the channels bar and `# hq`. */
-export function VisionsSheets({ sheet, onClose }: { sheet: Sheet; onClose: () => void }) {
-  return <>
-    {sheet === "channel" && <NewChannelSheet onClose={onClose} />}
-    {sheet === "vision" && <NewVisionSheet onClose={onClose} />}
-  </>;
-}
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf } from "./cast";
 
 /** A channel name as the store takes it: lowercase letters, digits and dashes. */
 function channelName(text: string): string {
@@ -30,7 +21,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const root = state.activeProjectRoot;
-  // The admin works only in # hq.
+  // The admin works only in # administration.
   const choices = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID);
   const toggle = (id: string) => setMembers(current => current.includes(id) ? current.filter(each => each !== id) : [...current, id]);
   async function create(event: FormEvent) {
@@ -38,7 +29,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
     if (!root || !name || busy) return;
     setBusy(true); setError("");
     try {
-      const channel = await saveChannel({ name, topic: topic.trim(), project_root: root, approval_mode: state.settings.default_approval_mode ?? "custom", members }, null);
+      const channel = await saveChannel({ name, topic: topic.trim(), project_root: root, members }, null);
       dispatch({ type: "visions/loaded", projectRoot: root, channels: [...(state.visions.channels[root] ?? []).filter(each => each.id !== channel.id), channel] });
       dispatch({ type: "visions/open", channelId: channel.id });
       onClose();
@@ -53,7 +44,7 @@ export function NewChannelSheet({ onClose }: { onClose: () => void }) {
           <legend className="themis-input-label">Members</legend>
           <div>{choices.map(vision => (
             <button key={vision.id} type="button" className="themis-visions-pick" aria-pressed={members.includes(vision.id)} onClick={() => toggle(vision.id)}>
-              <CloudIcon shape={vision.shape} color={vision.color} mood="calm" size={22} /><span>{vision.name}</span>
+              <CharacterAvatar look={lookOf(vision)} size={22} /><span>{vision.name}</span>
             </button>
           ))}</div>
         </fieldset>}

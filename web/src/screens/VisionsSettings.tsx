@@ -3,7 +3,7 @@ import { Switch } from "../components";
 import { ADMIN_VISION_ID, getVisionsSettings, pauseVision, updateVisionsSettings, type VisionsSettings, type VisionsSettingsView } from "../lib/visions";
 import { describeError, useApp, useSettingsChanges } from "../state/store";
 import { SettingsGroup } from "./SettingsGroup";
-import { AUTONOMY_STOPS, DECISIONS, LEVELS, presetDecides, presetRows } from "./visions/autonomy";
+import { LevelSwitch } from "./visions/LevelSwitch";
 import "./visions/VisionsPanels.css";
 
 type Changes = Parameters<typeof updateVisionsSettings>[0];
@@ -18,50 +18,17 @@ function LockIcon() {
   return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
 }
 
-/** One kind of decision: who makes it. Editable only under Custom; the last two never. */
-function DecisionRow({ decision, settings, onSet }: { decision: (typeof DECISIONS)[number]; settings: VisionsSettings; onSet: (id: string, decides: boolean) => void }) {
-  let answer;
-  if (decision.rank === null) {
-    answer = <span className="themis-visions-locked"><LockIcon />Always asks you</span>;
-  } else if (settings.autonomy === "custom") {
-    const decides = settings.custom[decision.id] === true;
-    answer = <span className="themis-visions-choice" role="radiogroup" aria-label={decision.label}>
-      <button type="button" role="radio" aria-checked={!decides} onClick={() => { if (decides) onSet(decision.id, false); }}>Asks you</button>
-      <button type="button" role="radio" aria-checked={decides} onClick={() => { if (!decides) onSet(decision.id, true); }}>Decides</button>
-    </span>;
-  } else {
-    answer = presetDecides(settings.autonomy, decision)
-      ? <span className="themis-visions-decides">Decides</span>
-      : <span className="themis-visions-asks">Asks you</span>;
-  }
-  return <div className="themis-visions-decision"><span>{decision.label}</span>{answer}</div>;
-}
+/** What a chief never decides itself, at either level (Rust `vision_decisions` leaves them out). */
+const LOCKED = ["Anything that leaves this computer", "Deleting or replacing work", "Spending past the budget"];
 
-/** The five-stop slider and what the chosen level means, row by row (canvas VisionsSettings). A
- *  drag shows where it is and saves once, where it is let go. Custom starts from the rows of the
- *  level it came from, so nothing changes until a row is edited. */
-function AutonomyCard({ settings, patch }: { settings: VisionsSettings; patch: (write: Patch) => void }) {
-  const [dragged, setDragged] = useState<number | null>(null);
-  const level = settings.autonomy;
-  const shown = dragged === null ? level : AUTONOMY_STOPS[dragged]!;
-  const commit = () => {
-    if (dragged === null) return;
-    const next = AUTONOMY_STOPS[dragged]!;
-    setDragged(null);
-    patch(latest => {
-      if (next === latest.autonomy) return null;
-      return next === "custom" ? { autonomy: next, custom: presetRows(latest.autonomy) } : { autonomy: next };
-    });
-  };
-  return <section className="themis-settings-card themis-visions-autonomy" aria-label="Autonomy">
-    <div className="themis-visions-autonomy-head"><label htmlFor="visions-autonomy">Autonomy</label></div>
-    <input id="visions-autonomy" type="range" min={1} max={5} step={1} value={AUTONOMY_STOPS.indexOf(shown) + 1} aria-valuetext={LEVELS[shown]}
-      onChange={event => setDragged(Number(event.target.value) - 1)} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
-    <div className="themis-visions-stops" aria-hidden="true">
-      {AUTONOMY_STOPS.map(stop => <span key={stop} className={stop === shown ? "is-current" : undefined}>{LEVELS[stop]}</span>)}
-    </div>
-    <div className="themis-visions-decisions">
-      {DECISIONS.map(decision => <DecisionRow key={decision.id} decision={decision} settings={settings} onSet={(id, decides) => patch(latest => ({ custom: { ...latest.custom, [id]: decides } }))} />)}
+/** The level of new channels (and of channels with none), and what always asks the person
+ *  whatever the level (board TwoLevels). */
+function LevelCard({ settings, patch }: { settings: VisionsSettings; patch: (write: Patch) => void }) {
+  return <section className="themis-settings-group themis-visions-level-group">
+    <div className="themis-settings-group-head"><h3 className="themis-settings-subtitle">Level for new channels</h3></div>
+    <LevelSwitch label="Level for new channels" level={settings.level} onChange={next => patch(latest => latest.level === next ? null : { level: next })} />
+    <div className="themis-settings-card">
+      {LOCKED.map(label => <div key={label} className="themis-settings-control themis-visions-decision"><span>{label}</span><span className="themis-visions-locked"><LockIcon />Always asks you</span></div>)}
     </div>
   </section>;
 }
@@ -81,7 +48,7 @@ function LimitsGroup({ settings, patch, onError }: { settings: VisionsSettings; 
     }
     if (dollars !== settings.daily_budget_usd) patch(() => ({ daily_budget_usd: dollars }));
   };
-  // Atlas keeps running, so the person can still ask it in # hq.
+  // Atlas keeps running, so the person can still ask it in # administration.
   const visions = state.visions.list.filter(vision => vision.id !== ADMIN_VISION_ID);
   const allPaused = visions.length > 0 && visions.every(vision => vision.paused);
   const pauseAll = async (paused: boolean) => {
@@ -96,6 +63,41 @@ function LimitsGroup({ settings, patch, onError }: { settings: VisionsSettings; 
         onChange={event => setBudget(event.target.value)} onBlur={saveBudget} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
     </span></label>
     <label className="themis-settings-check">Pause all Visions<Switch checked={allPaused} disabled={visions.length === 0} onChange={event => void pauseAll(event.target.checked)} /></label>
+  </SettingsGroup>;
+}
+
+/** A whole number saved when the box loses focus, within `min`..`max`. */
+function CountField({ label, value, min, max, onSave, onError }: { label: string; value: number; min: number; max: number; onSave: (count: number) => void; onError: (message: string) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const save = () => {
+    if (draft === null) return;
+    const count = Number(draft);
+    setDraft(null);
+    if (!Number.isInteger(count) || count < min || count > max) { onError(`Enter a number from ${min} to ${max}`); return; }
+    if (count !== value) onSave(count);
+  };
+  return <label className="themis-settings-control">{label}
+    <input className="themis-settings-number" type="number" min={min} max={max} step={1} aria-label={label} value={draft ?? String(value)}
+      onChange={event => setDraft(event.target.value)} onBlur={save} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+  </label>;
+}
+
+/** Teams: how many requests a channel sends a day, routines per chief, and quiet hours (routines
+ *  and what agents start wait; your own messages always go through). */
+function TeamsGroup({ settings, patch, onError }: { settings: VisionsSettings; patch: (write: Patch) => void; onError: (message: string) => void }) {
+  const quiet = settings.quiet_hours;
+  const setQuiet = (next: { start: string; end: string } | null) => {
+    if (next && next.start === next.end) { onError("Quiet hours need two different times"); return; }
+    patch(() => ({ quiet_hours: next }));
+  };
+  return <SettingsGroup>
+    <CountField label="Requests between channels, a day" value={settings.requests_per_day} min={1} max={100} onError={onError} onSave={count => patch(() => ({ requests_per_day: count }))} />
+    <CountField label="Routines per chief" value={settings.routines_per_chief} min={1} max={50} onError={onError} onSave={count => patch(() => ({ routines_per_chief: count }))} />
+    <label className="themis-settings-check">Quiet hours<Switch checked={quiet !== null} onChange={event => setQuiet(event.target.checked ? { start: "22:00", end: "07:00" } : null)} /></label>
+    {quiet && <div className="themis-settings-control">
+      <input type="time" aria-label="Quiet from" value={quiet.start} onChange={event => event.target.value && setQuiet({ ...quiet, start: event.target.value })} />
+      <input type="time" aria-label="Quiet until" value={quiet.end} onChange={event => event.target.value && setQuiet({ ...quiet, end: event.target.value })} />
+    </div>}
   </SettingsGroup>;
 }
 
@@ -132,7 +134,8 @@ export function VisionsSettingsSection({ onSaved }: { onSaved?: () => void } = {
   return <>
     {error && <p role="alert" className="themis-form-error">{error}</p>}
     {!view.can_run && <p role="status" className="themis-settings-hint">Visions can't run on this computer: it has no sandbox that can confine them.</p>}
-    <AutonomyCard settings={view.settings} patch={patch} />
+    <LevelCard settings={view.settings} patch={patch} />
     <LimitsGroup settings={view.settings} patch={patch} onError={setError} />
+    <TeamsGroup settings={view.settings} patch={patch} onError={setError} />
   </>;
 }

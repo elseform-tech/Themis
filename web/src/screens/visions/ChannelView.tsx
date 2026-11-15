@@ -1,38 +1,17 @@
-// A channel: its log (the newest lines, earlier ones on request), the approvals its Visions'
-// chats wait on (only the person's Allow or Deny answers them) and the composer.
-import { useLayoutEffect, useRef, useState } from "react";
-import { ApprovalBox } from "../../components/approval/ApprovalBox";
-import { approveAction } from "../../lib/tauri";
-import type { ApprovalDecision, ApprovalRequest } from "../../lib/types";
-import { ADMIN_VISION_ID, type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
-import { describeError, toast, useApp } from "../../state/store";
-import { visionMoods } from "../../state/visions";
-import { AskFirstBox } from "../AskFirstBox";
+// A channel (boards ChannelPlain, AdminChannel): its name and floating chief on top, its log with
+// only the person and the chief (the newest lines, earlier ones on request; workers' posts and
+// chats stay in their threads with the chief), the approvals the chief's own chats wait on (a
+// worker's wait in its thread), the chief's thinking row and the composer.
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { type ChannelInfo, type ChannelLine, type VisionInfo } from "../../lib/visions";
+import { useApp } from "../../state/store";
+import { ChannelApproval } from "./ChannelApproval";
 import { ChannelComposer } from "./ChannelComposer";
 import { ChannelEntryView, visionById } from "./ChannelEntry";
-import { channelChat } from "./ChatLink";
-import { CloudIcon } from "./CloudIcon";
+import { ChannelTop, ChiefWelcome } from "./ChannelTop";
+import { CharacterAvatar } from "./CharacterAvatar";
+import { lookOf, COLORS } from "./cast";
 import { reducedMotion, useArrivals, useShownAMoment, useWakes } from "./thinking";
-
-/** An approval one of the channel's chats waits on, with whose chat asks. */
-function ChannelApproval({ request, channelId }: { request: ApprovalRequest; channelId: string }) {
-  const { state, dispatch } = useApp();
-  const chat = channelChat(state, channelId, request.thread_id);
-  const vision = visionById(state, chat?.owner.vision_id)?.name ?? "A Vision";
-  const done = () => dispatch({ type: "approval/dequeued", approvalId: request.approval_id });
-  async function decide(decision: ApprovalDecision) {
-    try { await approveAction(request.thread_id, request.approval_id, decision); done(); }
-    catch (error) { toast(dispatch, `Approval failed: ${describeError(error)}`, "danger"); }
-  }
-  return (
-    <li className="themis-channel-approval">
-      <p className="themis-question-from">{vision}'s chat <b>{chat?.title}</b> asks</p>
-      {request.ask_first
-        ? <AskFirstBox request={request} onDecided={done} onError={error => toast(dispatch, `Could not answer: ${describeError(error)}`, "danger")} />
-        : <ApprovalBox request={request} open onDecide={decision => void decide(decision)} />}
-    </li>
-  );
-}
 
 /** The Visions whose run in this channel is going (also after a post of their own). */
 function runningHere(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): string[] {
@@ -41,14 +20,37 @@ function runningHere(state: ReturnType<typeof useApp>["state"], channel: Channel
     .map(vision => vision.id);
 }
 
-/** "<Name> is thinking" with three dots rising and falling; plain text with reduced motion. */
-function Thinking({ visions, reduced }: { visions: VisionInfo[]; reduced: boolean }) {
+/** The chief's small cloud and three dots rising and falling (still with reduced motion). */
+function Thinking({ visions }: { visions: VisionInfo[] }) {
   return <>{visions.map(vision => (
-    <li key={vision.id} className="themis-channel-thinking" role="status">
-      <span className="themis-channel-avatar"><CloudIcon shape={vision.shape} color={vision.color} mood="think" size={30} live crown={vision.id === ADMIN_VISION_ID} /></span>
-      <span className="themis-channel-thinking-text">{vision.name} is thinking{reduced ? "…" : <span className="themis-thinking-dots" aria-hidden="true"><i /><i /><i /></span>}</span>
+    <li key={vision.id} className="themis-channel-thinking" role="status" aria-label={`${vision.name} is thinking`}>
+      <CharacterAvatar look={lookOf(vision)} mood="think" live />
+      <span className="themis-thinking-dots" aria-hidden="true"><i /><i /><i /></span>
     </li>
   ))}</>;
+}
+
+/** The person's own actions on a worker, which the server notes with that worker's id. */
+const PERSON_ACTS: ReadonlySet<string> = new Set(["paused", "resumed", "stopped", "handed_back"]);
+
+/** The channel shows only the person and the chief. The server posts what the person must see
+ *  (budget, team-paused and request-cap notices) under the chief, so any other line carrying a
+ *  worker's id belongs to that worker's thread with the chief and stays out. The exceptions: a
+ *  question passed on to the person (a worker's chat passes its permission questions straight
+ *  on), and a notice of the person's own action on a worker (pause, resume, stop, hand back).
+ *  Lines with no Vision stay. */
+function fromTheChief(channel: ChannelInfo, line: ChannelLine): boolean {
+  const { entry } = line;
+  const id = "vision_id" in entry ? entry.vision_id : undefined;
+  if (!channel.chief || !id || id === channel.chief || !channel.members.includes(id)) return true;
+  return entry.type === "passed_on" || entry.type === "request_result" || (entry.type === "notice" && PERSON_ACTS.has(entry.kind));
+}
+
+/** The chats here whose approvals wait in the channel: all but the workers' (theirs wait in the
+ *  worker's thread). */
+function channelApprovalChats(state: ReturnType<typeof useApp>["state"], channel: ChannelInfo): Set<string> {
+  const worker = (id: string) => id !== channel.chief && channel.members.includes(id);
+  return new Set((state.visions.chats[channel.id] ?? []).filter(chat => !worker(chat.owner.vision_id)).map(chat => chat.id));
 }
 
 /** Keeps the log at its newest line while the person is there; reading back stays put. `tail`
@@ -107,27 +109,27 @@ function useChannelMotion(state: ReturnType<typeof useApp>["state"], channel: Ch
   return { reduced, thinking, woke, shownUpTo, shown: lines.filter(line => line.seq <= arrived) };
 }
 
-/** The channel's name; once saved, it opens and closes the channel's details. */
-function ChannelTitle({ channel }: { channel: ChannelInfo }) {
-  const { state, dispatch } = useApp();
-  if (!channel.id) return <h1># {channel.name}</h1>;
-  const open = state.visions.open.panel?.kind === "channel";
-  return <h1><button type="button" className="themis-channel-title" aria-expanded={open} title="Channel details" onClick={() => dispatch({ type: "visions/panel", panel: open ? null : { kind: "channel" } })}># {channel.name}</button></h1>;
+/** The chief's colour, which the person's bubbles take a tint of. */
+function chiefColor(chief: { color: string } | undefined): CSSProperties | undefined {
+  const color = chief && COLORS[chief.color];
+  return color ? ({ "--themis-chief-color": color.mid } as CSSProperties) : undefined;
 }
 
 export function ChannelView({ channel }: { channel: ChannelInfo }) {
   const { state, loadOlderLines } = useApp();
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
-  const read = state.visions.lines[channel.id];
-  const lines = read ?? [];
-  const chats = new Set((state.visions.chats[channel.id] ?? []).map(chat => chat.id));
+  const listed = state.visions.lines[channel.id];
+  const read = listed?.filter(line => fromTheChief(channel, line));
+  const chats = channelApprovalChats(state, channel);
   const approvals = state.approvals.filter(request => chats.has(request.thread_id));
-  const members = channel.members.flatMap(id => visionById(state, id) ?? []);
-  const moods = visionMoods(state);
-  const { reduced, thinking, woke, shownUpTo, shown } = useChannelMotion(state, channel, read);
+  const chief = visionById(state, channel.chief);
+  const { reduced, thinking: all, woke, shownUpTo, shown } = useChannelMotion(state, channel, read);
+  const thinking = channel.chief ? all.filter(vision => vision.id === channel.chief) : all;
   const tail = `${shown[shown.length - 1]?.seq}:${approvals.length}:${thinking.map(vision => vision.id).join(",")}`;
-  const { log, onScroll, holdPlace, releasePlace } = useStickToEnd(tail, lines[0]?.seq);
+  const { log, onScroll, holdPlace, releasePlace } = useStickToEnd(tail, listed?.[0]?.seq);
+  // A new channel: nothing said yet, nothing earlier to load, nothing waiting on the person.
+  const fresh = listed !== undefined && shown.length === 0 && approvals.length === 0 && state.visions.nextBefore[channel.id] == null;
   async function older() {
     setLoading(true);
     holdPlace();
@@ -137,23 +139,17 @@ export function ChannelView({ channel }: { channel: ChannelInfo }) {
   }
   return (
     <section className="themis-channel" aria-label={`# ${channel.name}`}>
-      <header className="themis-channel-head">
-        <ChannelTitle channel={channel} />
-        {channel.topic && <span className="themis-channel-topic">{channel.topic}</span>}
-        {members.length > 0 && <span className="themis-channel-members" role="img" aria-label={`Here: ${members.map(vision => vision.name).join(", ")}`}>
-          {members.map(vision => <CloudIcon key={vision.id} shape={vision.shape} color={vision.color} mood={moods[vision.id] ?? "calm"} size={20} crown={vision.id === ADMIN_VISION_ID} />)}
-        </span>}
-      </header>
-      <div className="themis-channel-log" ref={log} onScroll={onScroll}>
+      <ChannelTop channel={channel} fresh={fresh} />
+      <div className="themis-channel-log" ref={log} onScroll={onScroll} style={chiefColor(chief)}>
         {state.visions.nextBefore[channel.id] != null && <button type="button" className="themis-show-more" disabled={loading} onClick={() => void older()}>{loading ? "Loading…" : "Show earlier messages"}</button>}
-        {lines.length === 0 && thinking.length === 0 && <p className="themis-channel-empty">No messages yet.</p>}
+        {fresh && <ChiefWelcome channel={channel} />}
         <ol className="themis-channel-lines">
-          {shown.map(line => <ChannelEntryView key={line.seq} line={line} channelId={channel.id} fresh={!reduced && shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
+          {shown.map(line => <ChannelEntryView key={line.seq} line={line} channel={channel} fresh={!reduced && shownUpTo !== null && line.seq > shownUpTo} onReply={setDraft} />)}
           {approvals.map(request => <ChannelApproval key={request.approval_id} request={request} channelId={channel.id} />)}
-          <Thinking visions={thinking} reduced={reduced} />
+          <Thinking visions={thinking} />
         </ol>
       </div>
-      <ChannelComposer channel={channel} members={members} draft={draft} setDraft={setDraft} onPosted={woke} />
+      <ChannelComposer channel={channel} chiefName={chief?.name ?? ""} draft={draft} setDraft={setDraft} onPosted={woke} />
     </section>
   );
 }

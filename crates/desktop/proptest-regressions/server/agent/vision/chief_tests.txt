@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bf7951dfd3112edcefd5694171af65b7b24c5f396550b87d81ddb6fed6068114 # shrinks to method = "report", is_chief = false, thread = Some("far-work"), worker_id = None
+cc e2e142f609c74a05011fdbe0db1acb92c905dd1f590735ab49cea735fa69f247 # shrinks to method = "send_message", is_chief = false, thread = Some("rook-c2-work"), channel = None, worker_id = None
+cc 8be0b25a8e658ca8eb18e0538378a51deb40dcc613dbe95c205d1e77e6937a14 # shrinks to method = "get_thread", is_chief = true, thread = Some("juno-old-work"), channel = None, worker_id = None
