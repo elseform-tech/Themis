@@ -609,9 +609,10 @@ the channel under the chief's name.
 asking you when a chat asks something; see [Settings reference](#settings-reference). Each
 channel has its own level and daily budget, never above Settings (the chief's profile shows and
 sets them). The level also sets how the team's chats ask before acting: at **Always ask** they ask
-you before changes (Custom); at any other level they run in Auto: they write files and run
-commands in the project without asking, a reviewer model judges what else comes up against what
-you asked in the channel, and you are asked only about destructive steps. **Full access** in the channel's details runs them in YOLO instead; only you
+you before changes (Custom); at any other level they run in Auto: they write files in the project
+without asking (and run commands without asking too when your sandbox blocks the network), a
+reviewer model judges commands and what else comes up against what you asked in the channel, and
+you are asked only about destructive steps. **Full access** in the channel's details runs them in YOLO instead; only you
 switch it on. Sandbox escapes, sensitive files, your deny rules and destructive steps stay yours
 at every level. When a worker's chat needs your approval, the box waits in that
 worker's thread and the chief does not repeat it; a permission question shows in the channel.

@@ -342,28 +342,32 @@ fn a_work_chats_run_takes_its_channels_mode_when_it_starts() {
     assert_eq!(s.state.visions_work_mode("not-owned"), None);
 }
 
-/// A team's work chat in Auto writes and runs commands in the project without asking: its run's
-/// policy gains allow rules for those risks, after the person's own rules. A plain chat, or a
-/// team chat at Always ask (Custom), keeps the policy as written.
+/// A team's work chat in Auto writes in the project without asking (the sandbox keeps writes in
+/// the project); it runs commands without asking only when the sandbox blocks the network, so
+/// nothing leaves the computer unreviewed. Its rules come after the person's own. A plain chat,
+/// or a team chat at Always ask (Custom), keeps the policy as written.
 #[test]
 fn a_team_chat_writes_and_runs_without_asking() {
-    use themis_core::configuration::{ApprovalMode, ApprovalPolicy, PolicyAction};
+    use themis_core::configuration::{ApprovalMode, PolicyAction, RuntimeConfig};
+    use themis_core::sandbox::NetworkPolicy;
     let s = setup(true);
     own(&s.state, "ada-work", &s.ada, &s.channel, Hold::None);
-    let written = ApprovalPolicy::default();
-    let mine = written.rules.len();
-    let team = s.state.visions_run_policy("ada-work", ApprovalMode::Auto, written.clone());
-    let added: Vec<_> = team.rules[mine..]
-        .iter()
-        .map(|rule| (rule.tool.as_str(), rule.risk.as_deref(), rule.action))
-        .collect();
-    assert_eq!(
-        added,
-        [("*", Some("write"), PolicyAction::Allow), ("*", Some("execute"), PolicyAction::Allow)]
-    );
-    let plain = s.state.visions_run_policy("plain", ApprovalMode::Auto, written.clone());
+    let mut config = RuntimeConfig::default();
+    let mine = config.approval.rules.len();
+    let added = |config: &RuntimeConfig| -> Vec<(String, Option<String>, PolicyAction)> {
+        s.state.visions_run_policy("ada-work", ApprovalMode::Auto, config).rules[mine..]
+            .iter()
+            .map(|rule| (rule.tool.clone(), rule.risk.clone(), rule.action))
+            .collect()
+    };
+    let rule = |risk: &str| ("*".to_owned(), Some(risk.to_owned()), PolicyAction::Allow);
+    // The network is open by default: commands stay with the reviewer.
+    assert_eq!(added(&config), [rule("write")]);
+    config.sandbox.network = NetworkPolicy::Block;
+    assert_eq!(added(&config), [rule("write"), rule("execute")]);
+    let plain = s.state.visions_run_policy("plain", ApprovalMode::Auto, &config);
     assert_eq!(plain.rules.len(), mine);
-    let custom = s.state.visions_run_policy("ada-work", ApprovalMode::Custom, written);
+    let custom = s.state.visions_run_policy("ada-work", ApprovalMode::Custom, &config);
     assert_eq!(custom.rules.len(), mine);
 }
 

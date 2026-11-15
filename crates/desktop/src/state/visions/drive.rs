@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 use themis_core::agent_cli::VisionScope;
-use themis_core::configuration::{ApprovalMode, ApprovalPolicy, ApprovalRule, PolicyAction};
+use themis_core::configuration::{
+    ApprovalMode, ApprovalPolicy, ApprovalRule, PolicyAction, RuntimeConfig,
+};
 use themis_core::visions::Decision;
 
 use super::{Channel, ChannelEntry, Hold, OwnedKind, Owner};
@@ -74,25 +76,34 @@ impl AppState {
     }
 
     /// The approval policy a run in `thread_id` uses: for a team's work chat in Auto, the
-    /// person's rules then allow rules for writes and commands, so project work goes on without
-    /// asking. Destructive steps still ask the person first, and sandbox escapes, sensitive files
-    /// and deny rules keep their own gates; any other chat keeps `policy` as written.
+    /// person's rules, then an allow rule for writes (the sandbox keeps them in the project) and,
+    /// only while the sandbox blocks the network, for commands, so project work goes on without
+    /// asking and nothing leaves the computer unreviewed (with the network open, commands stay
+    /// with the reviewer). Destructive steps still ask the person first, and sandbox escapes,
+    /// sensitive files and deny rules keep their own gates; any other chat keeps the policy.
     pub(crate) fn visions_run_policy(
         &self,
         thread_id: &str,
         mode: ApprovalMode,
-        mut policy: ApprovalPolicy,
+        config: &RuntimeConfig,
     ) -> ApprovalPolicy {
+        let mut policy = config.approval.clone();
         let team = mode == ApprovalMode::Auto
             && self
                 .owner_of(thread_id)
                 .is_some_and(|owner| owner.kind == OwnedKind::Work && owner.hold == Hold::None);
         if team {
-            for risk in ["write", "execute"] {
+            let offline = config.sandbox.network == themis_core::sandbox::NetworkPolicy::Block;
+            let risks: &[&str] = if offline {
+                &["write", "execute"]
+            } else {
+                &["write"]
+            };
+            for risk in risks {
                 policy.rules.push(ApprovalRule {
                     tool: "*".into(),
                     action: PolicyAction::Allow,
-                    risk: Some(risk.into()),
+                    risk: Some((*risk).to_owned()),
                     command: None,
                 });
             }

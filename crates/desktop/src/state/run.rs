@@ -46,7 +46,7 @@ impl AppState {
         snapshot: &RunSnapshot,
         config: &themis_core::configuration::RuntimeConfig,
     ) -> themis_core::configuration::ApprovalPolicy {
-        self.visions_run_policy(thread_id, snapshot.approval_mode, config.approval.clone())
+        self.visions_run_policy(thread_id, snapshot.approval_mode, config)
     }
 
     /// Auto mode's reviewer for this run: a reviewer model decides where Custom would ask the
