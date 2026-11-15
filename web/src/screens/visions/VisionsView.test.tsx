@@ -142,7 +142,7 @@ describe("Visions view", () => {
     // Rook leads # release; Wren works for it. Each row: its cloud without accessory, name, role, state.
     expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["Rook, Chief of staff, Needs you", "Wren, Builder, Needs you"]);
     expect([...rows].map(row => row.querySelector("svg.themis-cloud")?.getAttribute("width"))).toEqual(["22", "18"]);
-    for (const row of rows) expect(row.querySelector("svg.themis-cloud")).not.toHaveAttribute("data-accessory");
+    for (const row of rows) expect(row.querySelector("svg.themis-cloud")).toHaveAttribute("data-accessory", "none");
     expect(rows[1]).toHaveClass("is-worker");
     // # administration has no Team section.
     fireEvent.click(within(screen.getByRole("complementary", { name: "Visions navigation" })).getByRole("button", { name: "# administration" }));

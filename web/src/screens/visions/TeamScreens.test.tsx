@@ -280,7 +280,7 @@ describe("Team screens", () => {
     expect(head).toHaveTextContent(/^Rook with Juno$/);
     const clouds = head.querySelectorAll("svg.themis-cloud");
     expect([...clouds].map(cloud => cloud.getAttribute("width"))).toEqual(["22", "16"]);
-    for (const cloud of clouds) expect(cloud).not.toHaveAttribute("data-accessory");
+    for (const cloud of clouds) expect(cloud).toHaveAttribute("data-accessory", "none");
   });
 
   it("a_workers_approval_waits_in_its_thread", async () => {
