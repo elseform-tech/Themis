@@ -582,6 +582,7 @@ async fn a_persons_steer_of_a_visions_message_keeps_the_visions_words() {
         project_root: fx.scope.project_root.clone(),
         config: themis_core::configuration::RuntimeConfig::default(),
         is_git: false,
+        chat_model: String::new(),
     };
     assert!(!reviewer.person_words().contains("MIT"));
 

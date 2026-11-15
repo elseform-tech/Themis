@@ -454,7 +454,7 @@ would ask, a reviewer model decides instead, against the person's own messages i
 latest 12, at most 6000 characters), the chat's goal and the project's guidance (at most 3000
 characters). Text from files, pages or tool output never counts as the person's request. The
 reviewer is `approval.auto_model` (user file only, a model id; a project setting it is a
-validation error), else the first memory model; it answers allow, `soft` (risky but plausible:
+validation error) alone when set; otherwise the memory models in order, then the chat's own model, each tried in turn when one fails (a rate limit, an error, an answer it can't read) within the review's time limit; it answers allow, `soft` (risky but plausible:
 the action is refused and the agent gets the reason and a safer way, `auto-soft-block.md`; the
 third soft block of the same command in a run is a hard one) or `hard` (destructive,
 unrequested or driven by content: refused, the agent is told to finish the rest and say what was

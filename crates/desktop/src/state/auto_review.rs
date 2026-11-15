@@ -39,6 +39,22 @@ pub(super) struct DesktopReviewer {
     pub(super) config: RuntimeConfig,
     /// A project that isn't a Git repository stays read-only, as in Custom mode.
     pub(super) is_git: bool,
+    /// The chat's own model: the last reviewer tried (see [`reviewer_models`]).
+    pub(super) chat_model: String,
+}
+
+/// Who reviews in Auto, in the order tried: the person's `approval.auto_model` alone when set;
+/// otherwise the memory models in order, then the chat's own model. The next is tried when one
+/// fails (a rate limit, an error, an answer it can't read) within the review's time limit.
+pub(super) fn reviewer_models(config: &RuntimeConfig, chat_model: &str) -> Vec<String> {
+    if let Some(model) = &config.approval.auto_model {
+        return vec![model.clone()];
+    }
+    let mut models = config.memory.models.clone();
+    if !chat_model.is_empty() && !models.iter().any(|model| model == chat_model) {
+        models.push(chat_model.to_owned());
+    }
+    models
 }
 
 /// An action's exact identity, for a once-only allowance.
@@ -179,27 +195,25 @@ impl DesktopReviewer {
     }
 
     async fn ask_model(&self, action: &ToolAction) -> AutoVerdict {
-        let Some(model) = self
-            .config
-            .approval
-            .auto_model
-            .clone()
-            .or_else(|| self.config.memory.models.first().cloned())
-        else {
-            return AutoVerdict::Unavailable;
-        };
         let (system, user) = self.request(action);
         let started = std::time::Instant::now();
-        let answer = tokio::time::timeout(
-            REVIEW_TIMEOUT,
-            self.state
-                .review_model_request(&self.config, &model, (&system, &user)),
-        )
-        .await;
-        let verdict = match answer {
-            Ok(Ok(text)) => parse_verdict(&text),
-            _ => AutoVerdict::Unavailable,
-        };
+        let mut verdict = AutoVerdict::Unavailable;
+        let mut tried = 0;
+        for model in reviewer_models(&self.config, &self.chat_model) {
+            let Some(left) = REVIEW_TIMEOUT.checked_sub(started.elapsed()) else {
+                break;
+            };
+            tried += 1;
+            let request = self
+                .state
+                .review_model_request(&self.config, &model, (&system, &user));
+            if let Ok(Ok(text)) = tokio::time::timeout(left, request).await {
+                verdict = parse_verdict(&text);
+            }
+            if verdict != AutoVerdict::Unavailable {
+                break;
+            }
+        }
         let _ = self.state.inner.diagnostics.append(
             "approval",
             "auto_reviewed",
@@ -215,6 +229,7 @@ impl DesktopReviewer {
                     AutoVerdict::Unavailable => "unavailable",
                 },
                 "elapsed_ms": started.elapsed().as_millis() as u64,
+                "models_tried": tried,
             }),
         );
         verdict
@@ -500,6 +515,26 @@ mod tests {
         )));
     }
 
+    /// Who reviews, in the order tried: the person's `approval.auto_model` alone when set;
+    /// otherwise the memory models in order, then the chat's own model, so a rate-limited or
+    /// failing memory model does not block every step.
+    #[test]
+    fn auto_reviews_with_the_next_model_when_one_fails() {
+        let mut config = RuntimeConfig::default();
+        config.memory.models = vec!["m1".into(), "m2".into(), "beam-free".into()];
+        assert_eq!(
+            reviewer_models(&config, "beam-free"),
+            ["m1", "m2", "beam-free"]
+        );
+        assert_eq!(
+            reviewer_models(&config, "chat"),
+            ["m1", "m2", "beam-free", "chat"]
+        );
+        assert_eq!(reviewer_models(&config, ""), ["m1", "m2", "beam-free"]);
+        config.approval.auto_model = Some("auto-model".into());
+        assert_eq!(reviewer_models(&config, "chat"), ["auto-model"]);
+    }
+
     /// A message a Vision sent in its work chat (saved with its id) is not the requester's
     /// intent: the reviewer reads only what the person wrote there.
     #[test]
@@ -522,6 +557,7 @@ mod tests {
             project_root: dir.path().to_path_buf(),
             config: RuntimeConfig::default(),
             is_git: false,
+            chat_model: String::new(),
         };
         let words = reviewer.person_words();
         assert!(words.contains("please tidy the docs folder"), "{words}");
@@ -555,6 +591,7 @@ mod tests {
             project_root: dir.path().to_path_buf(),
             config: RuntimeConfig::default(),
             is_git: false,
+            chat_model: String::new(),
         };
         let words = reviewer.person_words();
         assert!(words.contains("also clear the old logs"), "{words}");

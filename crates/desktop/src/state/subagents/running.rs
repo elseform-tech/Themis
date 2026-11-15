@@ -208,6 +208,7 @@ impl SubagentKit {
                 project_root: self.work_root.clone(),
                 config: self.config.clone(),
                 is_git: self.is_git,
+                chat_model: self.model.clone(),
             }) as Arc<dyn themis_core::tools::AutoReviewer>
         });
         let configured = themis_core::configuration::configured_hook_with_reviewer(
