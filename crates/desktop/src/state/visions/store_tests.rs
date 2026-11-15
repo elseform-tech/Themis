@@ -29,11 +29,9 @@ fn channel(name: &str, root: &Path, members: Vec<String>) -> Channel {
         name: name.into(),
         topic: "Docs".into(),
         project_root: root.to_path_buf(),
-        full_access: false,
         members,
         chief: String::new(),
-        autonomy: None,
-        custom: None,
+        level: None,
         daily_budget_usd: None,
         paused_workers: Vec::new(),
         revision: String::new(),
@@ -97,14 +95,8 @@ fn vision_fields_are_validated() {
     new_soul.soul = "Calm.".into();
     assert!(state.vision_save(new_soul, None).is_err());
     assert!(state.vision_save(vision("  "), None).is_err());
-    // The team's rows and budget are checked on its channel.
+    // The team's budget is checked on its channel.
     let root = project(dir.path(), "docs");
-    let mut spends = channel("docs", &root, Vec::new());
-    spends.custom = Some([("spend".to_string(), true)].into());
-    assert!(state.channel_save(spends, None).is_err());
-    let mut unknown_row = channel("docs", &root, Vec::new());
-    unknown_row.custom = Some([("everything".to_string(), true)].into());
-    assert!(state.channel_save(unknown_row, None).is_err());
     let mut negative = channel("docs", &root, Vec::new());
     negative.daily_budget_usd = Some(-1.0);
     assert!(state.channel_save(negative, None).is_err());
@@ -288,38 +280,28 @@ fn an_old_shape_in_the_store_file_loads_and_is_not_saved_again() {
     assert!(!saved.contains("shape"), "{saved}");
 }
 
-/// A channel's chats ask before changes only when its team decides nothing on its own (Always
-/// ask, or Custom with every row off); otherwise Auto. Full access is YOLO whatever the level.
+/// A channel's chats run in YOLO at Full access and in Auto at Auto-review; a channel with no
+/// level takes Settings'.
 #[test]
-fn approval_mode_follows_autonomy() {
+fn approval_mode_follows_the_level() {
     use themis_core::configuration::VisionsConfig;
-    use themis_core::visions::Autonomy;
+    use themis_core::visions::Level;
     let root = PathBuf::from("/p");
-    let config = VisionsConfig {
-        autonomy: Autonomy::NearlyAll,
-        ..VisionsConfig::default()
-    };
-    let at = |autonomy: Option<Autonomy>, full_access: bool| {
+    let at = |level: Option<Level>, settings: Level| {
         let team = Channel {
-            autonomy,
-            full_access,
+            level,
             ..channel("c", &root, vec![])
+        };
+        let config = VisionsConfig {
+            level: settings,
+            ..VisionsConfig::default()
         };
         channel_approval_mode(&team, &config)
     };
-    assert_eq!(at(Some(Autonomy::Ask), false), ApprovalMode::Custom);
-    for level in [Autonomy::Small, Autonomy::Most, Autonomy::NearlyAll] {
-        assert_eq!(at(Some(level), false), ApprovalMode::Auto, "{level:?}");
+    for settings in [Level::AutoReview, Level::FullAccess] {
+        assert_eq!(at(Some(Level::FullAccess), settings), ApprovalMode::Yolo);
+        assert_eq!(at(Some(Level::AutoReview), settings), ApprovalMode::Auto);
     }
-    // The channel's level is Settings' when it has none.
-    assert_eq!(at(None, false), ApprovalMode::Auto);
-    let off = Channel {
-        autonomy: Some(Autonomy::Custom),
-        custom: Some(BTreeMap::new()),
-        ..channel("c", &root, vec![])
-    };
-    assert_eq!(channel_approval_mode(&off, &config), ApprovalMode::Custom);
-    for level in [Autonomy::Ask, Autonomy::Most] {
-        assert_eq!(at(Some(level), true), ApprovalMode::Yolo, "{level:?}");
-    }
+    assert_eq!(at(None, Level::AutoReview), ApprovalMode::Auto);
+    assert_eq!(at(None, Level::FullAccess), ApprovalMode::Yolo);
 }

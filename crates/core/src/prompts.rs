@@ -498,9 +498,6 @@ pub const AGENT_CLI_NOT_YOUR_TEAM: &str =
 /// The app server's answer to a chief's request past its channel's daily cap; `{{cap}}`.
 pub const AGENT_CLI_REQUEST_CAP: &str =
     include_str!("../builtins/prompts/agent-cli-request-cap.md");
-/// The app server's answer to a chief accepting a request beyond its channel's level.
-pub const AGENT_CLI_REQUEST_ABOVE_LEVEL: &str =
-    include_str!("../builtins/prompts/agent-cli-request-above-level.md");
 /// The app server's answer to a chief asking a channel again before its result came back.
 pub const AGENT_CLI_REQUEST_ALREADY_OPEN: &str =
     include_str!("../builtins/prompts/agent-cli-request-already-open.md");
@@ -526,10 +523,10 @@ pub const AGENT_CLI_VISION_OVER_BUDGET: &str =
 /// block or a step waiting on the person's approval).
 pub const AGENT_CLI_PERMISSION_QUESTION: &str =
     include_str!("../builtins/prompts/agent-cli-permission-question.md");
-/// The app server's answer to a Vision's `answer_question` on a decision its autonomy level
-/// leaves to the person.
-pub const AGENT_CLI_ABOVE_AUTONOMY: &str =
-    include_str!("../builtins/prompts/agent-cli-above-autonomy.md");
+/// The app server's answer to a Vision's `answer_question` on a decision that is always the
+/// person's (`delete`, `external`, `spend`).
+pub const AGENT_CLI_LOCKED_DECISION: &str =
+    include_str!("../builtins/prompts/agent-cli-locked-decision.md");
 /// The app server's answer to a Vision's `answer_question` or `pass_question` without a known
 /// `decision`.
 pub const AGENT_CLI_VISION_DECISION: &str =

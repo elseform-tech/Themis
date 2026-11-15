@@ -25,16 +25,11 @@
     "name": "administration",
     "topic": "Ship 2.0",
     "project_root": "/repo",
-    "full_access": true,
     "members": [
       "v1"
     ],
     "chief": "v1",
-    "autonomy": "custom",
-    "custom": {
-      "tests": true,
-      "wording": false
-    },
+    "level": "full_access",
     "daily_budget_usd": 0.5,
     "revision": "r2",
     "needs": 1
@@ -167,7 +162,6 @@
               "role": "Ships releases",
               "color": "rose",
               "model": "go/test-model",
-              "autonomy": "ask",
               "daily_budget_usd": 0.25
             }
           ],
@@ -177,7 +171,6 @@
               "name": "Wren B",
               "role": "Writes docs",
               "paused": true,
-              "autonomy": "small",
               "daily_budget_usd": 0.1
             },
             {
@@ -214,7 +207,6 @@
                 "soul": ""
               }
             ],
-            "autonomy": "small",
             "daily_budget_usd": 0.5
           },
           "hire": {

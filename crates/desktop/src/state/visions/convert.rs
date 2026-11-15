@@ -1,8 +1,8 @@
 //! The one-time move of a Phase 1 store (channels of peer Visions, `# hq`) to teams: `# hq`
 //! becomes `# administration` with the admin as its chief (a channel the person had named
 //! `administration` steps aside), every other channel's first member becomes its chief, the
-//! per-Vision autonomy and budget overrides become the channel's (its strictest member's, so
-//! nothing loosens), workers' souls go, and old heartbeat notes are deleted. Logs and
+//! per-Vision budget overrides become the channel's (its strictest member's, so nothing
+//! loosens; their autonomy overrides go, a channel taking Settings' level), workers' souls go, and old heartbeat notes are deleted. Logs and
 //! owned chats stay as they are.
 //!
 //! It runs on the store's first load and is idempotent: each step only changes what is still in
@@ -11,10 +11,7 @@
 
 use std::path::Path;
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
-use themis_core::visions::{vision_decides, Autonomy, Decision};
 
 use super::admin::{ADMINISTRATION, ADMIN_VISION_ID, OLD_HQ};
 use super::store::{read_store, write_store, StoreError};
@@ -102,14 +99,10 @@ fn step_aside(channels: &mut [Value]) -> bool {
     changed
 }
 
-/// A team keeps its strictest member's limits: the lowest autonomy (the decisions every member
-/// left to itself, under Custom when the members differ in kind) and the lowest budget. Only
-/// set on a channel that has none yet, so it runs once.
+/// A team keeps its strictest member's budget, the lowest. Only set on a channel that has none
+/// yet, so it runs once.
 fn carry_limits(channel: &mut Value, visions: &[Value]) -> bool {
-    if channel["name"] == ADMINISTRATION
-        || channel.get("autonomy").is_some()
-        || channel.get("daily_budget_usd").is_some()
-    {
+    if channel["name"] == ADMINISTRATION || channel.get("daily_budget_usd").is_some() {
         return false;
     }
     let members: Vec<&Value> = channel["members"]
@@ -126,78 +119,16 @@ fn carry_limits(channel: &mut Value, visions: &[Value]) -> bool {
         .fold(None, |low: Option<f64>, cap| {
             Some(low.map_or(cap, |low| low.min(cap)))
         });
-    let levels: Vec<Vec<Decision>> = members
-        .iter()
-        .filter_map(|vision| decided(vision))
-        .collect();
     let Some(fields) = channel.as_object_mut() else {
         return false;
     };
-    let mut changed = false;
-    if let Some(budget) = budget {
-        fields.insert("daily_budget_usd".into(), Value::from(budget));
-        changed = true;
+    match budget {
+        Some(budget) => {
+            fields.insert("daily_budget_usd".into(), Value::from(budget));
+            true
+        }
+        None => false,
     }
-    if let Some(first) = levels.first() {
-        let common: Vec<Decision> = first
-            .iter()
-            .copied()
-            .filter(|decision| levels.iter().all(|each| each.contains(decision)))
-            .collect();
-        let preset = [
-            Autonomy::Ask,
-            Autonomy::Small,
-            Autonomy::Most,
-            Autonomy::NearlyAll,
-        ]
-        .into_iter()
-        .find(|level| decided_by(*level, &BTreeMap::new()) == common);
-        match preset {
-            Some(level) => fields.insert(
-                "autonomy".into(),
-                serde_json::to_value(level).unwrap_or_default(),
-            ),
-            None => {
-                let rows: serde_json::Map<String, Value> = Decision::ALL
-                    .into_iter()
-                    .map(|decision| {
-                        (
-                            decision.id().to_owned(),
-                            Value::from(common.contains(&decision)),
-                        )
-                    })
-                    .collect();
-                fields.insert("custom".into(), Value::Object(rows));
-                fields.insert("autonomy".into(), Value::from("custom"))
-            }
-        };
-        changed = true;
-    }
-    changed
-}
-
-/// The decisions `level` (with `rows` under Custom) leaves to a Vision, in `Decision::ALL` order.
-fn decided_by(level: Autonomy, rows: &BTreeMap<String, bool>) -> Vec<Decision> {
-    Decision::ALL
-        .into_iter()
-        .filter(|decision| vision_decides(level, rows, *decision))
-        .collect()
-}
-
-/// The decisions a Phase 1 Vision's own autonomy left to it, when it had one.
-fn decided(vision: &Value) -> Option<Vec<Decision>> {
-    // Rows with no level of their own were limits on the Settings level: kept as Custom rows,
-    // which can only be stricter.
-    let level: Autonomy = match vision.get("autonomy") {
-        Some(level) => serde_json::from_value(level.clone()).ok()?,
-        None if vision.get("custom").is_some() => Autonomy::Custom,
-        None => return None,
-    };
-    let rows: BTreeMap<String, bool> = vision
-        .get("custom")
-        .and_then(|rows| serde_json::from_value(rows.clone()).ok())
-        .unwrap_or_default();
-    Some(decided_by(level, &rows))
 }
 
 /// A chief's or Atlas's soul stays on its record; a worker's goes (workers have a role).

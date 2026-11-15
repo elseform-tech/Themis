@@ -1,7 +1,7 @@
 //! Atlas's team and hire proposals: a whole team (a channel, its chief and workers, the team's
-//! autonomy and budget) or one more worker for a channel. Checked field by field like any
-//! proposal, and set up exactly as proposed after the person's reply. A team's autonomy and
-//! budget are never above Settings › Visions. The crown is Atlas's alone.
+//! budget) or one more worker for a channel. Checked field by field like any proposal, and set
+//! up exactly as proposed after the person's reply. A team's budget is never above Settings ›
+//! Visions, and a proposal sets no level (only the person does). The crown is Atlas's alone.
 
 use super::*;
 use crate::state::visions::ACCESSORIES;
@@ -14,8 +14,6 @@ pub struct NewTeam {
     pub chief: NewMember,
     #[serde(default)]
     pub workers: Vec<NewMember>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<Autonomy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_budget_usd: Option<f64>,
 }
@@ -55,27 +53,8 @@ pub struct Hire {
     pub worker: NewMember,
 }
 
-/// Whether a team's autonomy and budget stay within Settings › Visions.
-pub(super) fn fits_settings(
-    autonomy: Option<Autonomy>,
-    budget: Option<f64>,
-    config: &VisionsConfig,
-) -> Result<(), String> {
-    if autonomy == Some(Autonomy::Custom) {
-        return Err(
-            "Custom autonomy is set row by row in the app; pick a level instead".to_owned(),
-        );
-    }
-    if let Some(level) = autonomy {
-        let above = match (level.rank(), config.autonomy.rank()) {
-            (Some(level), Some(allowed)) => level > allowed,
-            // Custom on either side: only "ask", or exactly Settings' own level.
-            _ => level != Autonomy::Ask && level != config.autonomy,
-        };
-        if above {
-            return Err("A team's autonomy can't be above Settings › Visions".to_owned());
-        }
-    }
+/// Whether a team's budget stays within Settings › Visions.
+pub(super) fn budget_fits(budget: Option<f64>, config: &VisionsConfig) -> Result<(), String> {
     if let Some(budget) = budget {
         if !(0.0..=config.daily_budget_usd).contains(&budget) {
             return Err(format!(
@@ -134,7 +113,7 @@ fn check_member(
 }
 
 /// Checks a team: a free channel name, a new chief and at least one new worker, and the team's
-/// autonomy and budget within Settings.
+/// budget within Settings.
 pub(super) fn check_team(
     team: &NewTeam,
     context: &Context,
@@ -146,11 +125,9 @@ pub(super) fn check_team(
         name: team.channel.name.trim().to_owned(),
         topic: team.channel.topic.clone(),
         project_root: std::env::temp_dir(),
-        full_access: false,
         members: Vec::new(),
         chief: String::new(),
-        autonomy: team.autonomy,
-        custom: None,
+        level: None,
         daily_budget_usd: team.daily_budget_usd,
         paused_workers: Vec::new(),
         revision: String::new(),
@@ -173,7 +150,7 @@ pub(super) fn check_team(
     for worker in &team.workers {
         check_member(worker, false, context, names)?;
     }
-    fits_settings(team.autonomy, team.daily_budget_usd, &context.config)
+    budget_fits(team.daily_budget_usd, &context.config)
 }
 
 /// Checks a hire: an existing channel of the project (not `# administration`) and a new worker.
@@ -289,11 +266,9 @@ impl AppState {
             name: team.channel.name.trim().to_owned(),
             topic: team.channel.topic.clone(),
             project_root: hq.project_root.clone(),
-            full_access: false,
             members,
             chief: chief.id.clone(),
-            autonomy: team.autonomy,
-            custom: None,
+            level: None,
             daily_budget_usd: team.daily_budget_usd,
             paused_workers: Vec::new(),
             revision: String::new(),

@@ -7,9 +7,9 @@
 //! as a `proposal` entry, and sets it up with `apply_proposal` only when the proposal was never
 //! set up and the person wrote in `# administration` after it. Whether that reply means yes is the model's
 //! judgement; the server checks everything else, each field again when it is set up: a proposal
-//! never raises autonomy above Settings › Visions, never raises a budget, never deletes, never
-//! touches the admin or `# administration`, and its channels start with Full access off (their
-//! chats' mode follows the autonomy it names). Logged as metadata only (`proposal_posted`,
+//! never sets a level (only the person does; its channels take Settings › Visions' level),
+//! never raises a budget, never deletes, and never touches the admin or `# administration`.
+//! Logged as metadata only (`proposal_posted`,
 //! `proposal_refused`, `proposal_applied`: ids, counts and outcome).
 
 use std::collections::HashSet;
@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use themis_core::configuration::VisionsConfig;
 use themis_core::prompts::{fill, VISIONS_ADMIN};
-use themis_core::visions::Autonomy;
 
 use super::store::{validate_channel, validate_vision};
 
@@ -35,9 +34,9 @@ pub use teams::{NewMember, TeamChannel};
 pub const ADMIN_VISION_ID: &str = "admin";
 /// The name of each project's built-in channel.
 pub(super) const ADMINISTRATION: &str = "administration";
-/// Why a proposal may not set autonomy or a budget on a Vision: they are the channel's.
+/// Why a proposal may not set a budget on a Vision: it is the channel's.
 const TEAM_SETTINGS: &str =
-    "A proposal cannot set autonomy or a budget on a Vision: they belong to its channel now";
+    "A proposal cannot set a budget on a Vision: it belongs to its channel now";
 /// `# administration`'s name before teams (see `convert`).
 pub(super) const OLD_HQ: &str = "hq";
 /// Why the admin is never deleted.
@@ -117,8 +116,6 @@ pub struct NewVision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<Autonomy>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_budget_usd: Option<f64>,
 }
 
@@ -138,8 +135,6 @@ pub struct Change {
     pub topic: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paused: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<Autonomy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daily_budget_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -290,7 +285,7 @@ fn check_new_vision(
     names: &mut HashSet<String>,
 ) -> Result<(), String> {
     check_new_profile(&mut new_profile(new), context, names)?;
-    if new.autonomy.is_some() || new.daily_budget_usd.is_some() {
+    if new.daily_budget_usd.is_some() {
         return Err(TEAM_SETTINGS.to_owned());
     }
     if let Some(model) = new
@@ -332,11 +327,9 @@ fn check_new_channel(
         name: new.name.clone(),
         topic: new.topic.clone(),
         project_root: std::env::temp_dir(),
-        full_access: false,
         members,
         chief: String::new(),
-        autonomy: None,
-        custom: None,
+        level: None,
         daily_budget_usd: None,
         paused_workers: Vec::new(),
         revision: String::new(),
@@ -367,7 +360,7 @@ fn check_vision_change(change: &Change, vision: &Vision, context: &Context) -> R
     if is_admin(&vision.id) {
         return Err("Atlas is built in; a proposal cannot change it".to_owned());
     }
-    if change.autonomy.is_some() || change.daily_budget_usd.is_some() {
+    if change.daily_budget_usd.is_some() {
         return Err(TEAM_SETTINGS.to_owned());
     }
     if change.topic.is_some() || !change.add_members.is_empty() || !change.remove_members.is_empty()
@@ -402,11 +395,9 @@ fn check_channel_change(
     }
     let vision_only = change.role.is_some() || change.paused.is_some();
     if vision_only {
-        return Err(
-            "A channel's change may set its name, topic, members, autonomy and budget".to_owned(),
-        );
+        return Err("A channel's change may set its name, topic, members and budget".to_owned());
     }
-    teams::fits_settings(change.autonomy, change.daily_budget_usd, &context.config)?;
+    teams::budget_fits(change.daily_budget_usd, &context.config)?;
     let members = |names: &[String]| {
         names
             .iter()
@@ -451,7 +442,7 @@ fn new_profile(new: &NewVision) -> Vision {
     }
 }
 
-/// `vision` with the change's name, role, autonomy and budget (its pause is set apart).
+/// `vision` with the change's name and role (its pause is set apart).
 fn applied_to_vision(change: &Change, vision: &Vision) -> Vision {
     let mut changed = vision.clone();
     if let Some(name) = &change.name {
@@ -477,9 +468,6 @@ fn applied_to_channel(
     }
     if let Some(topic) = &change.topic {
         changed.topic = topic.trim().to_owned();
-    }
-    if change.autonomy.is_some() {
-        changed.autonomy = change.autonomy;
     }
     if change.daily_budget_usd.is_some() {
         changed.daily_budget_usd = change.daily_budget_usd;
@@ -508,14 +496,9 @@ fn fill_looks(proposal: &mut Proposal, existing: usize) {
 }
 
 /// The admin run's system head; any other Vision's is [`super::runs::vision_head`].
-pub(super) fn run_head(
-    vision: &Vision,
-    channel: &Channel,
-    config: &VisionsConfig,
-    members: &[Vision],
-) -> String {
+pub(super) fn run_head(vision: &Vision, channel: &Channel, members: &[Vision]) -> String {
     if !is_admin(&vision.id) {
-        return super::runs::vision_head(vision, channel, config, members);
+        return super::runs::vision_head(vision, channel, members);
     }
     let project =
         serde_json::to_string(&channel.project_root.to_string_lossy()).unwrap_or_default();
@@ -590,11 +573,9 @@ impl AppState {
                     name: ADMINISTRATION.to_owned(),
                     topic: String::new(),
                     project_root: root.to_path_buf(),
-                    full_access: false,
                     members: admin_only,
                     chief: ADMIN_VISION_ID.to_owned(),
-                    autonomy: None,
-                    custom: None,
+                    level: None,
                     daily_budget_usd: None,
                     paused_workers: Vec::new(),
                     revision: String::new(),
@@ -856,11 +837,9 @@ impl AppState {
                 name: new.name.trim().to_owned(),
                 topic: new.topic.clone(),
                 project_root: hq.project_root.clone(),
-                full_access: false,
                 members: ids(&new.members)?,
                 chief: String::new(),
-                autonomy: None,
-                custom: None,
+                level: None,
                 daily_budget_usd: None,
                 paused_workers: Vec::new(),
                 revision: String::new(),

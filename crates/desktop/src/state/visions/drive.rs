@@ -273,8 +273,8 @@ impl AppState {
             .any(|id| flagged.contains(id) || blocks.contains_key(id) || pending.contains_key(id))
     }
 
-    /// A Vision answers questions in a chat it owns, on a `decision` its run's autonomy leaves
-    /// to it: as the Vision's answer, never the person's (no "Allow once" it writes lets
+    /// A Vision answers questions in a chat it owns, on a `decision` its run leaves to it (all
+    /// but `delete`, `external` and `spend`): as the Vision's answer, never the person's (no "Allow once" it writes lets
     /// anything run), and each one goes in the channel with the decision and `reason`. Returns
     /// the answered questions and whether the channel failed to record any of them (the
     /// answers stand: they were delivered).
@@ -295,7 +295,7 @@ impl AppState {
             return Err(waits.to_owned());
         }
         if !vision.decides.contains(&decision) {
-            return Err(themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned());
+            return Err(themis_core::prompts::AGENT_CLI_LOCKED_DECISION.to_owned());
         }
         // A question passed on to the person is theirs now (the server may have done it).
         let passed = self

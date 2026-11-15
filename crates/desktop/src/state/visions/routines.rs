@@ -151,7 +151,7 @@ impl AppState {
             .runtime_configuration(Some(&channel.project_root), None)?
             .config
             .visions;
-        if !super::vision_decisions(&channel, &config).contains(&Decision::Undoable) {
+        if !super::vision_decisions().contains(&Decision::Undoable) {
             return Err(themis_core::prompts::AGENT_CLI_ROUTINE_ABOVE_LEVEL.to_owned());
         }
         routine.schedule.check()?;

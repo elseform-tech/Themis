@@ -18,7 +18,6 @@ pub(in crate::server::agent) const CHIEF_CALLS: &[&str] = &[
     "get_team_log",
     "list_team",
     "request_channel",
-    "answer_request",
     "send_result",
     "ask_for_worker",
     "list_routines",
@@ -139,9 +138,9 @@ fn on_worker_chat(
         return Some(Some(held_by_person()));
     }
     Some(
-        (method == "answer_question" && above_autonomy(scope, args)).then(|| Refusal {
-            reason: Reason::AboveAutonomy,
-            message: themis_core::prompts::AGENT_CLI_ABOVE_AUTONOMY.to_owned(),
+        (method == "answer_question" && locked_decision(scope, args)).then(|| Refusal {
+            reason: Reason::LockedDecision,
+            message: themis_core::prompts::AGENT_CLI_LOCKED_DECISION.to_owned(),
         }),
     )
 }
@@ -190,19 +189,16 @@ pub(super) fn state_refusal(
             });
         }
     }
-    // Declining a request changes nothing, so a paused chief may still do it.
-    let accepts = method == "answer_request" && args.get("accept") == Some(&Value::Bool(true));
-    let gives_work = accepts
-        || matches!(
-            method,
-            "assign_task"
-                | "redirect_worker"
-                | "pause_worker"
-                | "resume_worker"
-                | "request_channel"
-                | "ask_for_worker"
-                | "save_routine"
-        );
+    let gives_work = matches!(
+        method,
+        "assign_task"
+            | "redirect_worker"
+            | "pause_worker"
+            | "resume_worker"
+            | "request_channel"
+            | "ask_for_worker"
+            | "save_routine"
+    );
     let paused = state
         .vision_get(&scope.vision_id)
         .is_none_or(|vision| vision.paused);
@@ -284,7 +280,7 @@ pub(super) async fn dispatch(
             }
             Ok(json!({"seq": seq}))
         }
-        "request_channel" | "answer_request" | "send_result" | "ask_for_worker" => {
+        "request_channel" | "send_result" | "ask_for_worker" => {
             request(state, sink, scope, method, args)
         }
         "list_routines" | "save_routine" | "delete_routine" => routine(state, scope, method, args),
@@ -316,7 +312,8 @@ fn channel_named(state: &AppState, channel: &str, args: &Value) -> Result<String
         .ok_or_else(|| format!("This project has no channel named {name:?}"))
 }
 
-/// A chief's request to another channel of its project, or its answer to one it received.
+/// A chief's request to another channel of its project or to Atlas, or the result of one it
+/// took on.
 fn request(
     state: &AppState,
     sink: &Arc<dyn EventSink>,
@@ -338,22 +335,9 @@ fn request(
         return Ok(json!({"requestId": id}));
     }
     let id: String = arg(args, "requestId")?;
-    if method == "send_result" {
-        let text: String = arg(args, "text")?;
-        state.visions_send_result(sink, channel, &scope.vision_id, &id, &text)?;
-        return Ok(json!({"sent": true}));
-    }
-    let note: Option<String> = arg(args, "note")?;
-    let note = note.unwrap_or_default();
-    state.visions_answer_request(
-        sink,
-        channel,
-        &scope.vision_id,
-        &id,
-        arg(args, "accept")?,
-        &note,
-    )?;
-    Ok(json!({"answered": true}))
+    let text: String = arg(args, "text")?;
+    state.visions_send_result(sink, channel, &scope.vision_id, &id, &text)?;
+    Ok(json!({"sent": true}))
 }
 
 /// A chief's routines: listed, added or changed (its `undoable` decision), or removed.

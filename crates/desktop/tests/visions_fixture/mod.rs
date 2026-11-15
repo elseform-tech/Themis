@@ -106,8 +106,8 @@ impl Fixture {
         self.vision_and_channel_in(name, channel, "auto")
     }
 
-    /// The same, with its chats in approval mode `mode` (`yolo`: Full access; `custom`: the
-    /// team decides nothing, so its chats ask; `auto`: Settings' level).
+    /// The same, with its chats in approval mode `mode` (`yolo`: level Full access; anything
+    /// else: Settings' level, Auto-review by default).
     /// The Visions run their chats on the scripted provider's `test-model`.
     pub fn vision_and_channel_in(&self, name: &str, channel: &str, mode: &str) -> (String, String) {
         let chief = self.new_vision(&format!("{name} Lead"));
@@ -290,10 +290,8 @@ impl Fixture {
 
 /// A channel spec whose chats run in approval mode `mode` (see `vision_and_channel_in`).
 fn mode_of(spec: &mut Value, mode: &str) {
-    match mode {
-        "yolo" => spec["full_access"] = json!(true),
-        "custom" => spec["autonomy"] = json!("ask"),
-        _ => {}
+    if mode == "yolo" {
+        spec["level"] = json!("full_access");
     }
 }
 

@@ -1,12 +1,12 @@
-//! Requests between channels: a chief asks another channel's chief, which accepts or declines
-//! within its channel's level; both channels show the exchange; a daily cap stops loops.
+//! Requests between channels: a chief asks another channel's chief; nobody answers it: the
+//! receiving channel takes it on when its chief can run; both channels show the exchange; a
+//! daily cap stops loops.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
 use themis_core::diagnostics::DiagnosticFilter;
-use themis_core::visions::Autonomy;
 
 use super::*;
 use crate::sink::{ChannelSink, EventSink};
@@ -49,11 +49,9 @@ fn lead(state: &AppState, root: &Path, name: &str, chief: &str) -> (String, Stri
                 name: name.into(),
                 topic: String::new(),
                 project_root: root.to_path_buf(),
-                full_access: false,
                 members: vec![vision.clone()],
                 chief: vision.clone(),
-                autonomy: Some(Autonomy::Most),
-                custom: None,
+                level: None,
                 daily_budget_usd: None,
                 paused_workers: Vec::new(),
                 revision: String::new(),
@@ -158,8 +156,8 @@ fn a_request_wakes_the_other_chief_and_shows_in_both_channels() {
                 && reason == "request"),
         "{woke:?}"
     );
-    // Above Always ask the request is taken on at once: both channels say so, and the asking
-    // chief is not woken for it (it hears when the result comes).
+    // Taken on at once: both channels say so, and the asking chief is not woken for it (it
+    // hears when the result comes).
     for channel in [release, api] {
         let all = lines(&c.state, channel);
         let taken = of_type(&all, "request_answered");
@@ -174,55 +172,38 @@ fn a_request_wakes_the_other_chief_and_shows_in_both_channels() {
     );
 }
 
+/// A request its chief could not run when it came (paused) stays open, and is taken on when
+/// that chief's next run starts: both channels then say so, under the chief's name, once.
 #[test]
-fn a_chief_declines_within_its_autonomy() {
+fn a_waiting_request_is_taken_on_when_its_chief_next_runs() {
     let c = company();
     let (release, juno) = &c.release;
     let (api, tess) = &c.api;
-    // At "ask", # api's chief decides nothing: it may decline, but not take on the work.
-    let mut channel = c.state.channel_get(api).unwrap();
-    channel.autonomy = Some(Autonomy::Ask);
-    let revision = channel.revision.clone();
-    c.state.channel_save(channel, Some(&revision)).unwrap();
-    let first = c
+    c.state.visions_pause(tess, true).unwrap();
+    let id = c
         .state
         .visions_request(&sink(), release, juno, api, "Rename the CLI")
         .unwrap();
-    let refused = c
-        .state
-        .visions_answer_request(&sink(), api, tess, &first, true, "on it");
-    assert!(refused.is_err(), "accepting is beyond its level");
-    c.state
-        .visions_answer_request(&sink(), api, tess, &first, false, "Not this week")
-        .unwrap();
-    // Answered once only, and both channels show the answer.
-    assert!(c
-        .state
-        .visions_answer_request(&sink(), api, tess, &first, false, "again")
-        .is_err());
+    assert!(of_type(&lines(&c.state, api), "request_answered").is_empty());
+    assert!(
+        c.state
+            .visions_send_result(&sink(), api, tess, &id, "early")
+            .is_err(),
+        "not taken on yet"
+    );
+    c.state.visions_pause(tess, false).unwrap();
+    c.state.visions_take_requests(api, tess, None);
+    c.state.visions_take_requests(api, tess, None);
     for channel in [release, api] {
         let all = lines(&c.state, channel);
-        let answered = of_type(&all, "request_answered");
-        assert_eq!(answered.len(), 1, "{all:?}");
-        assert_eq!(answered[0]["accepted"], false);
+        let taken = of_type(&all, "request_answered");
+        assert_eq!(taken.len(), 1, "once: {all:?}");
+        assert_eq!(taken[0]["request_id"], id.as_str());
+        assert_eq!(taken[0]["vision_id"], tess.as_str());
+        assert_eq!(taken[0]["accepted"], true);
     }
-    // The asking chief hears the answer.
-    let woke = wakes(&c.state);
-    assert!(woke
-        .iter()
-        .any(|(vision, _, reason, _)| vision == juno && reason == "request_answered"));
-    // Only the receiving chief answers.
-    let second = c
-        .state
-        .visions_request(&sink(), release, juno, api, "Add a flag")
-        .unwrap();
-    assert!(c
-        .state
-        .visions_answer_request(&sink(), release, juno, &second, false, "no")
-        .is_err());
-    // The person may accept what the chief could not.
     c.state
-        .visions_person_answers_request(&sink(), &second, true)
+        .visions_send_result(&sink(), api, tess, &id, "Renamed to themis")
         .unwrap();
 }
 
@@ -314,38 +295,6 @@ fn the_receiving_channel_pays_for_a_request() {
     assert!(
         !c.state.visions_over_budget(juno),
         "the asking channel is not charged"
-    );
-}
-
-/// The person accepts what their chief could not: the answer is theirs (no Vision), and the
-/// receiving chief wakes to do the work.
-#[test]
-fn the_persons_accept_wakes_the_receiving_chief() {
-    let c = company();
-    let (release, juno) = &c.release;
-    let (api, tess) = &c.api;
-    // At Always ask the request waits on the person.
-    let mut channel = c.state.channel_get(api).unwrap();
-    channel.autonomy = Some(Autonomy::Ask);
-    let revision = channel.revision.clone();
-    c.state.channel_save(channel, Some(&revision)).unwrap();
-    let id = c
-        .state
-        .visions_request(&sink(), release, juno, api, "Ship it")
-        .unwrap();
-    c.state
-        .visions_person_answers_request(&sink(), &id, true)
-        .unwrap();
-    let all = lines(&c.state, api);
-    let answered = of_type(&all, "request_answered");
-    assert_eq!(answered[0]["vision_id"], "", "the person's answer");
-    let woke = wakes(&c.state);
-    assert!(
-        woke.iter()
-            .any(|(vision, channel, reason, _)| vision == tess
-                && channel == api
-                && reason == "request_answered"),
-        "{woke:?}"
     );
 }
 
@@ -482,7 +431,7 @@ fn a_second_request_waits_for_the_first_result() {
 }
 
 /// A request to a channel whose chief is paused is not taken on at arrival: nothing could run
-/// it, so it stays open for the person.
+/// it, so it stays open until that chief's next run.
 #[test]
 fn a_paused_chief_does_not_take_a_request_on() {
     let c = company();
@@ -511,8 +460,8 @@ fn a_stuck_request_stops_blocking_the_next() {
     let hours_ago = chrono::Utc::now().timestamp_millis() - 7 * 3_600_000;
     for request in stored.as_array_mut().unwrap() {
         request["at_ms"] = hours_ago.into();
-        if let Some(answered) = request.get_mut("answered") {
-            answered["at_ms"] = hours_ago.into();
+        if request.get("taken_ms").is_some() {
+            request["taken_ms"] = hours_ago.into();
         }
     }
     std::fs::write(&path, stored.to_string()).unwrap();

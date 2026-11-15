@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use themis_core::configuration::ApprovalMode;
-use themis_core::visions::Autonomy;
+use themis_core::visions::Level;
 
 use super::admin::{
     Change, Hire, NewChannel, NewMember, NewTeam, NewVision, SetUpAction, SetUpKind, TeamChannel,
@@ -179,7 +179,6 @@ fn every_proposal_field() -> Proposal {
             role: "Ships releases".into(),
             color: "rose".into(),
             model: Some("go/test-model".into()),
-            autonomy: Some(Autonomy::Ask),
             daily_budget_usd: Some(0.25),
         }],
         changes: vec![
@@ -188,7 +187,6 @@ fn every_proposal_field() -> Proposal {
                 name: Some("Wren B".into()),
                 role: Some("Writes docs".into()),
                 paused: Some(true),
-                autonomy: Some(Autonomy::Small),
                 daily_budget_usd: Some(0.1),
                 ..Change::default()
             },
@@ -222,7 +220,6 @@ fn every_proposal_field() -> Proposal {
                 soul: String::new(),
                 model: None,
             }],
-            autonomy: Some(Autonomy::Small),
             daily_budget_usd: Some(0.5),
         })),
         hire: Some(Box::new(Hire {
@@ -316,14 +313,9 @@ fn listed_visions_channels_and_owners_match_the_apps_fixture() {
             name: "administration".into(),
             topic: "Ship 2.0".into(),
             project_root: "/repo".into(),
-            full_access: true,
             members: vec!["v1".into()],
             chief: "v1".into(),
-            autonomy: Some(Autonomy::Custom),
-            custom: Some(BTreeMap::from([
-                ("tests".into(), true),
-                ("wording".into(), false),
-            ])),
+            level: Some(Level::FullAccess),
             daily_budget_usd: Some(0.5),
             paused_workers: Vec::new(),
             revision: "r2".into(),

@@ -1,5 +1,5 @@
 use super::*;
-use crate::visions::{vision_decides, Autonomy, Decision};
+use crate::visions::Level;
 
 /// Visions (`visions`, Settings › Visions): agents that drive ordinary chats; see
 /// [`crate::visions`].
@@ -8,13 +8,9 @@ use crate::visions::{vision_decides, Autonomy, Decision};
 pub struct VisionsConfig {
     /// Allow Visions to wake and drive chats. A project or run layer may only set it to false.
     pub enabled: bool,
-    /// How much a Vision decides without asking: `ask`, `small`, `most`, `nearly_all` or
-    /// `custom` (the rows in `custom`). A project or run layer may only lower it.
-    pub autonomy: Autonomy,
-    /// With `autonomy: "custom"`, which decisions (`wording`, `tests`, `undoable`, `retry`,
-    /// `scope`, `delete`, `dependency`) the Vision makes itself; `external` and `spend` are
-    /// always the person's. A project or run layer may only set rows to false.
-    pub custom: BTreeMap<String, bool>,
+    /// The level of new channels and of channels with none: `auto_review` (their chats run in
+    /// Auto) or `full_access` (YOLO). A project or run layer may only set `auto_review`.
+    pub level: Level,
     /// Estimated dollars all Visions together may spend in a day. A project may only lower it.
     pub daily_budget_usd: f64,
     /// Most times a Vision wakes on one thing before it hands back to the person (1-20). A
@@ -76,8 +72,7 @@ impl Default for VisionsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            autonomy: Autonomy::Small,
-            custom: BTreeMap::new(),
+            level: Level::AutoReview,
             daily_budget_usd: 1.0,
             max_wakes: 16,
             requests_per_day: 10,
@@ -87,8 +82,8 @@ impl Default for VisionsConfig {
     }
 }
 
-/// A project or run layer may only lower autonomy, the budget and the wakes, turn Visions
-/// off, and set custom rows to false.
+/// A project or run layer may only set the level to Auto-review, lower the budget and the
+/// wakes, and turn Visions off.
 fn check_visions_restriction(current: &VisionsConfig, layer: &Value, origin: &str) -> Result<()> {
     if let Some(value) = layer.pointer("/visions/enabled") {
         ensure!(
@@ -96,28 +91,10 @@ fn check_visions_restriction(current: &VisionsConfig, layer: &Value, origin: &st
             "the {origin} configuration may only set visions.enabled to false"
         );
     }
-    if let Some(value) = layer.pointer("/visions/autonomy") {
-        let requested: Autonomy = serde_json::from_value(value.clone()).map_err(|_| {
-            anyhow::anyhow!("visions.autonomy must be ask/small/most/nearly_all/custom")
-        })?;
-        let allowed = match (requested.rank(), current.autonomy.rank()) {
-            (Some(0), _) => true,
-            (Some(new), Some(old)) => new <= old,
-            (Some(_), None) => Decision::ALL.into_iter().all(|d| {
-                !vision_decides(requested, &BTreeMap::new(), d)
-                    || vision_decides(Autonomy::Custom, &current.custom, d)
-            }),
-            (None, _) => current.autonomy == Autonomy::Custom,
-        };
+    if let Some(value) = layer.pointer("/visions/level") {
         ensure!(
-            allowed,
-            "the {origin} configuration may only lower visions.autonomy"
-        );
-    }
-    if let Some(rows) = layer.pointer("/visions/custom").and_then(Value::as_object) {
-        ensure!(
-            rows.values().all(|row| row == &Value::Bool(false)),
-            "the {origin} configuration may only set visions.custom rows to false"
+            value == "auto_review",
+            "the {origin} configuration may only set visions.level to auto_review"
         );
     }
     if let Some(value) = layer.pointer("/visions/daily_budget_usd") {
@@ -162,12 +139,6 @@ fn check_limits_restriction(current: &VisionsConfig, layer: &Value, origin: &str
 
 fn validate_visions(config: &RuntimeConfig) -> Result<()> {
     let visions = &config.visions;
-    for row in visions.custom.keys() {
-        ensure!(
-            matches!(Decision::from_id(row), Some(d) if !matches!(d, Decision::External | Decision::Spend)),
-            "visions.custom has no row \"{row}\" (rows: wording, tests, undoable, retry, scope, delete, dependency)"
-        );
-    }
     ensure!(
         visions.daily_budget_usd.is_finite()
             && (MIN_VISIONS_BUDGET_USD..=MAX_VISIONS_BUDGET_USD)

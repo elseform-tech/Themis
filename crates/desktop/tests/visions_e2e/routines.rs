@@ -1,5 +1,5 @@
-//! Routines through the real app server: a chief adds one with its credential (within its
-//! channel's level), the channel says so, and the person lists, pauses and removes it.
+//! Routines through the real app server: a chief adds one with its credential, the channel says
+//! so, and the person lists, pauses and removes it.
 
 use super::*;
 
@@ -9,22 +9,6 @@ async fn a_chiefs_routine_is_listed_paused_and_removed_by_the_person() {
     let fx = fixture().await;
     let (juno, release) = fx.chief_and_channel("Juno", "release");
     let (_, chief) = fx.vision_run(&juno, &release).await;
-    // Settings › Visions and the team allow "most" calls.
-    fx.set_visions(json!({"enabled": false, "autonomy": "most"}));
-    let listed = fx.call_ok("list_channels", json!({"projectRoot": fx.project}));
-    let mut channel = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["id"] == release.as_str())
-        .unwrap()
-        .clone();
-    let revision = channel["revision"].clone();
-    channel["autonomy"] = json!("most");
-    fx.call_ok(
-        "save_channel",
-        json!({"channel": channel, "revision": revision}),
-    );
     let routine = json!({"schedule": {"days": [1, 2, 3, 4, 5], "time": "09:00"}, "instruction": "Summarise yesterday"});
     let saved = fx.agent_call_ok(&chief, "save_routine", json!({"routine": routine}));
     let id = saved["id"].as_str().unwrap().to_owned();

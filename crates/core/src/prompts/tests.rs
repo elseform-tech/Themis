@@ -342,11 +342,6 @@ const ALL: &[(&str, &str, &[&str])] = &[
     ),
     (AGENT_CLI_REQUEST_CAP, "agent-cli-request-cap", &["cap"]),
     (
-        AGENT_CLI_REQUEST_ABOVE_LEVEL,
-        "agent-cli-request-above-level",
-        &[],
-    ),
-    (
         AGENT_CLI_REQUEST_ALREADY_OPEN,
         "agent-cli-request-already-open",
         &[],
@@ -366,7 +361,7 @@ const ALL: &[(&str, &str, &[&str])] = &[
         "agent-cli-permission-question",
         &[],
     ),
-    (AGENT_CLI_ABOVE_AUTONOMY, "agent-cli-above-autonomy", &[]),
+    (AGENT_CLI_LOCKED_DECISION, "agent-cli-locked-decision", &[]),
     (AGENT_CLI_VISION_DECISION, "agent-cli-vision-decision", &[]),
     (AGENT_CLI_VISION_REASON, "agent-cli-vision-reason", &[]),
     (
