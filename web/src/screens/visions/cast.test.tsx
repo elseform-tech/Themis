@@ -34,8 +34,9 @@ describe("the cast", () => {
   });
 
   it("the_body_is_one_outline", () => {
-    // Golden value copied from the approved Cloud3D board (the rail icon's outline on the 48 box).
-    const outline = "M13 39h22a8 8 0 0 0 .8-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13 39Z";
+    // The rail icon's outline on the 48 box (Cloud3D board), its side lobes ending straight
+    // down on the base so no hook shows at the bottom corners in 3D.
+    const outline = "M13.2 39H35.8a7.98 7.98 0 0 0 0-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13.2 39Z";
     expect(OUTLINE).toBe(outline);
     for (const { look } of PRESETS) {
       for (const view of [render(<CharacterAvatar look={look} />), render(<StillPicture look={look} expression="calm" />)]) {

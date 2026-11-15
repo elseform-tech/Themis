@@ -9,7 +9,7 @@ import { ADMIN_VISION_ID } from "../../lib/visions";
 export interface Look { color: string; accessory: string }
 
 /** The one body outline (the rail icon's shape on the 48 box), for every Vision. */
-export const OUTLINE = "M13 39h22a8 8 0 0 0 .8-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13 39Z";
+export const OUTLINE = "M13.2 39H35.8a7.98 7.98 0 0 0 0-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13.2 39Z";
 /** Eye centres and height on the outline. */
 export const EYES = { l: 19.5, r: 28.5, y: 29 };
 /** The shaded body's highlight centre. */
