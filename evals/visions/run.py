@@ -48,9 +48,9 @@ PAGE_BYTES = 1024 * 1024
 # The usage ledger is read every this many polls, so ledger-only spend counts during the run.
 SPEND_POLLS = 3
 # The chief of staff the person talks to, then its workers: `vision` has the first, `team` both.
-CHIEF = {"name": "Wren", "role": "Chief of staff for Ledgerly", "shape": "cloud", "color": "teal"}
-WORKERS = ({"name": "Rook", "role": "Fixes and builds things in Ledgerly", "shape": "tall", "color": "amber"},
-           {"name": "Juno", "role": "Tests and reviews changes in Ledgerly", "shape": "wide", "color": "violet"})
+CHIEF = {"name": "Wren", "role": "Chief of staff for Ledgerly", "color": "teal"}
+WORKERS = ({"name": "Rook", "role": "Fixes and builds things in Ledgerly", "color": "amber"},
+           {"name": "Juno", "role": "Tests and reviews changes in Ledgerly", "color": "violet"})
 # The project's built-in channel, where the person talks to the admin.
 ADMINISTRATION = "administration"
 # Bounds on the project's file state a trace keeps (`file_lines`, read by `false_facts`).
@@ -331,7 +331,7 @@ class VisionPerson:
             run.vision_ids.append(vision["id"])
         channel, error = run.call("save_channel", {"channel": {
             "name": "ledgerly", "topic": "Ledgerly fixes", "project_root": run.project,
-            "approval_mode": "custom", "members": list(run.vision_ids), "chief": run.vision_ids[0]},
+            "members": list(run.vision_ids), "chief": run.vision_ids[0]},
             "revision": None})
         if error:
             return f"save_channel: {error}"

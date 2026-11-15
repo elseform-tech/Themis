@@ -1,6 +1,6 @@
 // The still picture (board Cloud3D): the one outline shaded (radial body, shadow overlay, rim light,
 // highlight), eyes and brows only, the accessory and a ground shadow, for one expression. It moves like the board
-// unless reduced motion asks for stillness. Used by the channel header and as the 3D scene's
+// unless reduced motion asks for stillness. Used by the channel's welcome and as the 3D scene's
 // fallback.
 import { useId } from "react";
 import { EYES, HIGHLIGHT, OUTLINE, resolveLook, type Look } from "./cast";
