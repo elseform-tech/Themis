@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import "./Dialog.css";
 
 export interface DialogProps {
@@ -50,7 +51,9 @@ export function Dialog({ open, onClose, title, label, className, closeOnOutsideC
 
   if (!open) return null;
 
-  return (
+  // Opened on the document's body: a glass panel (backdrop-filter) that renders a dialog would
+  // otherwise trap its fixed overlay inside the panel and clip it.
+  return createPortal(
     <div
       className="themis-dialog-overlay"
       onMouseDown={(event) => {
@@ -70,6 +73,7 @@ export function Dialog({ open, onClose, title, label, className, closeOnOutsideC
         )}
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
