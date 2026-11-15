@@ -20,7 +20,7 @@ export interface SceneOptions { look: Look; expression: Expression; size: number
 /** Frames per second the loop draws at; the motion is slow and a head is small. */
 const FPS = 30;
 /** Where the body's feet are in scene units: the pivot of its breathing. */
-const FEET_Y = 19.5 - 38;
+const FEET_Y = 24 - 39;
 
 function groundShadow(): THREE.Mesh {
   const canvas = document.createElement("canvas");
@@ -32,7 +32,7 @@ function groundShadow(): THREE.Mesh {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(40, 8), new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }));
-  mesh.position.set(0.5, 19.5 - 45.6, -12);
+  mesh.position.set(-0.5, 24 - 43.6, -12);
   return mesh;
 }
 
@@ -51,9 +51,9 @@ function assemble(renderer: THREE.WebGLRenderer, canvas: HTMLCanvasElement, opti
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(options.size, options.size, false);
   const scene = new THREE.Scene();
-  // 57 units tall at the character's distance: the board's frame, accessories included.
+  // 48 units tall at the character's distance: the board's frame, accessories included.
   const camera = new THREE.PerspectiveCamera(18, 1, 1, 600);
-  camera.position.set(0, 0, 28.5 / Math.tan((9 * Math.PI) / 180));
+  camera.position.set(0, 0, 24 / Math.tan((9 * Math.PI) / 180));
   scene.add(new THREE.HemisphereLight("#EAF4FF", "#7E8FB8", 1.6));
   const sun = new THREE.DirectionalLight("#FFFFFF", 1.8);
   sun.position.set(-30, 40, 80);

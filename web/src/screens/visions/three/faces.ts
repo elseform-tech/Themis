@@ -1,5 +1,5 @@
-// The 3D chief's face: the board's face shapes (`faceFor`) drawn onto a canvas that becomes the
-// face texture, and the board's per-expression motion as a pure function of time. No three.js here.
+// The 3D chief's face: the board's eyes and brows (`faceFor`, no mouth) drawn onto a canvas that
+// becomes the face texture, and the per-expression motion as a pure function of time. No three.js here.
 import { faceFor, type Expression, type Face } from "../Expression";
 
 /** Texture pixels per scene unit. The face covers the board's 48-unit square. */
@@ -40,16 +40,15 @@ export function blinking(expression: Expression, t: number): boolean {
 
 const INK = "#0B1220";
 
-/** Draws `face` on `ctx` (a FACE_UNITS square at FACE_SCALE); `eyeY` is where a blink squashes the eyes. */
+/** Draws `face`'s eyes and brows on `ctx` (a FACE_UNITS square at FACE_SCALE); `eyeY` is where a blink squashes the eyes. */
 export function drawFace(ctx: CanvasRenderingContext2D, face: Face, eyeY: number, blink: boolean): void {
   const size = FACE_UNITS * FACE_SCALE;
   ctx.clearRect(0, 0, size, size);
   ctx.save();
   ctx.scale(FACE_SCALE, FACE_SCALE);
   ctx.lineCap = "round"; ctx.lineJoin = "round";
-  const fill = (d: string, color: string, alpha = 1) => { if (!d) return; ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fill(new Path2D(d)); ctx.globalAlpha = 1; };
+  const fill = (d: string, color: string) => { if (!d) return; ctx.fillStyle = color; ctx.fill(new Path2D(d)); };
   const stroke = (d: string, width: number) => { if (!d) return; ctx.strokeStyle = INK; ctx.lineWidth = width; ctx.stroke(new Path2D(d)); };
-  fill(face.cheeks, "#FF8FB0", 0.6);
   ctx.save();
   if (blink) { ctx.translate(0, eyeY); ctx.scale(1, 0.1); ctx.translate(0, -eyeY); }
   fill(face.eyesFill, INK);
@@ -57,7 +56,6 @@ export function drawFace(ctx: CanvasRenderingContext2D, face: Face, eyeY: number
   ctx.restore();
   if (!blink) fill(face.glint, "#fff");
   stroke(face.brows, 1.2);
-  if (face.mouth) { fill(face.mouthFill === "none" ? "" : face.mouth, face.mouthFill); stroke(face.mouth, 1.2); }
   ctx.restore();
 }
 

@@ -49,25 +49,27 @@ export const EXPRESSION_DOT: Record<Expression, string> = {
 /** The motion class a face plays (Visions.css), none when reduced motion asks for stillness. */
 export const EXPRESSION_MOTION: Record<Expression, string> = { calm: "vc-calm", working: "vc-work", done: "vc-calm", needs: "vc-needs", stuck: "vc-worry", paused: "vc-sleep" };
 
-/** The drawn parts of a face: path data, each empty when the face has none. */
+/** The drawn parts of a face, eyes and brows only (board Cloud3D: no mouth in any expression):
+ *  path data, each empty when the face has none. */
 export interface Face {
-  eyesFill: string; glint: string; eyesLine: string; brows: string; mouth: string; mouthFill: string; cheeks: string;
+  eyesFill: string; glint: string; eyesLine: string; brows: string;
   /** The whole body fades for a paused face. */
   opacity: number;
 }
 
 const ell = (cx: number, cy: number, rx: number, ry: number) => `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0Z`;
-const EMPTY: Face = { eyesFill: "", glint: "", eyesLine: "", brows: "", mouth: "", mouthFill: "none", cheeks: "", opacity: 1 };
+const EMPTY: Face = { eyesFill: "", glint: "", eyesLine: "", brows: "", opacity: 1 };
+const pair = (draw: (x: number) => string, l: number, r: number) => draw(l) + draw(r);
 
-/** The face for `expression` with eyes at x = `l` and `r`, height `y`. */
+/** The face for `expression` with eyes at x = `l` and `r`, height `y`. Calm, Working, Needs you and
+ *  Done are the board's; Stuck and Paused follow them. */
 export function faceFor(expression: Expression, l: number, r: number, y: number): Face {
-  const mid = (l + r) / 2;
   switch (expression) {
-    case "calm": return { ...EMPTY, eyesFill: ell(l, y, 1.7, 2.3) + ell(r, y, 1.7, 2.3), glint: ell(l - 0.5, y - 1, 0.55, 0.6) + ell(r - 0.5, y - 1, 0.55, 0.6), mouth: `M${mid - 1.8} ${y + 4.2}q1.8 1.4 3.6 0` };
-    case "working": return { ...EMPTY, eyesFill: ell(l + 0.5, y - 0.8, 1.6, 1.8) + ell(r + 0.5, y - 0.8, 1.6, 1.8), glint: ell(l + 1, y - 1.5, 0.5, 0.55) + ell(r + 1, y - 1.5, 0.5, 0.55), brows: `M${l - 1.9} ${y - 3.8}l3.4-.6M${r - 1.5} ${y - 4.4}l3.4.6`, mouth: `M${mid - 1.3} ${y + 4.4}h2.6` };
-    case "done": return { ...EMPTY, eyesLine: `M${l - 2} ${y + 0.4}q2-2.6 4 0M${r - 2} ${y + 0.4}q2-2.6 4 0`, mouth: `M${mid - 2.8} ${y + 3.4}q2.8 3.2 5.6 0Z`, mouthFill: "#5B1830", cheeks: ell(l - 3.6, y + 2.6, 1.8, 1.1) + ell(r + 3.6, y + 2.6, 1.8, 1.1) };
-    case "needs": return { ...EMPTY, eyesFill: ell(l, y - 0.5, 2, 2.8) + ell(r, y - 0.5, 2, 2.8), glint: ell(l - 0.7, y - 1.7, 0.7, 0.8) + ell(r - 0.7, y - 1.7, 0.7, 0.8), brows: `M${l - 2.2} ${y - 5}q2.2-1.4 4.4 0M${r - 2.2} ${y - 5}q2.2-1.4 4.4 0`, mouth: ell(mid, y + 5, 1, 1.1), mouthFill: "#5B1830" };
-    case "stuck": return { ...EMPTY, eyesFill: ell(l, y + 0.4, 1.6, 2) + ell(r, y + 0.4, 1.6, 2), glint: ell(l - 0.5, y - 0.4, 0.5, 0.55) + ell(r - 0.5, y - 0.4, 0.5, 0.55), brows: `M${l - 2.2} ${y - 2.6}l4-1.4M${r + 2.2} ${y - 2.6}l-4-1.4`, mouth: `M${mid - 2.4} ${y + 5.4}q1.2-1.2 2.4 0t2.4 0` };
-    case "paused": return { ...EMPTY, opacity: 0.7, eyesLine: `M${l - 2} ${y + 0.6}q2 1.4 4 0M${r - 2} ${y + 0.6}q2 1.4 4 0`, mouth: `M${mid - 1} ${y + 4.6}h2` };
+    case "calm": return { ...EMPTY, eyesFill: pair(x => ell(x, y, 1.7, 2.3), l, r), glint: pair(x => ell(x - 0.5, y - 1, 0.55, 0.6), l, r) };
+    case "working": return { ...EMPTY, eyesFill: pair(x => ell(x, y + 0.4, 1.6, 1.8), l, r), glint: pair(x => ell(x + 0.5, y - 0.2, 0.5, 0.5), l, r), brows: `M${l - 2.3} ${y - 2.8}l3.2-.5M${r - 1.9} ${y - 3.3}l3.2.5` };
+    case "done": return { ...EMPTY, eyesFill: pair(x => `M${x - 1.9} ${y + 0.8}q1.9-2.6 3.8 0q-1.9-1.1-3.8 0Z`, l, r) };
+    case "needs": return { ...EMPTY, eyesFill: pair(x => ell(x, y, 2, 2.7), l, r), glint: pair(x => ell(x - 0.7, y - 1.2, 0.7, 0.8), l, r), brows: `M${l - 2.2} ${y - 3.8}q2-1.2 4 0M${r - 2} ${y - 3.8}q2-1.2 4 0` };
+    case "stuck": return { ...EMPTY, eyesFill: pair(x => ell(x, y + 0.4, 1.6, 2), l, r), glint: pair(x => ell(x - 0.5, y - 0.4, 0.5, 0.55), l, r), brows: `M${l - 2.2} ${y - 2.6}l4-1.4M${r + 2.2} ${y - 2.6}l-4-1.4` };
+    case "paused": return { ...EMPTY, opacity: 0.7, eyesLine: pair(x => `M${x - 2} ${y + 0.6}q2 1.4 4 0`, l, r) };
   }
 }
