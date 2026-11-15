@@ -138,8 +138,8 @@ function RequestResult({ line }: { line: ChannelLine }) {
       <article className="themis-question-card themis-request-result" aria-label={`# ${name} sent`}>
         <p className="themis-question-from"><ChannelPill channelId={entry.channel_id} /> sent:</p>
         <div className="themis-channel-markdown"><ResponseBody text={entry.text} /></div>
+        <time className="themis-channel-time themis-request-result-time">{clock(line.at_ms)}</time>
       </article>
-      <time className="themis-channel-time">{clock(line.at_ms)}</time>
     </li>
   );
 }
