@@ -80,8 +80,8 @@ fn a_proposal_is_checked_field_by_field() {
             "belong to its channel",
         ),
         (
-            serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "shape": "square"}]}),
-            "shape",
+            serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "color": "plaid"}]}),
+            "colour",
         ),
         (
             serde_json::json!({"summary": "x", "visions": [{"name": "Rook", "daily_budget_usd": 1.5}]}),
@@ -151,6 +151,17 @@ fn a_proposal_is_checked_field_by_field() {
     assert!(delete.unwrap_err().to_string().contains("delete"));
 }
 
+/// A Vision has no shape: a proposal logged before (its Visions and team members holding one)
+/// still reads, and reading it keeps no shape.
+#[test]
+fn an_old_logged_proposal_with_shapes_still_reads() {
+    let old = serde_json::json!({"type": "proposal", "vision_id": "admin", "proposal_id": "p1", "proposal": {
+        "summary": "x", "visions": [{"name": "Rook", "shape": "wide", "color": "rose"}],
+        "hire": {"channel": "docs", "worker": {"name": "Tess", "role": "Tester", "shape": "fluffy"}}}});
+    let entry: ChannelEntry = serde_json::from_value(old).unwrap();
+    assert!(!serde_json::to_string(&entry).unwrap().contains("shape"));
+}
+
 /// Autonomy and budget are the channel's now: a proposal cannot set them on a Vision.
 #[test]
 fn a_proposal_cannot_set_autonomy_or_budget_on_a_vision() {
@@ -166,18 +177,11 @@ fn a_proposal_cannot_set_autonomy_or_budget_on_a_vision() {
 }
 
 #[test]
-fn new_visions_get_a_look_in_turn_and_keep_their_own() {
+fn new_visions_get_a_colour_in_turn_and_keep_their_own() {
     let filled = proposal(serde_json::json!({"summary": "x",
-        "visions": [{"name": "A"}, {"name": "B", "shape": "wide", "color": "rose"}, {"name": "C"}]}));
-    let looks: Vec<(&str, &str)> = filled
-        .visions
-        .iter()
-        .map(|v| (v.shape.as_str(), v.color.as_str()))
-        .collect();
-    assert_eq!(
-        looks,
-        [("two-bump", "violet"), ("wide", "rose"), ("wide", "rose")]
-    );
+        "visions": [{"name": "A"}, {"name": "B", "color": "rose"}, {"name": "C"}]}));
+    let colours: Vec<&str> = filled.visions.iter().map(|v| v.color.as_str()).collect();
+    assert_eq!(colours, ["violet", "rose", "rose"]);
 }
 
 /// The admin's run has its own head: the propose and apply calls with this `# administration`'s ids, the

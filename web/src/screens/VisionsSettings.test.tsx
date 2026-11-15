@@ -7,7 +7,7 @@ import * as visions from "../lib/visions";
 import { VisionsSettingsSection } from "./VisionsSettings";
 
 const vision = (id: string, name: string, paused = false): VisionInfo => ({
-  id, name, role: "", shape: "flat", color: "teal", soul: "", paused, revision: "r",
+  id, name, role: "", color: "teal", soul: "", paused, revision: "r",
   over_budget: false, vision_chats: [], needs: 0, sorry: false,
 });
 let list: VisionInfo[] = [];

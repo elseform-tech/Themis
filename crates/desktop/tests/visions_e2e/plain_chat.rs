@@ -42,7 +42,7 @@ async fn owned_chats_are_listed_with_their_vision() {
     };
     assert!(by_id(&own_chat).is_none(), "{listed}");
     assert_eq!(by_id(&plain).unwrap()["vision"], Value::Null);
-    let shown = json!({"id": vision, "name": "Wren", "shape": "cloud", "color": "teal"});
+    let shown = json!({"id": vision, "name": "Wren", "color": "teal"});
     assert_eq!(by_id(&work).unwrap()["vision"], shown);
     assert_eq!(
         fx.call_ok("get_thread", json!({"threadId": work}))["vision"],

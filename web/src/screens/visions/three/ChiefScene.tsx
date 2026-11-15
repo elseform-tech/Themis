@@ -68,7 +68,7 @@ export function ChiefScene({ look, expression, name, size = 130, env = browserEn
   const running = useShouldRun(box, enabled);
 
   useEffect(() => { handle.current?.setRunning(running); }, [handle, running, ready]);
-  useEffect(() => { handle.current?.setLook(look); }, [handle, look.shape, look.color, look.accessory]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { handle.current?.setLook(look); }, [handle, look.color, look.accessory]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { handle.current?.setExpression(expression); }, [handle, expression]);
 
   if (!enabled) return <StillPicture look={look} expression={expression} name={name} size={size} />;

@@ -41,7 +41,6 @@ fn profile(name: &str) -> Vision {
         name: name.into(),
         role: String::new(),
         soul: String::new(),
-        shape: "cloud".into(),
         color: "teal".into(),
         accessory: "none".into(),
         model: None,

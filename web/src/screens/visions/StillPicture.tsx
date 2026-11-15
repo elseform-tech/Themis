@@ -3,7 +3,7 @@
 // unless reduced motion asks for stillness. Used by the channel header and as the 3D scene's
 // fallback.
 import { useId } from "react";
-import { HIGHLIGHT, resolveLook, type Look } from "./cast";
+import { EYES, HIGHLIGHT, OUTLINE, resolveLook, type Look } from "./cast";
 import { EXPRESSION_LABEL, EXPRESSION_MOTION, faceFor, type Expression } from "./Expression";
 import { reducedMotion } from "./thinking";
 import "./Visions.css";
@@ -12,8 +12,8 @@ const INK = "#0B1220";
 
 export function StillPicture({ look, expression, name = "", size = 130 }: { look: Look; expression: Expression; name?: string; size?: number }) {
   const uid = useId().replace(/:/g, "");
-  const { shape, color, accessory, accessoryId } = resolveLook(look);
-  const { l, r, y } = shape.eyes;
+  const { color, accessory, accessoryId } = resolveLook(look);
+  const { l, r, y } = EYES;
   const face = faceFor(expression, l, r, y);
   const still = reducedMotion();
   const label = `${name ? `${name}, ` : ""}${EXPRESSION_LABEL[expression]}`;
@@ -27,9 +27,9 @@ export function StillPicture({ look, expression, name = "", size = 130 }: { look
       </defs>
       <ellipse cx="23.5" cy="43.6" rx="17" ry="2" fill="#08142D" fillOpacity="0.3" filter={`url(#f${uid})`} />
       <g className={`vc${still ? "" : ` ${EXPRESSION_MOTION[expression]}`}`} style={{ opacity: face.opacity }}>
-        <path d={shape.body} fill={`url(#b${uid})`} />
-        <path d={shape.body} fill={`url(#r${uid})`} />
-        <path d={shape.body} fill="none" stroke={`url(#l${uid})`} strokeWidth=".8" />
+        <path d={OUTLINE} fill={`url(#b${uid})`} />
+        <path d={OUTLINE} fill={`url(#r${uid})`} />
+        <path d={OUTLINE} fill="none" stroke={`url(#l${uid})`} strokeWidth=".8" />
         <ellipse cx={HIGHLIGHT.x} cy={HIGHLIGHT.y} rx="4.6" ry="1.7" transform={`rotate(-12 ${HIGHLIGHT.x} ${HIGHLIGHT.y})`} fill="#fff" fillOpacity=".55" />
         <path className="e" d={face.eyesFill} fill={INK} />
         <path d={face.glint} fill="#fff" />

@@ -366,14 +366,13 @@ fn thread_info_and_merge_result_match_ts() {
         vision: Some(ThreadVision {
             id: "v".to_owned(),
             name: "Rook".to_owned(),
-            shape: "tall".to_owned(),
             color: "amber".to_owned(),
         }),
         ..info.clone()
     };
     assert_eq!(
         to_value(&marked)["vision"],
-        json!({"id": "v", "name": "Rook", "shape": "tall", "color": "amber"})
+        json!({"id": "v", "name": "Rook", "color": "amber"})
     );
     // Absent worktrees serialize as `null`, exactly like the TS `string | null`.
     let plain = ThreadInfo {

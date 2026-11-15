@@ -172,9 +172,9 @@
 /* New channel and New Vision. */
 .themis-visions-sheet-name { display: flex; align-items: flex-end; gap: 14px; }
 .themis-visions-sheet-name > .themis-input-wrap { flex: 1; }
-.themis-visions-shapes { display: flex; justify-content: space-between; }
-.themis-visions-shapes button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
-.themis-visions-shapes button[aria-pressed="true"] { background: var(--themis-pill); }
+.themis-visions-accessories { display: flex; justify-content: space-between; }
+.themis-visions-accessories button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
+.themis-visions-accessories button[aria-pressed="true"] { background: var(--themis-pill); }
 .themis-visions-colors { display: flex; justify-content: space-between; padding: 0 10px; }
 .themis-visions-colors button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: currentColor; cursor: pointer; }
 .themis-visions-colors button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--themis-raised), 0 0 0 3.5px var(--themis-text); }

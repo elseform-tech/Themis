@@ -26,7 +26,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
 }));
 
 const base = { provider: "go" as const, model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
-const rookMark = { id: "rook", name: "Rook", shape: "flat", color: "amber" };
+const rookMark = { id: "rook", name: "Rook", color: "amber" };
 const plain: ThreadInfo = { ...base, id: "plain", title: "Plain chat", last_activity_seq: 1, vision: null };
 const work: ThreadInfo = { ...base, id: "w1", title: "Fix the date test", last_activity_seq: 2, vision: rookMark };
 const rook: VisionInfo = { ...rookMark, role: "", soul: "", paused: false, revision: "r", over_budget: false, vision_chats: [], needs: 0, sorry: false };

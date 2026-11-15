@@ -54,11 +54,13 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
 
     let vision = fx.call_ok(
         "save_vision",
-        json!({"vision": {"name": "Wren", "role": "Release captain", "shape": "cloud",
-            "color": "teal"}, "revision": null}),
+        json!({"vision": {"name": "Wren", "role": "Release captain", "color": "teal"},
+            "revision": null}),
     );
     let vision_id = vision["id"].as_str().unwrap().to_owned();
     let first = vision["revision"].as_str().unwrap().to_owned();
+    // A Vision has no shape: the saved profile carries none.
+    assert!(vision.get("shape").is_none(), "{vision}");
     let changed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let event = Client::next_event(&mut events).await.unwrap();
@@ -71,7 +73,7 @@ async fn a_channel_and_a_vision_round_trip_with_revisions() {
     .expect("a save announces visions-changed");
     assert_eq!(changed["payload"]["vision_id"], vision_id.as_str());
 
-    let renamed = json!({"id": vision_id, "name": "Wren B", "shape": "cloud", "color": "teal"});
+    let renamed = json!({"id": vision_id, "name": "Wren B", "color": "teal"});
     let saved = fx.call_ok("save_vision", json!({"vision": renamed, "revision": first}));
     assert_ne!(saved["revision"], first.as_str());
     let stale = fx.call("save_vision", json!({"vision": renamed, "revision": first}));

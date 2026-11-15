@@ -49,7 +49,7 @@ vi.mock("../../lib/visions", async importOriginal => ({
 const base = { provider: "go" as const, model: "m", running: false, worktree_path: null, branch: null, base_branch: null, recovered: false, skill_ids: [] };
 const plain: ThreadInfo = { ...base, id: "plain", title: "Plain chat", last_activity_seq: 1 };
 const vision = (id: string, name: string, extra: Partial<VisionInfo> = {}): VisionInfo => ({
-  id, name, role: "", shape: "tall", color: "blue", soul: "", paused: false, revision: "r1",
+  id, name, role: "", color: "blue", soul: "", paused: false, revision: "r1",
   over_budget: false, vision_chats: [], needs: 0, sorry: false, ...extra,
 });
 const owned = (id: string, title: string, visionId: string, running: boolean): OwnedChat => ({
@@ -72,11 +72,11 @@ const releaseLines: ChannelEntry[] = [
   { type: "notice", kind: "chat_failed", vision_id: "rook", thread_id: "w1" },
 ];
 const cast = () => [
-  vision("admin", "Atlas", { shape: "broad", color: "slate", accessory: "crown", role: "Admin", soul: "Sets up teams." }),
+  vision("admin", "Atlas", { color: "slate", accessory: "crown", role: "Admin", soul: "Sets up teams." }),
   vision("juno", "Juno", { accessory: "clipboard", role: "Chief of staff", soul: "Calm and direct.", model: "longcat-2.5" }),
-  vision("rook", "Rook", { shape: "flat", color: "teal", accessory: "hard_hat", role: "Builder" }),
-  vision("wren", "Wren", { shape: "two-bump", color: "violet", accessory: "glasses", role: "Reviewer" }),
-  vision("sol", "Sol", { shape: "wide", color: "rose", accessory: "headphones", role: "Watcher" }),
+  vision("rook", "Rook", { color: "teal", accessory: "hard_hat", role: "Builder" }),
+  vision("wren", "Wren", { color: "violet", accessory: "glasses", role: "Reviewer" }),
+  vision("sol", "Sol", { color: "rose", accessory: "headphones", role: "Writer" }),
 ];
 
 function fixture(extra: Partial<AppState["visions"]> = {}): AppState {
@@ -354,8 +354,8 @@ describe("Team screens", () => {
       summary: "Here is a team for it.", channels: [], visions: [], changes: [],
       team: {
         channel: { name: "release" },
-        chief: { name: "Juno", role: "Chief of staff", shape: "tall", color: "blue", accessory: "clipboard" },
-        workers: [{ name: "Rook", role: "Builder", shape: "flat", color: "teal", accessory: "hard_hat" }, { name: "Wren", role: "Reviewer", shape: "two-bump", color: "violet", accessory: "glasses" }],
+        chief: { name: "Juno", role: "Chief of staff", color: "blue", accessory: "clipboard" },
+        workers: [{ name: "Rook", role: "Builder", color: "teal", accessory: "hard_hat" }, { name: "Wren", role: "Reviewer", color: "violet", accessory: "glasses" }],
         autonomy: "most" as const, daily_budget_usd: 3,
       },
     };
@@ -378,7 +378,7 @@ describe("Team screens", () => {
   });
 
   it("a hire card names the channel and the new worker", async () => {
-    const proposal = { summary: "Juno asks for someone to test the screens.", channels: [], visions: [], changes: [], hire: { channel: "release", worker: { name: "Tess", role: "UI tester", shape: "fluffy", color: "coral", accessory: "magnifier" } } };
+    const proposal = { summary: "Juno asks for someone to test the screens.", channels: [], visions: [], changes: [], hire: { channel: "release", worker: { name: "Tess", role: "UI tester", color: "coral", accessory: "magnifier" } } };
     await show(() => <ProposalCard entry={{ type: "proposal", vision_id: "admin", proposal_id: "p2", proposal }} onOpenChannel={vi.fn()} />);
     const card = screen.getByRole("group", { name: "New worker for # release" });
     expect(card).toHaveTextContent("# releaseNew worker");

@@ -19,7 +19,7 @@ import {
 } from "./visions";
 
 const VISION: VisionInfo = {
-  id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false,
+  id: "v1", name: "Wren", role: "", color: "teal", soul: "", paused: false,
   revision: "r1", over_budget: false, vision_chats: [], needs: 0, sorry: false,
 };
 
@@ -329,7 +329,7 @@ describe("wire fixture", () => {
 
   it("holds each shape with exactly the fields the app's types name", () => {
     const keys = (value: object) => Object.keys(value).sort();
-    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "shape", "color", "model", "accessory", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
+    const visionKeys: Array<keyof VisionInfo> = ["id", "name", "role", "color", "model", "accessory", "soul", "paused", "revision", "over_budget", "vision_chats", "needs", "sorry"];
     expect(keys(fixture.vision)).toEqual([...visionKeys].sort());
     const chatKeys: Array<keyof VisionInfo["vision_chats"][number]> = ["thread_id", "channel_id", "running"];
     expect(keys(fixture.vision.vision_chats[0]!)).toEqual([...chatKeys].sort());
@@ -356,12 +356,12 @@ describe("wire fixture", () => {
     expect(keys(proposal)).toEqual([...proposalKeys].sort());
     const teamKeys: Array<keyof ProposalTeam> = ["channel", "chief", "workers", "autonomy", "daily_budget_usd"];
     expect(keys(proposal.team!)).toEqual([...teamKeys].sort());
-    const memberKeys: Array<keyof ProposalMember> = ["name", "role", "shape", "color", "accessory", "soul", "model"];
+    const memberKeys: Array<keyof ProposalMember> = ["name", "role", "color", "accessory", "soul", "model"];
     expect(keys(proposal.team!.chief)).toEqual([...memberKeys].sort());
     expect(keys(proposal.hire!)).toEqual(["channel", "worker"]);
     const channelKeys: Array<keyof Proposal["channels"][number]> = ["name", "topic", "members"];
     expect(keys(proposal.channels[0]!)).toEqual([...channelKeys].sort());
-    const visionKeys: Array<keyof Proposal["visions"][number]> = ["name", "role", "shape", "color", "model", "autonomy", "daily_budget_usd"];
+    const visionKeys: Array<keyof Proposal["visions"][number]> = ["name", "role", "color", "model", "autonomy", "daily_budget_usd"];
     expect(keys(proposal.visions[0]!)).toEqual([...visionKeys].sort());
     const changeKeys: Array<keyof ProposalChange> = ["vision", "channel", "name", "role", "topic", "paused", "autonomy", "daily_budget_usd", "add_members", "remove_members"];
     expect([...new Set(proposal.changes.flatMap(keys))].sort()).toEqual([...changeKeys].sort());

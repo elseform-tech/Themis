@@ -152,8 +152,8 @@ function ProfileHero({ vision, channel, onError }: { vision: VisionInfo; channel
 
 /** The saved profile inside a listed Vision. */
 function profileOf(vision: VisionInfo): Profile {
-  const { id, name, role, shape, color, accessory, model, soul, paused, revision } = vision;
-  return { id, name, role, shape, color, accessory, model, soul, paused, revision };
+  const { id, name, role, color, accessory, model, soul, paused, revision } = vision;
+  return { id, name, role, color, accessory, model, soul, paused, revision };
 }
 
 export function VisionProfile({ visionId, routines, spentToday }: { visionId: string; routines?: RoutineControls; spentToday?: number }) {

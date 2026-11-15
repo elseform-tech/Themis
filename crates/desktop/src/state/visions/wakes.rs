@@ -924,7 +924,6 @@ mod tests {
                     id: String::new(),
                     name: name.into(),
                     role: String::new(),
-                    shape: "cloud".into(),
                     color: "teal".into(),
                     model: None,
                     accessory: "none".into(),

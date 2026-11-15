@@ -137,7 +137,7 @@ impl Fixture {
     fn new_vision(&self, name: &str) -> String {
         let vision = self.call_ok(
             "save_vision",
-            json!({"vision": {"name": name, "shape": "cloud", "color": "teal",
+            json!({"vision": {"name": name, "color": "teal",
                 "model": "test-model"}, "revision": null}),
         );
         vision["id"].as_str().unwrap().to_owned()

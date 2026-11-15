@@ -651,7 +651,6 @@ mod tests {
             id: "v1".into(),
             name: "Wren".into(),
             role: "Keeps the docs right".into(),
-            shape: "cloud".into(),
             color: "teal".into(),
             model: None,
             accessory: "none".into(),

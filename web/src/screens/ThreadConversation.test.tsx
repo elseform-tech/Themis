@@ -62,7 +62,7 @@ describe("answered questions in the chat", () => {
 });
 
 describe("a Vision's messages in the chat", () => {
-  const wren: VisionInfo = { id: "v1", name: "Wren", role: "", shape: "cloud", color: "teal", soul: "", paused: false, revision: "r",
+  const wren: VisionInfo = { id: "v1", name: "Wren", role: "", color: "teal", soul: "", paused: false, revision: "r",
     over_budget: false, vision_chats: [], needs: 0, sorry: false };
 
   it("carry the Vision's name, sent, queued or steered; the person's own look as before", () => {

@@ -29,7 +29,6 @@ fn setup() -> Setup {
                 id: String::new(),
                 name: "Wren".into(),
                 role: String::new(),
-                shape: "cloud".into(),
                 color: "teal".into(),
                 model: None,
                 accessory: "none".into(),

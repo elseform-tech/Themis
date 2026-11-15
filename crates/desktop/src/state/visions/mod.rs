@@ -119,7 +119,6 @@ pub struct Vision {
     pub name: String,
     #[serde(default)]
     pub role: String,
-    pub shape: String,
     pub color: String,
     /// The model its runs use; the configured default when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

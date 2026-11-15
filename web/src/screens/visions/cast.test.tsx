@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 // The cast (board ChiefMoods): seven presets each with their own colour and accessory, any
-// shape + colour + accessory combination renders, and a state maps to one labelled expression.
+// colour + accessory combination renders, and a state maps to one labelled expression.
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ADMIN_VISION_ID } from "../../lib/visions";
-import { ACCESSORIES, COLORS, PRESETS, SHAPES, lookOf, resolveLook } from "./cast";
+import { ACCESSORIES, COLORS, EYES, OUTLINE, PRESETS, lookOf } from "./cast";
 import { CharacterAvatar } from "./CharacterAvatar";
 import { EXPRESSIONS, EXPRESSION_LABEL, expressionFor, type ExpressionState } from "./Expression";
 import { StillPicture } from "./StillPicture";
@@ -18,18 +18,16 @@ describe("the cast", () => {
     expect(PRESETS.map(preset => preset.name)).toEqual(["Juno", "Atlas", "Rook", "Wren", "Pip", "Sol", "Tess"]);
     expect(new Set(PRESETS.map(preset => preset.look.color)).size).toBe(7);
     expect(new Set(PRESETS.map(preset => preset.look.accessory)).size).toBe(7);
-    expect(new Set(PRESETS.map(preset => preset.look.shape)).size).toBe(7);
+    expect(PRESETS.map(preset => preset.role)).toEqual(["Chief of staff", "Admin", "Builder", "Reviewer", "Scout", "Writer", "UI tester"]);
+    for (const { look } of PRESETS) expect(Object.keys(look).sort()).toEqual(["accessory", "color"]);
     expect(PRESETS.map(preset => preset.look.accessory)).toEqual(["clipboard", "crown", "hard_hat", "glasses", "goggles", "headphones", "magnifier"]);
     expect(Object.keys(ACCESSORIES).sort()).toEqual(["clipboard", "crown", "glasses", "goggles", "hard_hat", "headphones", "magnifier", "none"]);
-    for (const { look } of PRESETS) {
-      expect(SHAPES[look.shape]).toBeDefined();
-      expect(COLORS[look.color]).toBeDefined();
-    }
+    for (const { look } of PRESETS) expect(COLORS[look.color]).toBeDefined();
   });
 
-  it("any_shape_colour_and_accessory_combination_renders", () => {
-    for (const shape of Object.keys(SHAPES)) for (const color of Object.keys(COLORS)) for (const accessory of Object.keys(ACCESSORIES)) {
-      const { container, unmount } = render(<CharacterAvatar look={{ shape, color, accessory }} size={24} />);
+  it("any_colour_and_accessory_combination_renders", () => {
+    for (const color of Object.keys(COLORS)) for (const accessory of Object.keys(ACCESSORIES)) {
+      const { container, unmount } = render(<CharacterAvatar look={{ color, accessory }} size={24} />);
       expect(container.querySelector("svg")?.getAttribute("data-accessory")).toBe(accessory);
       unmount();
     }
@@ -38,9 +36,8 @@ describe("the cast", () => {
   it("the_body_is_one_outline", () => {
     // Golden value copied from the approved Cloud3D board (the rail icon's outline on the 48 box).
     const outline = "M13 39h22a8 8 0 0 0 .8-15.96A12 12 0 0 0 13.2 20.2A9.4 9.4 0 0 0 13 39Z";
-    for (const shape of Object.keys(SHAPES)) expect(SHAPES[shape]!.body).toBe(outline);
+    expect(OUTLINE).toBe(outline);
     for (const { look } of PRESETS) {
-      expect(resolveLook(look).shape.body).toBe(outline);
       for (const view of [render(<CharacterAvatar look={look} />), render(<StillPicture look={look} expression="calm" />)]) {
         const fills = [...view.container.querySelectorAll("path")].filter(path => path.getAttribute("d") === outline);
         expect(fills.length).toBeGreaterThan(0);
@@ -61,7 +58,7 @@ describe("the cast", () => {
       const preset = PRESETS.find(each => each.name.toLowerCase() === name)!;
       expect(COLORS[preset.look.color]!.flat).toBe(golden.flat);
       expect(ACCESSORIES[preset.look.accessory]!.solid).toBe(golden.solid);
-      expect(SHAPES[preset.look.shape]!.eyes).toEqual({ l: 19.5, r: 28.5, y: 29 });
+      expect(EYES).toEqual({ l: 19.5, r: 28.5, y: 29 });
     }
   });
 
@@ -74,11 +71,11 @@ describe("the cast", () => {
     for (const { look } of PRESETS) {
       const { container, unmount } = render(<CharacterAvatar look={look} />);
       const paths = [...container.querySelectorAll("path")].map(path => [path.getAttribute("d"), path.getAttribute("fill")]);
-      expect(paths).toContainEqual([SHAPES[look.shape]!.body, COLORS[look.color]!.flat]);
+      expect(paths).toContainEqual([OUTLINE, COLORS[look.color]!.flat]);
       expect(paths).toContainEqual([ACCESSORIES[look.accessory]!.solid, ACCESSORIES[look.accessory]!.fill]);
       unmount();
     }
-    const { container } = render(<CharacterAvatar look={{ shape: "tall", color: "blue", accessory: "none" }} />);
+    const { container } = render(<CharacterAvatar look={{ color: "blue", accessory: "none" }} />);
     expect([...container.querySelectorAll("path")].map(path => path.getAttribute("d"))).not.toContain(ACCESSORIES.crown!.solid);
   });
 
@@ -88,19 +85,20 @@ describe("the cast", () => {
     const stops = [...container.querySelectorAll("radialGradient stop")].map(stop => stop.getAttribute("stop-color"));
     expect(stops).toEqual(["#E6ECF7", "#93A2BE", "#4E5B76"]);
     const drawn = [...container.querySelectorAll("path")].map(path => path.getAttribute("d"));
-    expect(drawn).toContain(SHAPES.broad!.body);
+    expect(drawn).toContain(OUTLINE);
     expect(drawn).toContain(ACCESSORIES.crown!.solid);
   });
 
-  it("an_unknown_look_falls_back_to_the_first_shape_colour_and_no_accessory", () => {
-    const { container } = render(<CharacterAvatar look={{ shape: "x", color: "y", accessory: "z" }} />);
+  it("an_unknown_look_falls_back_to_blue_and_no_accessory", () => {
+    const { container } = render(<CharacterAvatar look={{ color: "y", accessory: "z" }} />);
+    expect(container.querySelector("path")?.getAttribute("fill")).toBe(COLORS.blue!.flat);
     expect(container.querySelector("svg")?.getAttribute("data-accessory")).toBe("none");
   });
 
   it("the_admin_always_wears_the_crown", () => {
-    expect(lookOf({ id: ADMIN_VISION_ID, shape: "broad", color: "slate" }).accessory).toBe("crown");
-    expect(lookOf({ id: "rook", shape: "flat", color: "teal", accessory: "hard_hat" }).accessory).toBe("hard_hat");
-    expect(lookOf({ id: "rook", shape: "flat", color: "teal" }).accessory).toBe("none");
+    expect(lookOf({ id: ADMIN_VISION_ID, color: "slate" }).accessory).toBe("crown");
+    expect(lookOf({ id: "rook", color: "teal", accessory: "hard_hat" }).accessory).toBe("hard_hat");
+    expect(lookOf({ id: "rook", color: "teal" }).accessory).toBe("none");
   });
 });
 

@@ -32,7 +32,6 @@ fn lead(state: &AppState, root: &Path, name: &str, chief: &str) -> (String, Stri
                 name: chief.into(),
                 role: String::new(),
                 soul: String::new(),
-                shape: "cloud".into(),
                 color: "teal".into(),
                 accessory: "none".into(),
                 model: None,

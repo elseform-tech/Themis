@@ -49,10 +49,7 @@ const MAX_ITEMS: usize = 16;
 /// How far back in `# administration` a proposal is looked for; an older one is proposed again.
 const SCAN_BYTES: usize = 512 * 1024;
 const PAGE_BYTES: usize = 64 * 1024;
-/// The looks a new Vision may have (the app's cast).
-const SHAPES: [&str; 7] = [
-    "tall", "flat", "two-bump", "leaning", "wide", "fluffy", "broad",
-];
+/// The colours a new Vision may have (the app's cast).
 const COLORS: [&str; 8] = [
     "blue", "teal", "violet", "amber", "rose", "indigo", "slate", "coral",
 ];
@@ -63,7 +60,6 @@ pub(super) fn admin_profile() -> Vision {
         id: ADMIN_VISION_ID.to_owned(),
         name: "Atlas".to_owned(),
         role: "Sets up channels and Visions".to_owned(),
-        shape: "flat".to_owned(),
         color: "indigo".to_owned(),
         model: None,
         accessory: "crown".to_owned(),
@@ -108,15 +104,13 @@ pub struct NewChannel {
     pub members: Vec<String>,
 }
 
-/// A Vision to make. Its look is chosen by the server when the proposal names none.
+/// A Vision to make. Its colour is chosen by the server when the proposal names none. Unknown
+/// fields are ignored, not refused, so proposals logged before a field was dropped still read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct NewVision {
     pub name: String,
     #[serde(default)]
     pub role: String,
-    #[serde(default)]
-    pub shape: String,
     #[serde(default)]
     pub color: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -283,10 +277,8 @@ fn check_new_profile(
     if taken || !names.insert(vision.name.to_lowercase()) {
         return Err(format!("A Vision named {:?} already exists", vision.name));
     }
-    if !SHAPES.contains(&vision.shape.as_str()) || !COLORS.contains(&vision.color.as_str()) {
-        return Err(format!(
-            "A Vision's shape is one of {SHAPES:?} and its colour one of {COLORS:?}"
-        ));
+    if !COLORS.contains(&vision.color.as_str()) {
+        return Err(format!("A Vision's colour is one of {COLORS:?}"));
     }
     Ok(())
 }
@@ -449,7 +441,6 @@ fn new_profile(new: &NewVision) -> Vision {
         id: String::new(),
         name: new.name.clone(),
         role: new.role.clone(),
-        shape: new.shape.clone(),
         color: new.color.clone(),
         model: new.model.clone(),
         accessory: "none".to_owned(),
@@ -505,13 +496,10 @@ fn applied_to_channel(
     changed
 }
 
-/// Gives each new Vision without a look one, in turn after the Visions there are.
+/// Gives each new Vision without a colour one, in turn after the Visions there are.
 fn fill_looks(proposal: &mut Proposal, existing: usize) {
     teams::fill_member_looks(proposal, existing + proposal.visions.len());
     for (at, vision) in proposal.visions.iter_mut().enumerate() {
-        if vision.shape.trim().is_empty() {
-            vision.shape = SHAPES[(existing + at) % SHAPES.len()].to_owned();
-        }
         if vision.color.trim().is_empty() {
             vision.color = COLORS[(existing + at) % COLORS.len()].to_owned();
         }

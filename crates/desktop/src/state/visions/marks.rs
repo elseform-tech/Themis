@@ -36,7 +36,6 @@ fn mark(vision: &Vision) -> ThreadVision {
     ThreadVision {
         id: vision.id.clone(),
         name: vision.name.clone(),
-        shape: vision.shape.clone(),
         color: vision.color.clone(),
     }
 }

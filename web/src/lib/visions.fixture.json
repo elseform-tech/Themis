@@ -3,7 +3,6 @@
     "id": "v1",
     "name": "Wren",
     "role": "Release captain",
-    "shape": "cloud",
     "color": "teal",
     "model": "go/test-model",
     "accessory": "glasses",
@@ -166,7 +165,6 @@
             {
               "name": "Rook",
               "role": "Ships releases",
-              "shape": "wide",
               "color": "rose",
               "model": "go/test-model",
               "autonomy": "ask",
@@ -202,7 +200,6 @@
             "chief": {
               "name": "Juno",
               "role": "",
-              "shape": "cloud",
               "color": "teal",
               "accessory": "glasses",
               "soul": "Calm and direct.",
@@ -212,7 +209,6 @@
               {
                 "name": "Tess",
                 "role": "Tests",
-                "shape": "broad",
                 "color": "coral",
                 "accessory": "magnifier",
                 "soul": ""
@@ -226,7 +222,6 @@
             "worker": {
               "name": "Ada",
               "role": "Writes",
-              "shape": "wide",
               "color": "rose",
               "accessory": "none",
               "soul": ""
